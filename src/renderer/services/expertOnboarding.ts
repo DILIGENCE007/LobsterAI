@@ -17,6 +17,17 @@ import { coworkService } from './cowork';
 
 const EXPERT_HOME_DRAFT_KEY = '__home__';
 
+/** Change the role of a home draft without losing text, attachments or selected kits. */
+export function switchExpertInDraft(agentId: string, prompt: string): boolean {
+  const agent = store.getState().agent.agents.find(item => item.id === agentId && item.enabled);
+  if (!agent) return false;
+  coworkService.clearSession();
+  agentService.switchAgent(agent.id);
+  store.dispatch(setDraftSkillIds({ draftKey: EXPERT_HOME_DRAFT_KEY, skillIds: agent.skillIds }));
+  store.dispatch(setDraftPrompt({ sessionId: EXPERT_HOME_DRAFT_KEY, draft: prompt }));
+  return true;
+}
+
 /** Prepare a fresh draft only. Creating a session remains an explicit user action. */
 export function openExpertDraft(agent: Agent, prompt: string): void {
   coworkService.clearSession(); // Invalidate any outstanding session navigation.

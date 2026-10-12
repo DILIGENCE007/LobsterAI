@@ -17,7 +17,7 @@ import { setActiveKitIds } from '../store/slices/kitSlice';
 import type { Agent } from '../types/agent';
 import { CoworkCollaborationMode } from '../types/cowork';
 import { agentService } from './agent';
-import { openExpertDraft } from './expertOnboarding';
+import { openExpertDraft, switchExpertInDraft } from './expertOnboarding';
 
 vi.mock('./cowork', () => ({
   coworkService: { clearSession: () => store.dispatch(clearCurrentSession()) },
@@ -36,6 +36,39 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.unstubAllGlobals());
+
+test('switching an installed expert carries the latest text and preserves draft context', () => {
+  store.dispatch(setAgents([expert]));
+  store.dispatch(setDraftPrompt({ sessionId: '__home__', draft: 'Stale debounced text' }));
+  const attachments = [{ name: 'notes.txt', path: '/notes.txt' }];
+  store.dispatch(setDraftAttachments({ draftKey: '__home__', attachments }));
+  store.dispatch(setActiveKitIds(['my-kit']));
+  store.dispatch(setDraftKitIds({ draftKey: '__home__', kitIds: ['my-kit'] }));
+  store.dispatch(setDraftCollaborationMode({ draftKey: '__home__', mode: CoworkCollaborationMode.Plan }));
+  const sessions = store.getState().cowork.sessions;
+
+  expect(switchExpertInDraft(expert.id, 'Latest text, not yet persisted')).toBe(true);
+
+  const state = store.getState();
+  expect(state.agent.currentAgentId).toBe(expert.id);
+  expect(state.cowork.currentSession).toBeNull();
+  expect(state.cowork.sessions).toEqual(sessions);
+  expect(state.cowork.draftPrompts.__home__).toBe('Latest text, not yet persisted');
+  expect(state.cowork.draftAttachments.__home__).toEqual(attachments);
+  expect(state.kit.activeKitIds).toEqual(['my-kit']);
+  expect(state.cowork.draftKitIds.__home__).toEqual(['my-kit']);
+  expect(state.cowork.draftCollaborationModes.__home__).toBe(CoworkCollaborationMode.Plan);
+  expect(state.skill.activeSkillIds).toEqual(expert.skillIds);
+  expect(state.cowork.draftSkillIds.__home__).toEqual(expert.skillIds);
+});
+
+test('a removed or disabled expert cannot change the active draft', () => {
+  store.dispatch(setAgents([{ ...expert, enabled: false }]));
+  const before = store.getState();
+  expect(switchExpertInDraft(expert.id, 'Do not replace')).toBe(false);
+  expect(switchExpertInDraft('missing-expert', 'Do not replace')).toBe(false);
+  expect(store.getState()).toBe(before);
+});
 
 test('repeated preparation upserts the existing agent instead of duplicating it', async () => {
   await agentService.addPreset(expert.presetId);

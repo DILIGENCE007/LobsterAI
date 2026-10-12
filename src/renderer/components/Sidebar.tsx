@@ -32,8 +32,8 @@ import {
 import CoworkSearchModal from './cowork/CoworkSearchModal';
 import Cog6ToothIcon from './icons/Cog6ToothIcon';
 import ComposeIcon from './icons/ComposeIcon';
+import ExpertIcon from './icons/ExpertIcon';
 import SidebarAutomationIcon from './icons/SidebarAutomationIcon';
-import SidebarKitsIcon from './icons/SidebarKitsIcon';
 import SidebarLibraryIcon from './icons/SidebarLibraryIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
 import SkillIcon from './icons/SkillIcon';
@@ -779,7 +779,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             className={activeView === MainView.Experts ? activeSidebarNavItemClassName : sidebarNavItemClassName}
             aria-current={activeView === MainView.Experts ? 'page' : undefined}
           >
-            <SidebarKitsIcon className={sidebarNavIconClassName} />
+            <ExpertIcon className={sidebarNavIconClassName} />
             <span className="min-w-0 truncate">{i18nService.t('expertPlaza')}</span>
             {showExpertsNewBadge && (
               <span className="inline-flex h-4 shrink-0 items-center rounded-[4px] bg-[#ff4f6d] px-1.5 text-[10px] font-semibold leading-none text-white">

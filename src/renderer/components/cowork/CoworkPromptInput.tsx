@@ -51,6 +51,7 @@ import {
   type PreparedCoworkPromptPayload,
 } from '../../services/coworkPromptPayload';
 import { getPortalPricingUrl } from '../../services/endpoints';
+import { switchExpertInDraft } from '../../services/expertOnboarding';
 import { i18nService } from '../../services/i18n';
 import { getInstalledKitSkillIds } from '../../services/kitCapability';
 import {
@@ -111,6 +112,7 @@ import {
   ACTIVE_CONTEXT_BADGE_REMOVE_ICON_CLASS,
 } from '../common/activeContextBadgeStyles';
 import Modal from '../common/Modal';
+import ExpertPickerMenuItem from '../experts/ExpertPickerMenuItem';
 import EditIcon from '../icons/EditIcon';
 import GoalIcon from '../icons/GoalIcon';
 import PaperClipIcon from '../icons/PaperClipIcon';
@@ -2048,9 +2050,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       hasAgentModel: Boolean(nextAgent?.model),
       agentModelId: nextAgent?.model,
     });
-    agentService.switchAgent(agentId);
+    switchExpertInDraft(agentId, value);
     setShowAgentMenu(false);
-  }, [agents, currentAgentId, reportPromptControl]);
+  }, [agents, currentAgentId, reportPromptControl, value]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const isComposing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
@@ -3042,6 +3044,19 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             <PaperClipIcon className="h-5 w-5 shrink-0 text-secondary" />
             <span className="min-w-0 truncate">{i18nService.t('coworkAddFile')}</span>
           </button>
+          {showAgentSelector && !sessionId && <ExpertPickerMenuItem
+            disabled={disabled || voiceInputLocksEditing}
+            onOpen={handleCloseSkillsPopover}
+            onSelect={agentId => {
+              handleSelectAgent(agentId);
+              setShowAddMenu(false);
+              textareaRef.current?.focus();
+            }}
+            onExplore={() => {
+              dispatch(setDraftPrompt({ sessionId: draftKey, draft: value }));
+              setShowAddMenu(false);
+            }}
+          />}
           <button
             ref={skillMenuItemRef}
             type="button"

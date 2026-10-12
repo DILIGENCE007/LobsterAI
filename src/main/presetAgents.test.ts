@@ -31,4 +31,15 @@ describe('expert catalog integrity', () => {
       }
     }
   });
+
+  test('all advertised categories contain distinct, ready-to-use experts', () => {
+    for (const category of Object.values(ExpertCategory)) {
+      expect(PRESET_AGENTS.some(preset => preset.category === category), category).toBe(true);
+    }
+    expect(new Set(PRESET_AGENTS.map(preset => preset.name)).size).toBe(PRESET_AGENTS.length);
+    expect(new Set(PRESET_AGENTS.map(preset => preset.systemPrompt)).size).toBe(PRESET_AGENTS.length);
+    for (const preset of PRESET_AGENTS) {
+      expect(new Set(preset.starterPrompts.map(prompt => prompt.zh)).size, preset.id).toBe(preset.starterPrompts.length);
+    }
+  });
 });

@@ -3,6 +3,10 @@ import { AgentSource } from '../shared/agent/constants';
 import type { ExpertDiscovery, PresetAgent } from '../shared/agent/presets';
 import type { CreateAgentRequest } from './coworkStore';
 import { ADDITIONAL_EXPERT_PRESETS, LEGACY_EXPERT_DISCOVERY } from './expertPresets';
+import { BUSINESS_FINANCE_EXPERTS } from './experts/businessFinance';
+import { CONTENT_COMMERCE_EXPERTS } from './experts/contentCommerce';
+import { DEVELOPMENT_OFFICE_EXPERTS } from './experts/developmentOffice';
+import { EDUCATION_CAREER_EXPERTS } from './experts/educationCareer';
 import { getLanguage } from './i18n';
 
 export type { PresetAgent } from '../shared/agent/presets';
@@ -362,6 +366,10 @@ const LEGACY_PRESET_AGENTS: Omit<PresetAgent, keyof ExpertDiscovery>[] = [
 export const PRESET_AGENTS: PresetAgent[] = [
   ...LEGACY_PRESET_AGENTS.map(preset => ({ ...preset, ...LEGACY_EXPERT_DISCOVERY[preset.id] })),
   ...ADDITIONAL_EXPERT_PRESETS,
+  ...EDUCATION_CAREER_EXPERTS,
+  ...CONTENT_COMMERCE_EXPERTS,
+  ...BUSINESS_FINANCE_EXPERTS,
+  ...DEVELOPMENT_OFFICE_EXPERTS,
 ];
 
 /**

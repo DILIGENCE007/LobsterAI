@@ -19,3 +19,10 @@ test('every featured expert is discoverable and has an example question', () => 
     }
   }
 });
+
+test('platform and campus searches lead to the relevant specialist', () => {
+  expect(filterExperts(PRESET_AGENTS, '抖音', ExpertCategory.Content, null).map(expert => expert.id)).toContain(PresetAgentId.Douyin);
+  expect(filterExperts(PRESET_AGENTS, '抖音', ExpertCategory.Games, null).map(expert => expert.id)).toContain(PresetAgentId.DouyinGame);
+  expect(filterExperts(PRESET_AGENTS, '活动', ExpertCategory.Campus, null).map(expert => expert.id)).toContain(PresetAgentId.CampusEvent);
+  expect(filterExperts(PRESET_AGENTS, 'PowerPoint', ExpertCategory.Office, null).map(expert => expert.id)).toContain(PresetAgentId.Slides);
+});

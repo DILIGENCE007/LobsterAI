@@ -63,8 +63,8 @@ function passed(label) {
   console.log(`[Expert E2E] PASS ${label}`);
 }
 
-async function screenshot(name) {
-  await page.mouse.move(1, 1);
+async function screenshot(name, { keepPointer = false } = {}) {
+  if (!keepPointer) await page.mouse.move(1, 1);
   // Finish finite entrance animations explicitly: hidden Windows compositors
   // may stop advancing their frames even when timers are not throttled.
   await page.evaluate(() => {
@@ -133,28 +133,38 @@ async function run() {
   page.setDefaultTimeout(20000);
   page.on('pageerror', error => errors.push(error.message));
   await page.waitForFunction(() => Boolean(window.electron?.agents), { timeout: 60000 });
-  await waitFor(async () => (await page.evaluate(() => window.electron.openclaw.engine.getStatus())).status?.phase === 'running', 'OpenClaw startup');
+  // A fresh runtime may spend several minutes loading plugins on Windows.
+  // Match the application's startup ceiling instead of aborting a progressing cold start.
+  await waitFor(async () => (await page.evaluate(() => window.electron.openclaw.engine.getStatus())).status?.phase === 'running', 'OpenClaw startup', 900000);
   await page.addLocatorHandler(page.locator('.subscription-trial-close'), async close => close.click());
   const openPlaza = () => page.getByRole('button', { name: /^专家广场/ }).click();
   await openPlaza();
-  await waitFor(async () => await page.locator('article').count() === 18, '18 expert cards');
+  const catalog = await page.evaluate(() => window.electron.agents.presetTemplates());
+  assert(catalog.length >= 60, 'Expanded catalog must cover the requested scenarios');
+  await waitFor(async () => await page.locator('article').count() === catalog.length, 'all expert cards');
   assert.equal(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible())), false, 'Test windows must remain hidden');
   await screenshot('01-plaza-light');
-  passed('18 experts and featured scenarios rendered in a hidden Electron window');
+  const featured = page.getByRole('region', { name: '精选场景', exact: true });
+  await page.getByRole('heading', { name: '校园里的每一步', exact: true }).waitFor();
+  const rail = featured.locator('[tabindex="0"]');
+  await page.getByRole('button', { name: '下一组精选场景' }).click();
+  await waitFor(async () => (await rail.evaluate(element => element.scrollLeft)) > 0, 'featured carousel navigation');
+  await page.getByRole('button', { name: '上一组精选场景' }).click();
+  passed(`${catalog.length} experts, campus scenarios and carousel navigation in a hidden Electron window`);
 
   const search = page.getByRole('textbox', { name: '搜索专家、场景或标签' });
   await search.fill('小程序');
   await waitFor(async () => await page.locator('article').count() === 1, 'search results');
   await page.getByRole('button', { name: '清空搜索' }).click();
   await page.getByRole('button', { name: '技术开发', exact: true }).click();
-  await waitFor(async () => await page.locator('article').count() === 2, 'category results');
+  await waitFor(async () => await page.locator('article').count() === catalog.filter(expert => expert.category === 'engineering').length, 'category results');
   await page.getByRole('button', { name: '原型开发', exact: true }).click();
   await waitFor(async () => await page.locator('article').count() === 2, 'cross-category tag results');
   await screenshot('02-filtered');
   await search.fill('no-matching-expert');
   await page.getByText('没有找到符合条件的专家，换个关键词试试。').waitFor();
   await page.getByRole('button', { name: '清除筛选', exact: true }).click();
-  await waitFor(async () => await page.locator('article').count() === 18, 'reset filters');
+  await waitFor(async () => await page.locator('article').count() === catalog.length, 'reset filters');
   passed('search, category, tag, empty state and reset');
 
   await page.getByRole('button', { name: '套件·技能·连接器', exact: true }).click();
@@ -169,7 +179,7 @@ async function run() {
 
   await page.getByRole('button', { name: '新建 Agent', exact: true }).click();
   await page.getByRole('button', { name: '从专家广场选择', exact: true }).click();
-  await waitFor(async () => await page.locator('article').count() === 18, 'template entry opens Expert Plaza');
+  await waitFor(async () => await page.locator('article').count() === catalog.length, 'template entry opens Expert Plaza');
   passed('the former Agent template entry opens Expert Plaza');
   await page.getByRole('button', { name: '小程序落地顾问', exact: true }).click();
   const dialog = page.getByRole('dialog');
@@ -217,6 +227,54 @@ async function run() {
   await screenshot('06-local-model-response');
   passed('explicit Send routes the task through OpenClaw with the expert instructions');
 
+  await page.evaluate(() => window.electron.agents.create({ name: 'E2E 自定义助手', systemPrompt: 'CUSTOM-AGENT-CHECK', model: 'custom_0/expert-e2e', skillIds: ['docx'] }));
+  await page.reload();
+  await page.locator('[data-onboarding-target="new-task"]').click();
+  const carriedDraft = '请保留这段尚未发送的内容，帮我整理下周的活动安排。';
+  await page.locator('textarea').first().fill(carriedDraft);
+  const sessionCount = (await page.evaluate(() => window.electron.cowork.listSessions())).sessions.length;
+  const requestCount = requests.length;
+  const openPicker = async () => {
+    await page.getByRole('button', { name: '添加', exact: true }).click();
+    await page.getByRole('menuitem', { name: '召唤专家', exact: true }).click();
+  };
+  await openPicker();
+  await page.getByRole('menuitemradio', { name: '我的小程序顾问', exact: true }).waitFor();
+  await page.getByRole('menuitemradio', { name: 'E2E 自定义助手', exact: true }).waitFor();
+  await screenshot('09-installed-expert-picker', { keepPointer: true });
+  await page.getByRole('textbox', { name: '搜索已有专家' }).fill('自定义');
+  assert.equal(await page.getByRole('menuitemradio').count(), 1);
+  await page.getByRole('menuitemradio', { name: 'E2E 自定义助手', exact: true }).click();
+  assert.equal(await page.locator('textarea').first().inputValue(), carriedDraft);
+  assert((await page.getByRole('button', { name: '选择 Agent', exact: true }).getAttribute('title')).includes('E2E 自定义助手'));
+  await openPicker();
+  await page.getByRole('menuitemradio', { name: '我的小程序顾问', exact: true }).click();
+  assert.equal(await page.locator('textarea').first().inputValue(), carriedDraft);
+  assert((await page.getByRole('button', { name: '选择 Agent', exact: true }).getAttribute('title')).includes('我的小程序顾问'));
+  assert.equal((await page.evaluate(() => window.electron.cowork.listSessions())).sessions.length, sessionCount);
+  assert.equal(requests.length, requestCount);
+  await screenshot('10-switched-expert-draft');
+  passed('home picker lists custom and preset agents, filters them and carries unsent text without execution');
+  await openPicker();
+  await page.getByRole('menuitem', { name: '召唤更多专家', exact: true }).click();
+  await waitFor(async () => await page.locator('article').count() === catalog.length, 'explore more opens plaza');
+  await page.locator('[data-onboarding-target="new-task"]').click();
+  assert.equal(await page.locator('textarea').first().inputValue(), carriedDraft);
+  passed('Explore more opens Expert Plaza and returning preserves the home draft');
+
+  await openPlaza();
+  await page.getByRole('textbox', { name: '搜索专家、场景或标签' }).fill('校园活动统筹师');
+  await page.getByRole('button', { name: '召唤 校园活动统筹师', exact: true }).click();
+  const campusPreset = catalog.find(preset => preset.id === 'campus-event-planner');
+  await waitFor(async () => (await page.locator('textarea').first().inputValue().catch(() => '')) === campusPreset.starterPrompts[0].zh, 'new campus expert draft');
+  const campusAgent = (await page.evaluate(() => window.electron.agents.list())).find(agent => agent.presetId === campusPreset.id);
+  assert(campusAgent);
+  assert.deepEqual(campusAgent.skillIds, campusPreset.skillIds);
+  assert(campusAgent.systemPrompt.includes('天气、设备、拥挤'));
+  assert.equal(requests.length, requestCount);
+  await screenshot('11-campus-expert-draft');
+  passed('a newly added campus expert installs with its own workflow, bundled skills and starter draft');
+
   await openPlaza();
   await page.setViewportSize({ width: 1000, height: 760 });
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
@@ -229,7 +287,7 @@ async function run() {
   });
   await page.reload();
   await page.getByRole('button', { name: /^Expert Plaza/ }).click();
-  await waitFor(async () => await page.locator('article').count() === 18, 'English experts');
+  await waitFor(async () => await page.locator('article').count() === catalog.length, 'English experts');
   assert(await page.locator('html').evaluate(element => element.classList.contains('dark')));
   await screenshot('08-plaza-dark-en');
   assert.equal(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible())), false);

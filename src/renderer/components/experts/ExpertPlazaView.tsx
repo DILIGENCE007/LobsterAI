@@ -10,7 +10,8 @@ import { MANAGEMENT_PAGE_TITLE_TEXT } from '../common/managementTypography';
 import Modal from '../common/Modal';
 import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
-import { EXPERT_CATEGORY_LABELS, EXPERT_SCENARIOS, expertText, filterExperts } from './catalog';
+import { EXPERT_CATEGORY_LABELS, expertText, filterExperts } from './catalog';
+import ExpertFeaturedScenarios from './ExpertFeaturedScenarios';
 
 interface ExpertPlazaViewProps {
   onSummon: (agent: Agent, prompt: string) => void;
@@ -120,25 +121,7 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
             <div role="alert" className="space-y-4 py-16 text-center"><p className="text-sm text-secondary">{t('expertLoadFailed')}</p><button type="button" onClick={() => void load()} className="rounded-lg border border-border px-4 py-2 text-sm hover:bg-surface-raised">{t('retry')}</button></div>
           ) : <>
             {!query.trim() && !category && !tag && presets.length > 0 && (
-              <section aria-labelledby="expert-featured-title">
-                <div className="mb-4 flex items-center gap-2"><SparklesIcon className="h-4 w-4 text-primary" /><h2 id="expert-featured-title" className="text-sm font-semibold text-foreground">{t('expertFeatured')}</h2></div>
-                <div className="grid grid-cols-1 gap-4 min-[1000px]:grid-cols-3">
-                  {EXPERT_SCENARIOS.map(scenario => (
-                    <div key={scenario.titleKey} className={`rounded-2xl border border-border bg-gradient-to-br p-5 ${scenario.className}`}>
-                      <h3 className="font-semibold text-foreground">{t(scenario.titleKey)}</h3>
-                      <p className="mb-4 mt-1 text-xs text-secondary">{t(scenario.descriptionKey)}</p>
-                      <div className="space-y-1">
-                        {scenario.ids.map(id => presets.find(preset => preset.id === id)).filter((preset): preset is PresetAgent => Boolean(preset)).map(preset => (
-                          <button key={preset.id} type="button" onClick={() => setDetail(preset)} className="group flex w-full items-center gap-3 rounded-lg py-2 text-left transition-colors hover:bg-surface/70">
-                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-surface/80"><AgentAvatarIcon value={preset.icon} className="h-5 w-5" /></span>
-                            <span className="min-w-0 flex-1 truncate text-sm text-foreground">{name(preset)}</span><ArrowRightIcon className="mr-1 h-3.5 w-3.5 shrink-0 text-muted transition-transform group-hover:translate-x-0.5" />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
+              <ExpertFeaturedScenarios presets={presets} onSelect={setDetail} />
             )}
             <section aria-labelledby="expert-list-title" className="space-y-4">
               <div className="flex items-center justify-between"><h2 id="expert-list-title" className="text-base font-semibold text-foreground">{t('expertAll')}</h2><span className="text-xs text-muted" role="status">{t('expertCount').replace('{count}', String(filtered.length))}</span></div>

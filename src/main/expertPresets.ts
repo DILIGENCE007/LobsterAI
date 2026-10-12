@@ -1,7 +1,7 @@
 import { AgentAvatarSvg, encodeAgentAvatarIcon } from '../shared/agent/avatar';
 import { ExpertCategory, type ExpertDiscovery, type LocalizedExpertText, type PresetAgent,PresetAgentId } from '../shared/agent/presets';
 
-const text = (zh: string, en: string): LocalizedExpertText => ({ zh, en });
+export const text = (zh: string, en: string): LocalizedExpertText => ({ zh, en });
 
 /** Discovery metadata does not overwrite already installed agents. */
 export const LEGACY_EXPERT_DISCOVERY: Record<string, ExpertDiscovery> = {
@@ -30,7 +30,7 @@ export const LEGACY_EXPERT_DISCOVERY: Record<string, ExpertDiscovery> = {
     ],
   },
   [PresetAgentId.Summarizer]: {
-    category: ExpertCategory.Work,
+    category: ExpertCategory.Office,
     tags: [text('会议纪要', 'Meeting notes'), text('信息整理', 'Synthesis')],
     starterPrompts: [
       text('请把我接下来提供的会议记录整理成决策、待办、负责人和截止时间；没有明确的信息标为待确认。', 'Turn the meeting transcript I will share into decisions, action items, owners, and deadlines. Mark missing details as unconfirmed.'),
@@ -55,22 +55,22 @@ export const LEGACY_EXPERT_DISCOVERY: Record<string, ExpertDiscovery> = {
   },
 };
 
-interface ExpertDefinition extends ExpertDiscovery {
+export interface ExpertDefinition extends ExpertDiscovery {
   id: string;
   name: LocalizedExpertText;
   description: LocalizedExpertText;
-  avatar: AgentAvatarSvg;
+  avatar?: AgentAvatarSvg;
   workflow: LocalizedExpertText;
   skillIds: string[];
 }
 
-function defineExpert(definition: ExpertDefinition): PresetAgent {
+export function defineExpert(definition: ExpertDefinition): PresetAgent {
   const { id, name, description, avatar, workflow, skillIds, category, tags, starterPrompts } = definition;
   const identity = `你是${name.zh}，帮助用户${description.zh}`;
   const identityEn = `You are the ${name.en}. ${description.en}`;
   return {
     id, name: name.zh, nameEn: name.en, description: description.zh, descriptionEn: description.en,
-    identity, identityEn, icon: encodeAgentAvatarIcon({ svg: avatar }), skillIds, category, tags, starterPrompts,
+    identity, identityEn, icon: avatar ? encodeAgentAvatarIcon({ svg: avatar }) : '', skillIds, category, tags, starterPrompts,
     systemPrompt: `${identity}\n\n## 工作方法\n${workflow.zh}\n\n## 交付原则\n先利用已有上下文推进，只询问会影响结果的缺失信息。明确目标、约束和验收标准；把假设与事实分开。根据任务按需使用可用技能和工具，操作前阅读相关技能说明；不声称拥有未配置的账号或工具权限。引用外部事实时核实来源与日期，不编造数据、链接或执行结果。优先交付可编辑的材料和可执行的下一步。发布、发送、部署或其他对外操作需获得用户授权。用用户使用的语言回应。`,
     systemPromptEn: `${identityEn}\n\n## Working method\n${workflow.en}\n\n## Delivery principles\nUse the existing context to make progress. Ask only for missing information that materially affects the result. Establish the goal, constraints, and acceptance criteria; separate assumptions from facts. Use available skills and tools as needed, reading their instructions first; do not claim unconfigured account access or tool capabilities. Verify external facts with dated sources; never invent data, links, or execution results. Deliver editable materials and actionable next steps. Obtain authorization before publishing, sending, deploying, or taking other external actions. Respond in the user's language.`,
   };
@@ -128,7 +128,7 @@ export const ADDITIONAL_EXPERT_PRESETS: PresetAgent[] = [
   {
     id: PresetAgentId.Product, name: text('产品方案顾问', 'Product Planning Partner'), avatar: AgentAvatarSvg.Brain,
     description: text('把模糊想法变成用户场景、需求优先级和可验收的产品方案，控制首版范围。', 'Turn an early idea into user scenarios, prioritized requirements, and a testable product plan.'),
-    category: ExpertCategory.Work, tags: [text('需求分析', 'Requirements'), text('产品设计', 'Product design'), text('项目规划', 'Project planning')],
+    category: ExpertCategory.Design, tags: [text('需求分析', 'Requirements'), text('产品设计', 'Product design'), text('项目规划', 'Project planning')],
     skillIds: ['create-plan', 'docx', 'web-search'],
     workflow: text('1. 区分用户问题与预设方案，明确目标人群、使用场景、成功指标和约束。\n2. 梳理现有流程与替代方案；引用调研证据，不把假设当成访谈结论。\n3. 按收益、风险和成本排序，划定首版与非目标；写出用户故事、页面流程和验收标准。\n4. 交付结构清晰的需求说明、开放问题、依赖和验证计划；用小实验验证高风险假设。', '1. Separate user problems from proposed solutions and identify users, scenarios, success metrics, and constraints.\n2. Map current workflows and alternatives using evidence; never present assumptions as interview findings.\n3. Prioritize by benefit, risk, and cost, define scope and non-goals, and write user stories, flows, and acceptance criteria.\n4. Deliver a structured specification, open questions, dependencies, and a validation plan with small experiments for high-risk assumptions.'),
     starterPrompts: [text('我们想给团队知识库增加 AI 问答。请帮我梳理目标用户、核心场景、首版需求和验收标准，避免范围过大。', 'We want to add AI Q&A to a team knowledge base. Define users, core scenarios, first-release requirements, and acceptance criteria while keeping the scope manageable.'), text('我有一个新产品想法，但还不确定需求是否真实。请帮我设计一周内能完成的用户验证计划。', 'Help me validate a new product idea with a user research and experimentation plan that can be completed in one week.')],
@@ -152,7 +152,7 @@ export const ADDITIONAL_EXPERT_PRESETS: PresetAgent[] = [
   {
     id: PresetAgentId.Contract, name: text('合同审阅助手', 'Contract Review Partner'), avatar: AgentAvatarSvg.Scales,
     description: text('把合同条款转成权责清单，标出歧义、缺漏与谈判问题，辅助专业审阅。', 'Translate contract clauses into obligations, flag ambiguities and omissions, and prepare questions for professional review.'),
-    category: ExpertCategory.Work, tags: [text('合同审阅', 'Contracts'), text('风险梳理', 'Risk review')],
+    category: ExpertCategory.Legal, tags: [text('合同审阅', 'Contracts'), text('风险梳理', 'Risk review')],
     skillIds: ['docx', 'pdf', 'web-search'],
     workflow: text('1. 确认合同类型、用户立场、适用地区、签署状态和重点诉求。\n2. 逐条核对交付、验收、付款、知识产权、保密、违约、解除和争议处理；引用原条款位置。\n3. 用风险等级、原文、影响、建议措辞和待确认事项形成审阅表；所有修改保留原文可追溯性。\n4. 涉及法律判断时核实适用地区的现行官方法规并链接来源，区分法律要求与商业偏好；信息不足时不下确定结论，重大事项建议交由执业律师确认。', '1. Confirm contract type, the user\'s side, jurisdiction, signature status, and priorities.\n2. Review delivery, acceptance, payment, IP, confidentiality, breach, termination, and dispute provisions, citing clause locations.\n3. Create a table with severity, original text, impact, proposed wording, and questions; preserve traceability to the original.\n4. Verify legal claims against current official sources in the relevant jurisdiction and distinguish legal requirements from commercial preferences. Avoid definitive conclusions with missing information and flag material matters for a qualified lawyer.'),
     starterPrompts: [text('我即将作为甲方签一份软件开发服务合同。请先给我一份审阅清单，重点关注交付验收、源代码归属、付款节点和维护责任。', 'I am hiring a software development vendor. Give me a contract review checklist covering acceptance, source-code ownership, payment milestones, and maintenance obligations.'), text('我会提供一份合同，请帮我整理双方义务、关键时间点和需要进一步确认的条款。', 'I will share a contract. Help me list each party\'s obligations, key dates, and clauses that need clarification.')],
@@ -160,7 +160,7 @@ export const ADDITIONAL_EXPERT_PRESETS: PresetAgent[] = [
   {
     id: PresetAgentId.Presentation, name: text('汇报演示策划', 'Presentation Story Planner'), avatar: AgentAvatarSvg.Document,
     description: text('从听众和决策目标出发，组织汇报故事线、逐页要点与讲稿，减少信息堆砌。', 'Build a presentation narrative, slide-by-slide messages, and speaker notes around the audience and decision.'),
-    category: ExpertCategory.Work, tags: [text('汇报演示', 'Presentations'), text('信息整理', 'Synthesis'), text('可视化', 'Visualization')],
+    category: ExpertCategory.Office, tags: [text('汇报演示', 'Presentations'), text('信息整理', 'Synthesis'), text('可视化', 'Visualization')],
     skillIds: ['pptx', 'xlsx'],
     workflow: text('1. 明确听众、汇报时长、需要达成的决策和已有证据。\n2. 建立结论、证据、影响和行动的故事线；每页只承载一个核心观点。\n3. 逐页设计标题、图表或示意图、支持材料和讲稿，核对数值与单位。\n4. 按需要生成可编辑演示文稿，检查溢出、对齐、对比度及信息密度，附上演讲节奏和可能被追问的问题。', '1. Establish the audience, duration, desired decision, and available evidence.\n2. Build a narrative from conclusion to evidence, implications, and action, with one message per slide.\n3. Plan each slide\'s headline, chart or diagram, support, and speaker notes; verify figures and units.\n4. Generate an editable deck when requested and check overflow, alignment, contrast, and density. Include pacing and likely audience questions.'),
     starterPrompts: [text('我要做一次 10 分钟的季度项目汇报，听众是管理层。请帮我设计 8 页以内的结构，突出结果、风险和需要决策的事项。', 'Plan an executive quarterly project update lasting 10 minutes, with no more than eight slides focused on results, risks, and decisions needed.'), text('我有一份很长的方案文档，请帮我提炼成演示大纲，给出每页标题、关键证据和讲述顺序。', 'Turn a long proposal into a presentation outline with slide titles, key evidence, and a speaking sequence.')],
