@@ -88,6 +88,7 @@ import {
 import ThinkingBlock from './ThinkingBlock';
 import ToolCallGroup from './ToolCallGroup';
 import TurnUsageChip from './TurnUsageChip';
+import { TURN_USAGE_CHIP_ENABLED } from './turnUsageDisplay';
 import { useStreamStall } from './useStreamStall';
 
 const encodeLocalPathForUrl = (filePath: string): string => {
@@ -908,7 +909,7 @@ const AssistantTurnBlock: React.FC<{
           onFork={isLastAssistant ? onForkMessage : undefined}
           turnMetadata={isLastAssistant ? (item.message.metadata as CoworkMessageMetadata) : undefined}
           completedGoal={isLastAssistant && !hasAssistantAfter ? completedGoal : null}
-          turnUsageSlot={isLastAssistant && !hasAssistantAfter && turnUsage && turnUsageMessageId ? (
+          turnUsageSlot={TURN_USAGE_CHIP_ENABLED && isLastAssistant && !hasAssistantAfter && turnUsage && turnUsageMessageId ? (
             <TurnUsageChip
               userMessageId={turnUsageMessageId}
               turnUsage={turnUsage}

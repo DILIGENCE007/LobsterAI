@@ -4,6 +4,9 @@ import {
   CoworkTurnUsageStatus,
 } from '../../../shared/cowork/llmTurnUsage';
 
+// Hidden until the credits breakdown is reworked; usage is still recorded.
+export const TURN_USAGE_CHIP_ENABLED = false;
+
 export const TurnUsageTokenRowKey = {
   UncachedInput: 'uncachedInput',
   CacheRead: 'cacheRead',
