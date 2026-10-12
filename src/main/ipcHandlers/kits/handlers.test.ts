@@ -240,7 +240,7 @@ async function installComputerUseKit(): Promise<{
   expect(handler).toBeDefined();
 
   const result = await handler?.(undefined, {
-    bundleUrl: ComputerUseKitBundle.MacArm64,
+    bundleUrl: ComputerUseKitBundle.MacOS,
     connectors: [],
     kitId: ComputerUseKitId.BuiltIn,
     mcpServers: [{ id: ComputerUseKitId.BuiltIn, name: 'Computer Use' }],

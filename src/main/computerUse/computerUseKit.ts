@@ -45,12 +45,15 @@ export interface ComputerUseKitBundleDescriptor {
   sizeBytes: number;
 }
 
+const MAC_OS_KIT_BUNDLE: ComputerUseKitBundleDescriptor = {
+  bundle: ComputerUseKitBundle.MacOS,
+  sha256: ComputerUseKitBundleIntegrity.MacOS.Sha256,
+  sizeBytes: ComputerUseKitBundleIntegrity.MacOS.SizeBytes,
+};
+
 const ComputerUseKitBundlesByRuntimeTarget = {
-  [ComputerUseRuntimeTarget.MacArm64]: {
-    bundle: ComputerUseKitBundle.MacArm64,
-    sha256: ComputerUseKitBundleIntegrity.MacArm64.Sha256,
-    sizeBytes: ComputerUseKitBundleIntegrity.MacArm64.SizeBytes,
-  },
+  [ComputerUseRuntimeTarget.MacArm64]: MAC_OS_KIT_BUNDLE,
+  [ComputerUseRuntimeTarget.MacX64]: MAC_OS_KIT_BUNDLE,
   [ComputerUseRuntimeTarget.WindowsX64]: {
     bundle: ComputerUseKitBundle.WindowsX64,
     sha256: ComputerUseKitBundleIntegrity.WindowsX64.Sha256,
