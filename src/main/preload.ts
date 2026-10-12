@@ -60,6 +60,7 @@ import {
   CoworkIpcChannel,
   type CoworkSessionsChangedPayload,
 } from '../shared/cowork/constants';
+import type { CoworkTurnUsage } from '../shared/cowork/llmTurnUsage';
 import type { CoworkSearchMessageCursor } from '../shared/cowork/search';
 import { DataMigrationIpc } from '../shared/dataMigration/constants';
 import { type DecisionModelConfigUpdate, DecisionModelIpcChannel } from '../shared/decisionModel/constants';
@@ -100,6 +101,7 @@ import {
   LocalWebServicesIpc,
 } from '../shared/localWebServices/constants';
 import { McpIpcChannel } from '../shared/mcp/constants';
+import type { McpToolDiscoveryRequest } from '../shared/mcp/toolDiscovery';
 import { OpenClawEngineIpc } from '../shared/openclawEngine/constants';
 import { PermissionIpcChannel } from '../shared/permissions/constants';
 import type { Platform } from '../shared/platform';
@@ -134,6 +136,7 @@ import type {
 } from '../shared/skin/types';
 import { SubscriptionTrialIpc } from '../shared/subscriptionTrial/constants';
 import { NimQrLoginIpc } from './ipcHandlers/nimQrLogin';
+import { createOfficeBridges } from './office/officePreloadBridges';
 import { OpenClawSessionIpc } from './openclawSession/constants';
 import { OpenClawSessionPolicyIpc } from './openclawSessionPolicy/constants';
 
@@ -191,6 +194,7 @@ contextBridge.exposeInMainWorld('electron', {
     setEnabledByRegistryId: (options: { registryId: string; enabled: boolean }) =>
       ipcRenderer.invoke(McpIpcChannel.SetEnabledByRegistryId, options),
     retryLaunchResolution: (id: string) => ipcRenderer.invoke(McpIpcChannel.RetryLaunchResolution, id),
+    listTools: (request: McpToolDiscoveryRequest) => ipcRenderer.invoke(McpIpcChannel.ListTools, request),
     fetchMarketplace: () => ipcRenderer.invoke(McpIpcChannel.FetchMarketplace),
     connectQichacha: () => ipcRenderer.invoke(McpIpcChannel.ConnectQichacha),
     onChanged: (callback: () => void) => {
@@ -361,6 +365,7 @@ contextBridge.exposeInMainWorld('electron', {
       retryInstall: () => ipcRenderer.invoke(OpenClawEngineIpc.RetryInstall),
       restartGateway: () => ipcRenderer.invoke(OpenClawEngineIpc.RestartGateway),
       repairGatewayState: () => ipcRenderer.invoke(OpenClawEngineIpc.RepairGatewayState),
+      repairLoopbackFirewall: () => ipcRenderer.invoke(OpenClawEngineIpc.RepairLoopbackFirewall),
       onProgress: (callback: (status: any) => void) => {
         const handler = (_event: any, status: any) => callback(status);
         ipcRenderer.on(OpenClawEngineIpc.OnProgress, handler);
@@ -543,7 +548,7 @@ contextBridge.exposeInMainWorld('electron', {
       kitIds?: string[];
       kitReferences?: KitReference[];
       resolvedKitCapabilities?: ResolvedKitCapabilities;
-      selectedTextSnippets?: Array<{ id: string; text: string; sourceMessageId?: string; sourceMessageType?: 'assistant' | 'artifact_markdown' | 'artifact_text'; sourceId?: string; sourceType?: 'assistant' | 'artifact_markdown' | 'artifact_text'; sourceTitle?: string; sourcePath?: string; artifactId?: string; createdAt: number; startOffset?: number; endOffset?: number }>;
+      selectedTextSnippets?: Array<{ id: string; text: string; sourceMessageId?: string; sourceMessageType?: 'assistant' | 'artifact_markdown' | 'artifact_text' | 'artifact_sheet' | 'artifact_word' | 'artifact_slides'; sourceId?: string; sourceType?: 'assistant' | 'artifact_markdown' | 'artifact_text' | 'artifact_sheet' | 'artifact_word' | 'artifact_slides'; sourceTitle?: string; sourcePath?: string; artifactId?: string; createdAt: number; startOffset?: number; endOffset?: number }>;
       browserAnnotations?: CoworkBrowserAnnotationMessageBatch[];
       agentId?: string;
       modelOverride?: string;
@@ -560,7 +565,7 @@ contextBridge.exposeInMainWorld('electron', {
       kitIds?: string[];
       kitReferences?: KitReference[];
       resolvedKitCapabilities?: ResolvedKitCapabilities;
-      selectedTextSnippets?: Array<{ id: string; text: string; sourceMessageId?: string; sourceMessageType?: 'assistant' | 'artifact_markdown' | 'artifact_text'; sourceId?: string; sourceType?: 'assistant' | 'artifact_markdown' | 'artifact_text'; sourceTitle?: string; sourcePath?: string; artifactId?: string; createdAt: number; startOffset?: number; endOffset?: number }>;
+      selectedTextSnippets?: Array<{ id: string; text: string; sourceMessageId?: string; sourceMessageType?: 'assistant' | 'artifact_markdown' | 'artifact_text' | 'artifact_sheet' | 'artifact_word' | 'artifact_slides'; sourceId?: string; sourceType?: 'assistant' | 'artifact_markdown' | 'artifact_text' | 'artifact_sheet' | 'artifact_word' | 'artifact_slides'; sourceTitle?: string; sourcePath?: string; artifactId?: string; createdAt: number; startOffset?: number; endOffset?: number }>;
       browserAnnotations?: CoworkBrowserAnnotationMessageBatch[];
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string; sizeBytes?: number; localPath?: string; previewMimeType?: string; previewBase64Data?: string }>;
       mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
@@ -584,6 +589,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CoworkIpcChannel.SubmitSteer, options),
     runGoalCommand: (options: { sessionId: string; command: string }) =>
       ipcRenderer.invoke(CoworkIpcChannel.GoalCommand, options),
+    refreshTurnUsage: (options: { sessionId: string; messageId: string }): Promise<CoworkTurnUsage | null> =>
+      ipcRenderer.invoke(CoworkIpcChannel.RefreshTurnUsage, options),
     stopSession: (sessionId: string) =>
       ipcRenderer.invoke(CoworkIpcChannel.StopSession, sessionId),
     deleteSession: (sessionId: string) => ipcRenderer.invoke(CoworkIpcChannel.DeleteSession, sessionId),
@@ -766,6 +773,16 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = (_event: any, data: { sessionId: string; goal: any }) => callback(data);
       ipcRenderer.on(CoworkIpcChannel.StreamGoal, handler);
       return () => ipcRenderer.removeListener(CoworkIpcChannel.StreamGoal, handler);
+    },
+    onStreamTurnUsage: (
+      callback: (data: { sessionId: string; messageId: string; turnUsage: CoworkTurnUsage }) => void,
+    ) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { sessionId: string; messageId: string; turnUsage: CoworkTurnUsage },
+      ) => callback(data);
+      ipcRenderer.on(CoworkIpcChannel.StreamTurnUsage, handler);
+      return () => ipcRenderer.removeListener(CoworkIpcChannel.StreamTurnUsage, handler);
     },
     onStreamBtwResult: (
       callback: (data: { sessionId: string; result: CoworkBtwEntry }) => void,
@@ -1039,19 +1056,20 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(AsrIpcChannel.CreateRealtimeSession, options),
   },
   artifact: {
+    office: createOfficeBridges(ipcRenderer),
     markdown: {
       read: (filePath: string) => ipcRenderer.invoke(MarkdownFileIpc.Read, filePath),
       save: (request: SaveMarkdownFileRequest) => ipcRenderer.invoke(MarkdownFileIpc.Save, request),
       setHasUnsafeEdits: (hasUnsafeEdits: boolean) => ipcRenderer.send(MarkdownFileIpc.SetUnsafeEdits, hasUnsafeEdits),
     },
-    watchFile: (filePath: string) => ipcRenderer.invoke('artifact:watchFile', filePath),
-    unwatchFile: (filePath: string) => ipcRenderer.invoke('artifact:unwatchFile', filePath),
+    watchFile: (filePath: string) => ipcRenderer.invoke(ArtifactPreviewIpc.WatchFile, filePath),
+    unwatchFile: (filePath: string) => ipcRenderer.invoke(ArtifactPreviewIpc.UnwatchFile, filePath),
     onFileChanged: (callback: (data: { filePath: string }) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: { filePath: string }) =>
         callback(data);
-      ipcRenderer.on('artifact:file:changed', handler);
+      ipcRenderer.on(ArtifactPreviewIpc.FileChanged, handler);
       return () => {
-        ipcRenderer.removeListener('artifact:file:changed', handler);
+        ipcRenderer.removeListener(ArtifactPreviewIpc.FileChanged, handler);
       };
     },
     createPreviewSession: (filePath: string) =>

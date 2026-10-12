@@ -9,7 +9,9 @@ import {
   CoworkBtwStatus,
   type CoworkBtwThread,
 } from '../../../shared/cowork/btw';
+import { COWORK_TEMP_SESSION_ID_PREFIX } from '../../../shared/cowork/constants';
 import type { CoworkGoal } from '../../../shared/cowork/goal';
+import type { CoworkTurnUsage, CoworkTurnUsageAnchor } from '../../../shared/cowork/llmTurnUsage';
 import {
   COWORK_RAIL_TOOLTIP_PREVIEW_MAX_LENGTH,
   type CoworkMessageRailIndexItem,
@@ -568,7 +570,7 @@ const coworkSlice = createSlice({
       }
       if (action.payload) {
         state.currentSessionId = action.payload.id;
-        if (!action.payload.id.startsWith('temp-')) {
+        if (!action.payload.id.startsWith(COWORK_TEMP_SESSION_ID_PREFIX)) {
           const summary = toSessionSummary(action.payload);
           const sessionIndex = state.sessions.findIndex((session) => session.id === summary.id);
           if (sessionIndex !== -1) {
@@ -759,6 +761,23 @@ const coworkSlice = createSlice({
       } else {
         clearCompletedSessionUnread(state, sessionId);
       }
+    },
+
+    setMessageTurnUsage(
+      state,
+      action: PayloadAction<{ sessionId: string; messageId: string; turnUsage: CoworkTurnUsage }>,
+    ) {
+      const { sessionId, messageId, turnUsage } = action.payload;
+      if (state.currentSession?.id !== sessionId) return;
+      const message = state.currentSession.messages.find(item => item.id === messageId)
+        ?? state.detachedTailMessagesBySessionId[sessionId]?.find(item => item.id === messageId);
+      if (!message) {
+        if (state.currentSession.leadingTurnUsage?.userMessageId === messageId) {
+          state.currentSession.leadingTurnUsage.turnUsage = turnUsage;
+        }
+        return;
+      }
+      message.metadata = { ...message.metadata, turnUsage };
     },
 
     updateSessionGoal(state, action: PayloadAction<{ sessionId: string; goal: CoworkGoal | null }>) {
@@ -1005,6 +1024,7 @@ const coworkSlice = createSlice({
         messagesOffset: number;
         totalMessages: number;
         leadingTurnStartTimestamp?: number | null;
+        leadingTurnUsage?: CoworkTurnUsageAnchor | null;
         /** Keep a newer live total when this window request started before it changed. */
         preserveCurrentTotal?: boolean;
       }>,
@@ -1015,6 +1035,7 @@ const coworkSlice = createSlice({
         messagesOffset,
         totalMessages,
         leadingTurnStartTimestamp = null,
+        leadingTurnUsage = null,
         preserveCurrentTotal = false,
       } = action.payload;
       if (state.currentSession?.id !== sessionId) return;
@@ -1039,6 +1060,7 @@ const coworkSlice = createSlice({
       state.currentSession.messagesOffset = messagesOffset;
       state.currentSession.totalMessages = nextTotalMessages;
       state.currentSession.leadingTurnStartTimestamp = leadingTurnStartTimestamp;
+      state.currentSession.leadingTurnUsage = leadingTurnUsage;
       removeLoadedDetachedTailMessages(state, sessionId, messages);
       for (const message of state.currentSession.messages) {
         applyPendingMediaStatusUpdates(state, sessionId, message);
@@ -1117,8 +1139,9 @@ const coworkSlice = createSlice({
       messages: CoworkMessage[];
       newOffset: number;
       leadingTurnStartTimestamp?: number | null;
+      leadingTurnUsage?: CoworkTurnUsageAnchor | null;
     }>) {
-      const { sessionId, messages, newOffset, leadingTurnStartTimestamp = null } = action.payload;
+      const { sessionId, messages, newOffset, leadingTurnStartTimestamp = null, leadingTurnUsage = null } = action.payload;
       if (state.currentSession?.id !== sessionId) return;
       if (messages.length === 0) return;
       const existingIds = new Set(state.currentSession.messages.map(m => m.id));
@@ -1126,6 +1149,7 @@ const coworkSlice = createSlice({
       state.currentSession.messages = [...toInsert, ...state.currentSession.messages];
       state.currentSession.messagesOffset = newOffset;
       state.currentSession.leadingTurnStartTimestamp = leadingTurnStartTimestamp;
+      state.currentSession.leadingTurnUsage = leadingTurnUsage;
       for (const message of toInsert) {
         applyPendingMediaStatusUpdates(state, sessionId, message);
       }
@@ -1557,6 +1581,7 @@ export const {
   clearDraftBrowserAnnotationBatches,
   addSession,
   updateSessionStatus,
+  setMessageTurnUsage,
   updateSessionGoal,
   openBtwThread,
   closeBtwThread,

@@ -20,12 +20,14 @@ import {
   CoworkOnboardingMessageKind,
 } from '../../shared/cowork/constants';
 import { normalizeCoworkGoal } from '../../shared/cowork/goal';
+import type { CoworkTurnUsage } from '../../shared/cowork/llmTurnUsage';
 import type { CoworkMessageRailIndexItem } from '../../shared/cowork/rail';
 import type { CoworkSelectedTextSnippet } from '../../shared/cowork/selectedText';
 import {
   type CoworkSteerRequest,
   CoworkSteerStatus,
 } from '../../shared/cowork/steer';
+import { OpenClawLoopbackRepairOutcome } from '../../shared/openclawEngine/constants';
 import { store } from '../store';
 import {
   addMessage,
@@ -53,6 +55,7 @@ import {
   setHasMoreSessions,
   setMessageRailIndex,
   setMessageRailIndexLoading,
+  setMessageTurnUsage,
   setMessageWindow,
   setOpenClawRepairing,
   setRemoteManaged,
@@ -83,6 +86,7 @@ import type {
   CoworkUserMemoryEntry,
   OpenClawEngineStatus,
   OpenClawGatewayRepairResult,
+  OpenClawLoopbackRepairResult,
   OpenClawSessionPolicyConfig,
 } from '../types/cowork';
 import { CoworkSessionStatusValue } from '../types/cowork';
@@ -94,6 +98,7 @@ import {
 import { i18nService } from './i18n';
 import { restoreNativeQuestionPermissions } from './nativeQuestionRecovery';
 import { reportOnboardingAction } from './onboardingAnalytics';
+import { isConfigApplyPendingStatus, resolveEngineNotReadyMessage } from './openclawEngineStatus';
 import { resolveOpenClawRepairHistoryWarning } from './openclawRepair';
 
 const STREAM_ERROR_DUPLICATE_WINDOW_MS = 10_000;
@@ -388,6 +393,13 @@ class CoworkService {
     });
     if (goalCleanup) {
       this.streamListenerCleanups.push(goalCleanup);
+    }
+
+    const turnUsageCleanup = cowork.onStreamTurnUsage?.(({ sessionId, messageId, turnUsage }) => {
+      store.dispatch(setMessageTurnUsage({ sessionId, messageId, turnUsage }));
+    });
+    if (turnUsageCleanup) {
+      this.streamListenerCleanups.push(turnUsageCleanup);
     }
 
     const btwResultCleanup = cowork.onStreamBtwResult?.(({ sessionId, result }) => {
@@ -779,6 +791,9 @@ class CoworkService {
   }
 
   private notifyOpenClawStatus(status: OpenClawEngineStatus): void {
+    // Describes one refused request while the gateway keeps running; broadcasting
+    // it as "starting" would pin the global startup overlay until a later event.
+    if (isConfigApplyPendingStatus(status)) return;
     this.openClawStatus = status;
     this.openClawStatusListeners.forEach((listener) => {
       listener(status);
@@ -1086,7 +1101,7 @@ class CoworkService {
     // Show a user-visible error when session start fails
     if (result.error) {
       const errorContent = result.code === 'ENGINE_NOT_READY'
-        ? i18nService.t('coworkErrorEngineNotReady')
+        ? resolveEngineNotReadyMessage(result.engineStatus)
         : classifyError(result.error);
       window.dispatchEvent(new CustomEvent('app:showToast', { detail: errorContent }));
     }
@@ -1152,7 +1167,7 @@ class CoworkService {
       // Show a user-visible error message in the session
       if (result.error) {
         const errorContent = result.code === 'ENGINE_NOT_READY'
-          ? i18nService.t('coworkErrorEngineNotReady')
+          ? resolveEngineNotReadyMessage(result.engineStatus)
           : classifyError(result.error);
         store.dispatch(addMessage({
           sessionId: options.sessionId,
@@ -1464,6 +1479,17 @@ class CoworkService {
     }
   }
 
+  /** Re-fetches a finished turn's credit usage from the server ledger. */
+  async refreshTurnUsage(sessionId: string, messageId: string): Promise<CoworkTurnUsage | null> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.refreshTurnUsage) return null;
+    const turnUsage = await cowork.refreshTurnUsage({ sessionId, messageId });
+    if (turnUsage) {
+      store.dispatch(setMessageTurnUsage({ sessionId, messageId, turnUsage }));
+    }
+    return turnUsage;
+  }
+
   async runGoalCommand(options: { sessionId: string; command: string }): Promise<boolean> {
     const cowork = window.electron?.cowork;
     if (!cowork?.runGoalCommand) {
@@ -1510,7 +1536,7 @@ class CoworkService {
         this.notifyOpenClawStatus(result.engineStatus);
       }
       const errorContent = result.code === 'ENGINE_NOT_READY'
-        ? i18nService.t('coworkErrorEngineNotReady')
+        ? resolveEngineNotReadyMessage(result.engineStatus)
         : classifyError(result.error || 'Failed to run goal command');
       window.dispatchEvent(new CustomEvent('app:showToast', { detail: errorContent }));
       console.error('[CoworkGoal] goal command failed:', result.error);
@@ -1813,6 +1839,7 @@ class CoworkService {
                 messagesOffset: returnedOffset,
                 totalMessages: pageResult.total ?? session.totalMessages,
                 leadingTurnStartTimestamp: pageResult.leadingTurnStartTimestamp ?? null,
+                leadingTurnUsage: pageResult.leadingTurnUsage ?? null,
               };
               this.logDiagnostic(
                 'debug',
@@ -1940,6 +1967,7 @@ class CoworkService {
         messagesOffset: result.offset ?? offset,
         totalMessages: result.total ?? totalMessages,
         leadingTurnStartTimestamp: result.leadingTurnStartTimestamp ?? null,
+        leadingTurnUsage: result.leadingTurnUsage ?? null,
         preserveCurrentTotal: store.getState().cowork.currentSession!.totalMessages > totalMessages,
       }));
       return true;
@@ -1996,6 +2024,7 @@ class CoworkService {
         messages: result.messages,
         newOffset,
         leadingTurnStartTimestamp: result.leadingTurnStartTimestamp ?? null,
+        leadingTurnUsage: result.leadingTurnUsage ?? null,
       }));
       const nextCount = store.getState().cowork.currentSession?.messages.length ?? currentMessageCount;
       this.logDiagnostic(
@@ -2400,6 +2429,19 @@ class CoworkService {
       return result.status;
     }
     return this.openClawStatus;
+  }
+
+  // Raises a UAC prompt; on success the main process restarts the gateway.
+  async repairOpenClawLoopbackFirewall(): Promise<OpenClawLoopbackRepairResult> {
+    const engineApi = window.electron?.openclaw?.engine;
+    if (!engineApi?.repairLoopbackFirewall) {
+      return { outcome: OpenClawLoopbackRepairOutcome.Unsupported };
+    }
+    const result = await engineApi.repairLoopbackFirewall();
+    if (result?.status) {
+      this.notifyOpenClawStatus(result.status);
+    }
+    return result ?? { outcome: OpenClawLoopbackRepairOutcome.Failed };
   }
 
   async repairOpenClawGatewayState(): Promise<OpenClawGatewayRepairResult> {

@@ -10,15 +10,22 @@ import type {
   CoworkImageAttachmentPayload,
   CoworkImageAttachmentPreview,
 } from '../../shared/cowork/imageAttachments';
+import type {
+  CoworkLlmTrace,
+  CoworkTurnUsage,
+  CoworkTurnUsageAnchor,
+} from '../../shared/cowork/llmTurnUsage';
 import type { CoworkSelectedTextSnippet } from '../../shared/cowork/selectedText';
 import type {
   KitReference,
   ResolvedKitCapabilities,
 } from '../../shared/kit/constants';
 import type {
+  OpenClawConfigApplyPendingReason,
   OpenClawEngineErrorCode,
   OpenClawEnginePhase as SharedOpenClawEnginePhase,
   OpenClawGatewayRepairErrorCode,
+  OpenClawLoopbackRepairOutcome,
 } from '../../shared/openclawEngine/constants';
 import type { OpenClawDreamingRecoverySummary } from '../../shared/openclawEngine/dreamingRecovery';
 import type { OpenClawRepairStage } from '../../shared/openclawEngine/repair';
@@ -104,6 +111,10 @@ export interface CoworkMessageMetadata {
   contextPercent?: number;
   model?: string;
   agentName?: string;
+  /** User messages: trace carried by every model request of the turn. */
+  llmTrace?: CoworkLlmTrace;
+  /** User messages: credits and tokens the turn consumed on LobsterAI models. */
+  turnUsage?: CoworkTurnUsage;
   selectedTextSnippets?: CoworkSelectedTextSnippet[];
   browserAnnotations?: CoworkBrowserAnnotationMessageBatch[];
   goalSetting?: {
@@ -181,6 +192,7 @@ export interface CoworkSession {
    * began before `messagesOffset`; anchors its elapsed time.
    */
   leadingTurnStartTimestamp?: number | null;
+  leadingTurnUsage?: CoworkTurnUsageAnchor | null;
   parentSessionId?: string | null;
   forkedFromMessageId?: string | null;
   forkedAt?: number | null;
@@ -280,6 +292,27 @@ export interface OpenClawEngineStatus {
   gatewayPort?: number | null;
   gatewayHttpUrl?: string | null;
   canRetry: boolean;
+  /**
+   * Set on a task-admission reply while a config change is still unapplied.
+   * The gateway process keeps running, so this is not an engine lifecycle state.
+   */
+  configApplyPending?: boolean;
+  /** Why that admission reply refused the task. */
+  configApplyPendingReason?: OpenClawConfigApplyPendingReason;
+  /**
+   * Set while automatic recovery has given up on applying the latest config.
+   * Tasks keep running on the config the gateway already applied; Quick Repair
+   * can clear what blocked the change.
+   */
+  configApplyStalled?: { detail: string };
+}
+
+export interface OpenClawLoopbackRepairResult {
+  outcome: OpenClawLoopbackRepairOutcome;
+  status?: OpenClawEngineStatus;
+  detail?: string;
+  /** For an administrator to run when the app could not add the rule. */
+  manualCommand?: string;
 }
 
 export interface OpenClawGatewayRepairResult {

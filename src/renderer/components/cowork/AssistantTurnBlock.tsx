@@ -12,9 +12,10 @@ import {
   parseCoworkErrorDetail,
 } from '../../../shared/cowork/errorDetail';
 import type { CoworkGoal } from '../../../shared/cowork/goal';
+import { getCoworkTurnUsage } from '../../../shared/cowork/llmTurnUsage';
 import purchaseOfferFirstBadge from '../../assets/purchase-offer-first.svg';
 import purchaseOfferLimitedBadge from '../../assets/purchase-offer-limited.svg';
-import { dedupeArtifactsForDisplay } from '../../services/artifactParser';
+import { dedupeArtifactsForDisplay, orderArtifactsByReplyReferences } from '../../services/artifactParser';
 import { getPortalPricingUrl } from '../../services/endpoints';
 import { i18nService } from '../../services/i18n';
 import { type LogEventAction, LogReporterAction } from '../../services/logReporter';
@@ -72,6 +73,7 @@ import {
   getTurnActivityFingerprint,
   getTurnAnswerStartIndex,
   getTurnEndTimestamp,
+  getTurnReplyMessageIds,
   getTurnStartTimestamp,
   getVideoPathArtifacts,
   getVisibleAssistantItems,
@@ -85,6 +87,8 @@ import {
 } from './messageDisplayUtils';
 import ThinkingBlock from './ThinkingBlock';
 import ToolCallGroup from './ToolCallGroup';
+import TurnUsageChip from './TurnUsageChip';
+import { TURN_USAGE_CHIP_ENABLED } from './turnUsageDisplay';
 import { useStreamStall } from './useStreamStall';
 
 const encodeLocalPathForUrl = (filePath: string): string => {
@@ -178,6 +182,9 @@ const ContextCompactionDivider: React.FC<{ label: string; active?: boolean }> = 
 // One tick: the first value the user sees is "1s", counting up naturally.
 const ACTIVITY_TIMER_APPEAR_DELAY_MS = 1000;
 const ACTIVITY_LONG_WAIT_HINT_DELAY_MS = 30_000;
+// A start request normally returns within milliseconds; one still pending
+// after this is waiting for the engine (startup, a busy gateway, config).
+const ACTIVITY_RUN_START_WAIT_HINT_DELAY_MS = 2_000;
 
 // Rotate the phase word while the model is still silent, so the row visibly keeps moving.
 const ACTIVITY_PHASE_INTERVAL_MS = 2200;
@@ -195,13 +202,31 @@ export const ActivityIndicator: React.FC<{
   liveStatusText?: string | null;
   /** Whether the turn has shown anything yet; silent gaps after that read as "working". */
   hasContent?: boolean;
-}> = ({ fingerprint, startTimestamp, statusTextOverride, liveStatusText = null, hasContent = false }) => {
+  /** The task's start request is still in flight, so nothing has reached the model yet. */
+  awaitingRunStart?: boolean;
+}> = ({
+  fingerprint,
+  startTimestamp,
+  statusTextOverride,
+  liveStatusText = null,
+  hasContent = false,
+  awaitingRunStart = false,
+}) => {
   const [isLongWaiting, setIsLongWaiting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [phaseIndex, setPhaseIndex] = useState(0);
+  // Elapsed time is anchored to message timestamps so it survives remounts
+  // (switching sessions/views); until the turn has a timestamp, show no
+  // counter rather than one restarted from zero.
+  const elapsedMs = startTimestamp != null ? Math.max(0, now - startTimestamp) : null;
+  // A start that is still pending after the grace period is waiting for the
+  // engine; calling that "thinking" makes a stalled engine look like a slow model.
+  const awaitingEngine = awaitingRunStart
+    && elapsedMs != null
+    && elapsedMs >= ACTIVITY_RUN_START_WAIT_HINT_DELAY_MS;
   // Waiting for the model's first output: nothing overrides the label, no
   // step is running, and the turn has shown nothing yet.
-  const thinking = !statusTextOverride && !liveStatusText && !isLongWaiting && !hasContent;
+  const thinking = !statusTextOverride && !awaitingEngine && !liveStatusText && !isLongWaiting && !hasContent;
 
   useEffect(() => {
     if (!thinking) {
@@ -232,14 +257,11 @@ export const ActivityIndicator: React.FC<{
     return () => window.clearInterval(intervalId);
   }, []);
 
-  // Elapsed time is anchored to message timestamps so it survives remounts
-  // (switching sessions/views); until the turn has a timestamp, show no
-  // counter rather than one restarted from zero.
-  const elapsedMs = startTimestamp != null ? Math.max(0, now - startTimestamp) : null;
   const phases = getThinkingPhaseLabels();
   // A running step always names itself; the long-wait hint only applies to a
   // silent model, never to a command that is simply taking its time.
   const statusText = statusTextOverride
+    ?? (awaitingEngine ? i18nService.t('coworkActivityWaitEngineReady') : null)
     ?? liveStatusText
     ?? (thinking
       ? phases[phaseIndex % phases.length]
@@ -570,6 +592,8 @@ const AssistantTurnBlock: React.FC<{
   renderToolGroupOverride?: (group: ToolGroupItem) => React.ReactNode;
   showActivityIndicator?: boolean;
   activityStatusOverride?: string | null;
+  /** The session's start request is still in flight (optimistic temp session). */
+  awaitingRunStart?: boolean;
   showCopyButtons?: boolean;
   completedGoal?: CoworkGoal | null;
   hiddenSystemMessageId?: string | null;
@@ -595,6 +619,7 @@ const AssistantTurnBlock: React.FC<{
   renderToolGroupOverride,
   showActivityIndicator = false,
   activityStatusOverride = null,
+  awaitingRunStart = false,
   showCopyButtons = true,
   completedGoal,
   hiddenSystemMessageId,
@@ -634,12 +659,16 @@ const AssistantTurnBlock: React.FC<{
   );
   const artifactCards = useMemo(
     () => artifacts
-      ? dedupeArtifactsForDisplay(
+      ? orderArtifactsByReplyReferences(
+          dedupeArtifactsForDisplay(
+            artifacts,
+            { defaultProjectDirectory: localServiceDirectory },
+          ),
           artifacts,
-          { defaultProjectDirectory: localServiceDirectory },
+          getTurnReplyMessageIds(turn),
         )
       : [],
-    [artifacts, localServiceDirectory],
+    [artifacts, localServiceDirectory, turn],
   );
   const visibleArtifactCards = useMemo(() => {
     return artifactCardsExpanded ? artifactCards : artifactCards.slice(0, 3);
@@ -666,6 +695,17 @@ const AssistantTurnBlock: React.FC<{
     setArtifactCardsExpanded(false);
     setProcessExpanded(false);
   }, [turn.id]);
+
+  const turnStartTimestamp = getTurnStartTimestamp(turn);
+  const turnEndTimestamp = getTurnEndTimestamp(turn);
+  const processDurationMs = turnStartTimestamp != null && turnEndTimestamp != null
+    ? turnEndTimestamp - turnStartTimestamp
+    : null;
+  // The user message may be outside the loaded page of a long turn.
+  const turnUsage = isStreamingTurn
+    ? null
+    : getCoworkTurnUsage(turn.userMessage?.metadata) ?? turn.inheritedTurnUsage?.turnUsage;
+  const turnUsageMessageId = turn.userMessage?.id ?? turn.inheritedTurnUsage?.userMessageId;
 
   const renderSystemMessage = (message: CoworkMessage) => {
     if (message.id === hiddenSystemMessageId) {
@@ -869,6 +909,13 @@ const AssistantTurnBlock: React.FC<{
           onFork={isLastAssistant ? onForkMessage : undefined}
           turnMetadata={isLastAssistant ? (item.message.metadata as CoworkMessageMetadata) : undefined}
           completedGoal={isLastAssistant && !hasAssistantAfter ? completedGoal : null}
+          turnUsageSlot={TURN_USAGE_CHIP_ENABLED && isLastAssistant && !hasAssistantAfter && turnUsage && turnUsageMessageId ? (
+            <TurnUsageChip
+              userMessageId={turnUsageMessageId}
+              turnUsage={turnUsage}
+              durationMs={processDurationMs}
+            />
+          ) : undefined}
           planConfirmationMessageId={planConfirmationMessageId}
           onConfirmPlan={onConfirmPlan}
           onAdjustPlan={onAdjustPlan}
@@ -971,11 +1018,6 @@ const AssistantTurnBlock: React.FC<{
   // Tool errors stay on their own step row (Codex app behavior); they do not
   // color this duration line or force the fold open.
   const isProcessExpanded = processExpanded || processContainsSearchTarget;
-  const turnStartTimestamp = getTurnStartTimestamp(turn);
-  const turnEndTimestamp = getTurnEndTimestamp(turn);
-  const processDurationMs = turnStartTimestamp != null && turnEndTimestamp != null
-    ? turnEndTimestamp - turnStartTimestamp
-    : null;
   const processBaseLabel = processDurationMs != null && processDurationMs >= 1000
     ? i18nService.t('coworkTurnProcessDuration').replace('{duration}', formatTurnDuration(processDurationMs))
     : i18nService.t('coworkTurnProcess');
@@ -1045,6 +1087,7 @@ const AssistantTurnBlock: React.FC<{
                 statusTextOverride={activityStatusOverride}
                 liveStatusText={liveStatusText}
                 hasContent={visibleAssistantItems.length > 0}
+                awaitingRunStart={awaitingRunStart}
               />
             )}
             {artifacts && artifacts.length > 0 && (
