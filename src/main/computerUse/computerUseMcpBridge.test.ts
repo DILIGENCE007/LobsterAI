@@ -1,3 +1,4 @@
+import { type ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import fs from 'fs';
 import http from 'http';
 import os from 'os';
@@ -20,13 +21,22 @@ type ToolResult = {
   isError?: boolean;
 };
 
+type ClientCall = { method: string; params: Record<string, unknown> };
+
 type BridgeHarness = {
   askRequests: Array<{ questions?: Array<{ question?: string; options?: Array<{ label?: string }> }> }>;
   call: (name: string, args?: Record<string, unknown>) => Promise<ToolResult>;
-  clientCalls: () => Array<{ method: string; params: Record<string, unknown> }>;
+  clientCalls: () => ClientCall[];
   close: () => Promise<void>;
   home: string;
   listTools: () => Promise<Array<{ name: string; description?: string }>>;
+};
+
+type BridgeFixture = {
+  env: Record<string, string>;
+  home: string;
+  logPath: string;
+  scriptPath: string;
 };
 
 const SELF_PID = 4242;
@@ -43,6 +53,8 @@ const windows = [
   { app: 'Terminal', id: 13, pid: 103, bundleId: 'com.apple.Terminal', title: 'zsh' },
 ];
 export class ComputerUseClient {
+  // Like the running helper child process, keeps the bridge alive until close().
+  helper = setInterval(() => {}, 60000);
   async list_windows() { record('list_windows', {}); return windows; }
   async check_permissions() { record('check_permissions', {}); return { accessibility: false, screenCapture: true, missing: ['accessibility'] }; }
   async request_permissions(params) { record('request_permissions', params); return { accessibility: true, screenCapture: true, missing: [] }; }
@@ -83,21 +95,32 @@ export class ComputerUseClient {
   async drag(params) { record('drag', params); return { ok: true }; }
   async set_value(params) { record('set_value', params); return { ok: true }; }
   async perform_secondary_action(params) { record('perform_secondary_action', params); return { ok: true }; }
-  async close() {}
+  async close() {
+    record('close', {});
+    // Closing the real helper takes a round trip, so another shutdown trigger can arrive meanwhile.
+    await new Promise(resolve => setTimeout(resolve, 50));
+    clearInterval(this.helper);
+  }
 }
 `.replace('${SELF_PID}', String(SELF_PID));
 
 const tempRoots: string[] = [];
 const harnesses: BridgeHarness[] = [];
+const bridgeProcesses: ChildProcessWithoutNullStreams[] = [];
 
 afterEach(async () => {
   await Promise.all(harnesses.splice(0).map(harness => harness.close()));
+  for (const child of bridgeProcesses.splice(0)) {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGKILL');
+    }
+  }
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-async function startBridge(options: { answer: 'allow' | 'deny'; locale?: string }): Promise<BridgeHarness> {
+function createBridgeFixture(options: { askUserUrl: string; locale?: string }): BridgeFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lobster-cu-bridge-'));
   tempRoots.push(root);
   const scriptPath = path.join(root, 'computer-use-mcp-server.mjs');
@@ -109,6 +132,34 @@ async function startBridge(options: { answer: 'allow' | 'deny'; locale?: string 
   fs.writeFileSync(logPath, '');
   fs.mkdirSync(home, { recursive: true });
 
+  return {
+    home,
+    logPath,
+    scriptPath,
+    env: {
+      PATH: process.env.PATH ?? '',
+      FAKE_CLIENT_LOG: logPath,
+      LOBSTER_COMPUTER_USE_ASKUSER_URL: options.askUserUrl,
+      LOBSTER_MCP_BRIDGE_SECRET: 'test-secret',
+      LOBSTER_COMPUTER_USE_CLIENT_MODULE: clientPath,
+      LOBSTER_COMPUTER_USE_EXE: '/nonexistent/helper',
+      LOBSTER_COMPUTER_USE_HOME: home,
+      LOBSTER_COMPUTER_USE_LOCALE: options.locale ?? 'zh',
+      LOBSTER_COMPUTER_USE_PLATFORM: 'darwin',
+      LOBSTER_COMPUTER_USE_SELF_APP: 'LobsterAI',
+      LOBSTER_COMPUTER_USE_SELF_PID: String(SELF_PID),
+      LOBSTER_COMPUTER_USE_MCP_SDK_ROOT: resolvePackageRoot('@modelcontextprotocol/sdk')!,
+      LOBSTER_COMPUTER_USE_ZOD_ROOT: resolvePackageRoot('zod')!,
+    },
+  };
+}
+
+function readClientCalls(logPath: string): ClientCall[] {
+  return fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean)
+    .map(line => JSON.parse(line) as ClientCall);
+}
+
+async function startBridge(options: { answer: 'allow' | 'deny'; locale?: string }): Promise<BridgeHarness> {
   const askRequests: BridgeHarness['askRequests'] = [];
   const askServer = http.createServer((req, res) => {
     let body = '';
@@ -125,29 +176,17 @@ async function startBridge(options: { answer: 'allow' | 'deny'; locale?: string 
   });
   await new Promise<void>(resolve => askServer.listen(0, '127.0.0.1', resolve));
   const port = (askServer.address() as { port: number }).port;
+  const fixture = createBridgeFixture({
+    askUserUrl: `http://127.0.0.1:${port}/askuser`,
+    locale: options.locale,
+  });
 
-  const sdkRoot = resolvePackageRoot('@modelcontextprotocol/sdk')!;
-  const zodRoot = resolvePackageRoot('zod')!;
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
   const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [scriptPath],
-    env: {
-      PATH: process.env.PATH ?? '',
-      FAKE_CLIENT_LOG: logPath,
-      LOBSTER_COMPUTER_USE_ASKUSER_URL: `http://127.0.0.1:${port}/askuser`,
-      LOBSTER_MCP_BRIDGE_SECRET: 'test-secret',
-      LOBSTER_COMPUTER_USE_CLIENT_MODULE: clientPath,
-      LOBSTER_COMPUTER_USE_EXE: '/nonexistent/helper',
-      LOBSTER_COMPUTER_USE_HOME: home,
-      LOBSTER_COMPUTER_USE_LOCALE: options.locale ?? 'zh',
-      LOBSTER_COMPUTER_USE_PLATFORM: 'darwin',
-      LOBSTER_COMPUTER_USE_SELF_APP: 'LobsterAI',
-      LOBSTER_COMPUTER_USE_SELF_PID: String(SELF_PID),
-      LOBSTER_COMPUTER_USE_MCP_SDK_ROOT: sdkRoot,
-      LOBSTER_COMPUTER_USE_ZOD_ROOT: zodRoot,
-    },
+    args: [fixture.scriptPath],
+    env: fixture.env,
     stderr: 'pipe',
   });
   const client = new Client({ name: 'computer-use-bridge-test', version: '0.0.0' });
@@ -155,13 +194,12 @@ async function startBridge(options: { answer: 'allow' | 'deny'; locale?: string 
 
   const harness: BridgeHarness = {
     askRequests,
-    home,
+    home: fixture.home,
     async call(name, args = {}) {
       return await client.callTool({ name, arguments: args }) as ToolResult;
     },
     clientCalls() {
-      return fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean)
-        .map(line => JSON.parse(line) as { method: string; params: Record<string, unknown> });
+      return readClientCalls(fixture.logPath);
     },
     async listTools() {
       return (await client.listTools()).tools;
@@ -177,6 +215,41 @@ async function startBridge(options: { answer: 'allow' | 'deny'; locale?: string 
 
 function textOf(result: ToolResult): string {
   return (result.content ?? []).filter(item => item.type === 'text').map(item => item.text ?? '').join('\n');
+}
+
+function writeJsonRpc(child: ChildProcessWithoutNullStreams, message: Record<string, unknown>): void {
+  child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
+}
+
+// Raw pipes instead of the SDK client transport, whose close() falls back to SIGTERM
+// and would hide a bridge that ignores the end of its stdio.
+async function spawnInitializedBridge(): Promise<{ child: ChildProcessWithoutNullStreams; logPath: string }> {
+  const fixture = createBridgeFixture({ askUserUrl: 'http://127.0.0.1:9/askuser' });
+  const child = spawn(process.execPath, [fixture.scriptPath], { env: fixture.env, stdio: 'pipe' });
+  bridgeProcesses.push(child);
+  let stdout = '';
+  child.stdout.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString('utf8');
+  });
+
+  writeJsonRpc(child, {
+    id: 1,
+    method: 'initialize',
+    params: {
+      protocolVersion: '2025-11-25',
+      capabilities: {},
+      clientInfo: { name: 'computer-use-bridge-test', version: '0.0.0' },
+    },
+  });
+  // Once it answers, the stdio transport is reading stdin.
+  await vi.waitFor(() => expect(stdout).toContain('"id":1'), { timeout: 10000 });
+  return { child, logPath: fixture.logPath };
+}
+
+async function expectCleanExit(child: ChildProcessWithoutNullStreams): Promise<void> {
+  await vi.waitFor(() => {
+    expect({ code: child.exitCode, signal: child.signalCode }).toEqual({ code: 0, signal: null });
+  }, { timeout: 5000 });
 }
 
 const NOTES_WINDOW = { app: 'Notes', id: 11, pid: 101, bundleId: 'com.apple.Notes', title: 'Groceries' };
@@ -300,5 +373,26 @@ describe('Computer Use MCP bridge (macOS behavior)', () => {
     const rejected = await bridge.call('get_window_state', { window: NOTES_WINDOW, scale: 0.05 });
     expect(rejected.isError).toBe(true);
     expect(bridge.clientCalls().filter(call => call.method === 'get_window_state')).toHaveLength(3);
+  });
+});
+
+describe('Computer Use MCP bridge shutdown', () => {
+  test('closes the helper once and exits when stdin closes, as when the gateway dies', async () => {
+    const { child, logPath } = await spawnInitializedBridge();
+
+    child.stdin.end();
+
+    await expectCleanExit(child);
+    expect(readClientCalls(logPath).filter(call => call.method === 'close')).toHaveLength(1);
+  });
+
+  test('closes the helper and exits instead of crashing when a reply cannot be written', async () => {
+    const { child, logPath } = await spawnInitializedBridge();
+
+    child.stdout.destroy();
+    writeJsonRpc(child, { id: 2, method: 'tools/list', params: {} });
+
+    await expectCleanExit(child);
+    expect(readClientCalls(logPath).filter(call => call.method === 'close')).toHaveLength(1);
   });
 });
