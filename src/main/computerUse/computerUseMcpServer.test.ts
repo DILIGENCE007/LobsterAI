@@ -49,18 +49,17 @@ import {
 
 const WINDOWS_RUNTIME = ComputerUseRuntimes[ComputerUseRuntimeTarget.WindowsX64];
 const MAC_RUNTIME = ComputerUseRuntimes[ComputerUseRuntimeTarget.MacArm64];
-const GENERATED_MAC_RUNTIME_ARCHIVE = path.join(
-  process.cwd(),
-  'resources',
-  'computer-use',
-  MAC_RUNTIME.archiveName,
-);
+const MAC_X64_RUNTIME = ComputerUseRuntimes[ComputerUseRuntimeTarget.MacX64];
+// Built by the lobsterai-computer-use-runtime project and copied into resources/computer-use/
+// (gitignored). On Apple silicon the x64 helper runs through Rosetta.
+const GENERATED_MAC_RUNTIMES = [MAC_RUNTIME, MAC_X64_RUNTIME];
 const macArchiveInstallTest = originalPlatform === 'darwin' && fs.existsSync('/usr/bin/ditto')
   ? test
   : test.skip;
-const generatedMacArchiveTest = originalPlatform === 'darwin' && fs.existsSync(GENERATED_MAC_RUNTIME_ARCHIVE)
-  ? test
-  : test.skip;
+
+function generatedMacRuntimeArchive(runtime: { archiveName: string }): string {
+  return path.join(process.cwd(), 'resources', 'computer-use', runtime.archiveName);
+}
 
 type JsonRpcMessage = {
   error?: unknown;
@@ -545,199 +544,221 @@ describe('resolveComputerUseRuntimePaths', () => {
     }
   });
 
-  generatedMacArchiveTest('installs and resolves the generated macOS helper runtime archive', async () => {
-    setProcessTarget(MAC_RUNTIME);
-    vi.stubEnv('LOBSTER_COMPUTER_USE_RUNTIME_ARCHIVE', GENERATED_MAC_RUNTIME_ARCHIVE);
+  describe.each(GENERATED_MAC_RUNTIMES)('generated $target runtime archive', (runtime) => {
+    const generatedArchive = generatedMacRuntimeArchive(runtime);
+    const generatedArchiveTest = originalPlatform === 'darwin' && fs.existsSync(generatedArchive)
+      ? test
+      : test.skip;
 
-    const result = await installComputerUseRuntime();
-    const paths = result.paths;
+    generatedArchiveTest('installs and resolves the helper runtime', async () => {
+      setProcessTarget(runtime);
+      vi.stubEnv('LOBSTER_COMPUTER_USE_RUNTIME_ARCHIVE', generatedArchive);
 
-    expect(result.success).toBe(true);
-    expect(paths?.mode).toBe(ComputerUseRuntimeMode.MacHelper);
-    expect(paths?.clientModulePath).toContain(path.join(
-      'node_modules',
-      '@lobsterai',
-      'computer-use',
-      'dist',
-      'macos',
-      'computer_use_client.js',
-    ));
-    expect(paths?.helperExePath).toContain(path.join(
-      'node_modules',
-      '@lobsterai',
-      'computer-use',
-      'bin',
-      'macos',
-      'lobster-computer-use',
-    ));
-    expect(paths?.runtimePackageRoot).toContain(path.join(
-      'node_modules',
-      '@lobsterai',
-      'computer-use',
-    ));
-    expect(paths?.clientModulePath && fs.statSync(paths.clientModulePath).isFile()).toBe(true);
-    expect(paths?.helperExePath && fs.statSync(paths.helperExePath).isFile()).toBe(true);
+      const result = await installComputerUseRuntime();
+      const paths = result.paths;
 
-    const server = resolveComputerUseMcpServer({
-      askUserCallbackUrl: 'http://127.0.0.1:1234/ask-user',
-      electronNodePath: process.execPath,
-    });
-    expect(server?.env?.[ComputerUseMcpEnv.ClientModulePath]).toBe(paths?.clientModulePath);
-    expect(server?.env?.[ComputerUseMcpEnv.ExePath]).toBe(paths?.helperExePath);
-    expect(server?.env?.[ComputerUseMcpEnv.RuntimePackageRoot]).toBe(paths?.runtimePackageRoot);
-  });
+      expect(result.success).toBe(true);
+      expect(paths?.mode).toBe(ComputerUseRuntimeMode.MacHelper);
+      expect(paths?.rootDir).toBe(getComputerUseRuntimeRoot(runtime));
+      expect(paths?.clientModulePath).toContain(path.join(
+        'node_modules',
+        '@lobsterai',
+        'computer-use',
+        'dist',
+        'macos',
+        'computer_use_client.js',
+      ));
+      expect(paths?.helperExePath).toContain(path.join(
+        'node_modules',
+        '@lobsterai',
+        'computer-use',
+        'bin',
+        'macos',
+        'lobster-computer-use',
+      ));
+      expect(paths?.runtimePackageRoot).toContain(path.join(
+        'node_modules',
+        '@lobsterai',
+        'computer-use',
+      ));
+      expect(paths?.clientModulePath && fs.statSync(paths.clientModulePath).isFile()).toBe(true);
+      expect(paths?.helperExePath && fs.statSync(paths.helperExePath).isFile()).toBe(true);
 
-  generatedMacArchiveTest('installs the generated macOS helper runtime from packaged Electron resources', async () => {
-    setProcessTarget(MAC_RUNTIME);
-    const resourcesPath = path.join(TEST_USER_DATA, 'Resources');
-    const archivePath = path.join(resourcesPath, 'computer-use', MAC_RUNTIME.archiveName);
-    fs.mkdirSync(path.dirname(archivePath), { recursive: true });
-    fs.copyFileSync(GENERATED_MAC_RUNTIME_ARCHIVE, archivePath);
-    Object.defineProperty(process, 'resourcesPath', {
-      configurable: true,
-      value: resourcesPath,
+      const server = resolveComputerUseMcpServer({
+        askUserCallbackUrl: 'http://127.0.0.1:1234/ask-user',
+        electronNodePath: process.execPath,
+      });
+      expect(server?.env?.[ComputerUseMcpEnv.ClientModulePath]).toBe(paths?.clientModulePath);
+      expect(server?.env?.[ComputerUseMcpEnv.ExePath]).toBe(paths?.helperExePath);
+      expect(server?.env?.[ComputerUseMcpEnv.RuntimePackageRoot]).toBe(paths?.runtimePackageRoot);
     });
 
-    const result = await installComputerUseRuntime();
-
-    expect(result.success).toBe(true);
-    expect(result.paths?.mode).toBe(ComputerUseRuntimeMode.MacHelper);
-    expect(result.paths?.helperExePath && fs.statSync(result.paths.helperExePath).isFile()).toBe(true);
-  });
-
-  generatedMacArchiveTest('runs the generated macOS helper runtime through the MCP stdio bridge', async () => {
-    setProcessTarget(MAC_RUNTIME);
-    vi.stubEnv('LOBSTER_COMPUTER_USE_RUNTIME_ARCHIVE', GENERATED_MAC_RUNTIME_ARCHIVE);
-    // Approve every app prompt so the bridge reaches the real helper.
-    const askServer = http.createServer((req, res) => {
-      let body = '';
-      req.on('data', chunk => { body += chunk; });
-      req.on('end', () => {
-        const question = (JSON.parse(body) as { questions: Array<{ question: string; options: Array<{ label: string }> }> }).questions[0];
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ behavior: 'allow', answers: { [question.question]: question.options[0].label } }));
+    generatedArchiveTest('installs the helper runtime from packaged Electron resources', async () => {
+      setProcessTarget(runtime);
+      const resourcesPath = path.join(TEST_USER_DATA, 'Resources');
+      const archivePath = path.join(resourcesPath, 'computer-use', runtime.archiveName);
+      fs.mkdirSync(path.dirname(archivePath), { recursive: true });
+      fs.copyFileSync(generatedArchive, archivePath);
+      Object.defineProperty(process, 'resourcesPath', {
+        configurable: true,
+        value: resourcesPath,
       });
+
+      const result = await installComputerUseRuntime();
+
+      expect(result.success).toBe(true);
+      expect(result.paths?.mode).toBe(ComputerUseRuntimeMode.MacHelper);
+      expect(result.paths?.helperExePath && fs.statSync(result.paths.helperExePath).isFile()).toBe(true);
     });
-    await new Promise<void>(resolve => askServer.listen(0, '127.0.0.1', resolve));
-    const askPort = (askServer.address() as { port: number }).port;
 
-    const installResult = await installComputerUseRuntime();
-    expect(installResult.success).toBe(true);
-    const server = resolveComputerUseMcpServer({
-      askUserCallbackUrl: `http://127.0.0.1:${askPort}/ask-user`,
-      electronNodePath: process.execPath,
-    });
-    expect(server?.command).toBeTruthy();
-    expect(server?.args?.length).toBeGreaterThan(0);
-
-    const child = spawn(server!.command, server!.args ?? [], {
-      cwd: server!.cwd ?? process.cwd(),
-      // OpenClaw substitutes the secret placeholder from its own environment.
-      env: { ...process.env, ...(server!.env ?? {}), [ComputerUseMcpEnv.BridgeSecret]: 'test-secret' },
-      stdio: 'pipe',
-    });
-    const stderrChunks: string[] = [];
-    child.stderr.on('data', chunk => stderrChunks.push(String(chunk)));
-    const reader = createJsonRpcReader(child);
-
-    try {
-      writeJsonRpc(child, {
-        id: 1,
-        method: 'initialize',
-        params: {
-          protocolVersion: '2025-11-25',
-          capabilities: {},
-          clientInfo: {
-            name: 'lobsterai-computer-use-test',
-            version: '0.0.0',
-          },
-        },
-      });
-      const initialized = await reader.next(message => message.id === 1);
-      expect(initialized.error).toBeUndefined();
-      expect(initialized.result).toMatchObject({
-        serverInfo: { name: 'computer-use' },
-      });
-
-      writeJsonRpc(child, {
-        method: 'notifications/initialized',
-        params: {},
-      });
-      writeJsonRpc(child, {
-        id: 2,
-        method: 'tools/list',
-        params: {},
-      });
-      const toolsList = await reader.next(message => message.id === 2);
-      expect(toolsList.error).toBeUndefined();
-      const tools = (toolsList.result as { tools?: Array<{ name?: string }> }).tools ?? [];
-      expect(tools.map(tool => tool.name)).toContain('list_windows');
-      expect(tools.map(tool => tool.name)).toContain('wait_for_text');
-
-      writeJsonRpc(child, {
-        id: 3,
-        method: 'tools/call',
-        params: {
-          name: 'list_windows',
-          arguments: {},
-        },
-      });
-      const listWindows = await reader.next(message => message.id === 3);
-      expect(listWindows.error).toBeUndefined();
-      expect(listWindows.result).toMatchObject({
-        content: expect.arrayContaining([
-          expect.objectContaining({ type: 'text' }),
-        ]),
-      });
-      const listWindowsContent = (listWindows.result as { content?: Array<{ text?: string; type?: string }> }).content ?? [];
-      const listWindowsText = listWindowsContent.find(item => item.type === 'text')?.text ?? '[]';
-      const windows = JSON.parse(listWindowsText) as Array<{ app?: string; id?: number; title?: string }>;
-      if (windows.length === 0) {
-        console.warn('[ComputerUseMCPTest] skipped get_window_state smoke because list_windows returned no windows');
-        return;
-      }
-
-      writeJsonRpc(child, {
-        id: 4,
-        method: 'tools/call',
-        params: {
-          name: 'get_window_state',
-          arguments: {
-            window: windows[0],
-            include_screenshot: true,
-            include_text: false,
-          },
-        },
-      });
-      const windowState = await reader.next(message => message.id === 4, 10000);
-      expect(windowState.error).toBeUndefined();
-      const windowStateContent = (windowState.result as {
-        content?: Array<{ text?: string; type?: string }>;
-      }).content ?? [];
-      const windowStateText = windowStateContent.find(item => item.type === 'text')?.text;
-      expect(windowStateText).toBeTruthy();
-      const state = JSON.parse(windowStateText!) as {
-        screenshots?: unknown[];
-        window?: { app?: string; id?: number; title?: string };
-      };
-      expect(state.window).toMatchObject({
-        app: windows[0].app,
-        id: windows[0].id,
-      });
-      expect(Array.isArray(state.screenshots)).toBe(true);
-    } finally {
-      child.kill('SIGTERM');
-      await new Promise<void>((resolve) => {
-        const timeout = setTimeout(() => resolve(), 1500);
-        child.once('exit', () => {
-          clearTimeout(timeout);
-          resolve();
+    generatedArchiveTest('runs the helper runtime through the MCP stdio bridge', async () => {
+      setProcessTarget(runtime);
+      vi.stubEnv('LOBSTER_COMPUTER_USE_RUNTIME_ARCHIVE', generatedArchive);
+      // Approve every app prompt so the bridge reaches the real helper.
+      const askServer = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => {
+          const question = (JSON.parse(body) as { questions: Array<{ question: string; options: Array<{ label: string }> }> }).questions[0];
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ behavior: 'allow', answers: { [question.question]: question.options[0].label } }));
         });
       });
-      await new Promise<void>(resolve => askServer.close(() => resolve()));
-    }
+      await new Promise<void>(resolve => askServer.listen(0, '127.0.0.1', resolve));
+      const askPort = (askServer.address() as { port: number }).port;
 
-    expect(stderrChunks.join('')).not.toContain('Error:');
+      const installResult = await installComputerUseRuntime();
+      expect(installResult.success).toBe(true);
+      const server = resolveComputerUseMcpServer({
+        askUserCallbackUrl: `http://127.0.0.1:${askPort}/ask-user`,
+        electronNodePath: process.execPath,
+      });
+      expect(server?.command).toBeTruthy();
+      expect(server?.args?.length).toBeGreaterThan(0);
+
+      const child = spawn(server!.command, server!.args ?? [], {
+        cwd: server!.cwd ?? process.cwd(),
+        // OpenClaw substitutes the secret placeholder from its own environment.
+        env: { ...process.env, ...(server!.env ?? {}), [ComputerUseMcpEnv.BridgeSecret]: 'test-secret' },
+        stdio: 'pipe',
+      });
+      const stderrChunks: string[] = [];
+      child.stderr.on('data', chunk => stderrChunks.push(String(chunk)));
+      const reader = createJsonRpcReader(child);
+
+      try {
+        writeJsonRpc(child, {
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-11-25',
+            capabilities: {},
+            clientInfo: {
+              name: 'lobsterai-computer-use-test',
+              version: '0.0.0',
+            },
+          },
+        });
+        const initialized = await reader.next(message => message.id === 1);
+        expect(initialized.error).toBeUndefined();
+        expect(initialized.result).toMatchObject({
+          serverInfo: { name: 'computer-use' },
+        });
+
+        writeJsonRpc(child, {
+          method: 'notifications/initialized',
+          params: {},
+        });
+        writeJsonRpc(child, {
+          id: 2,
+          method: 'tools/list',
+          params: {},
+        });
+        const toolsList = await reader.next(message => message.id === 2);
+        expect(toolsList.error).toBeUndefined();
+        const tools = (toolsList.result as { tools?: Array<{ name?: string }> }).tools ?? [];
+        expect(tools.map(tool => tool.name)).toContain('list_windows');
+        expect(tools.map(tool => tool.name)).toContain('wait_for_text');
+
+        writeJsonRpc(child, {
+          id: 3,
+          method: 'tools/call',
+          params: {
+            name: 'list_windows',
+            arguments: {},
+          },
+        });
+        const listWindows = await reader.next(message => message.id === 3);
+        expect(listWindows.error).toBeUndefined();
+        expect(listWindows.result).toMatchObject({
+          content: expect.arrayContaining([
+            expect.objectContaining({ type: 'text' }),
+          ]),
+        });
+        const listWindowsContent = (listWindows.result as { content?: Array<{ text?: string; type?: string }> }).content ?? [];
+        const listWindowsText = listWindowsContent.find(item => item.type === 'text')?.text ?? '[]';
+        const windows = JSON.parse(listWindowsText) as Array<{ app?: string; id?: number; title?: string }>;
+        if (windows.length === 0) {
+          console.warn('[ComputerUseMCPTest] skipped get_window_state smoke because list_windows returned no windows');
+          return;
+        }
+
+        writeJsonRpc(child, {
+          id: 4,
+          method: 'tools/call',
+          params: {
+            name: 'check_permissions',
+            arguments: {},
+          },
+        });
+        const permissions = await reader.next(message => message.id === 4);
+        const permissionsContent = (permissions.result as { content?: Array<{ text?: string; type?: string }> }).content ?? [];
+        const permissionsText = permissionsContent.find(item => item.type === 'text')?.text ?? '{}';
+        // Without Screen Recording a screenshot request makes the helper raise the system prompt.
+        const canCaptureScreen = (JSON.parse(permissionsText) as { screenCapture?: boolean }).screenCapture === true;
+
+        writeJsonRpc(child, {
+          id: 5,
+          method: 'tools/call',
+          params: {
+            name: 'get_window_state',
+            arguments: {
+              window: windows[0],
+              include_screenshot: canCaptureScreen,
+              include_text: false,
+            },
+          },
+        });
+        const windowState = await reader.next(message => message.id === 5, 10000);
+        expect(windowState.error).toBeUndefined();
+        const windowStateContent = (windowState.result as {
+          content?: Array<{ text?: string; type?: string }>;
+        }).content ?? [];
+        const windowStateText = windowStateContent.find(item => item.type === 'text')?.text;
+        expect(windowStateText).toBeTruthy();
+        const state = JSON.parse(windowStateText!) as {
+          screenshots?: unknown[];
+          window?: { app?: string; id?: number; title?: string };
+        };
+        expect(state.window).toMatchObject({
+          app: windows[0].app,
+          id: windows[0].id,
+        });
+        expect(Array.isArray(state.screenshots)).toBe(true);
+      } finally {
+        child.kill('SIGTERM');
+        await new Promise<void>((resolve) => {
+          const timeout = setTimeout(() => resolve(), 1500);
+          child.once('exit', () => {
+            clearTimeout(timeout);
+            resolve();
+          });
+        });
+        await new Promise<void>(resolve => askServer.close(() => resolve()));
+      }
+
+      expect(stderrChunks.join('')).not.toContain('Error:');
+    });
   });
 
   test('reports Escape cancellation before renewing the helper turn', () => {

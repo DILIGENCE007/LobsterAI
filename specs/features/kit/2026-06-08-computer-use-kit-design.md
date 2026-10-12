@@ -67,7 +67,8 @@ Computer Use MVP 阶段为了快速验证能力，LobsterAI 直接内置并启�
 
 - 客户端在 `kits:fetchStore` 获取远端 Kit 市场数据后，向 `kits` 列表追加 Computer Use built-in kit。
 - 追加前按 `id` 去重，避免远端同名 kit 与内置 kit 重复展示。
-- 仅在支持的平台展示：Windows x64 和 macOS arm64 都通过远程 runtime 包安装；macOS arm64 的包由独立源码项目构建后上传到 NOS/CDN。
+- 仅在支持的平台展示：Windows x64、macOS arm64 和 macOS x64（Intel）都通过远程 runtime 包安装；macOS 两个架构的 runtime 包由独立源码项目分别构建（x64 用 `--arch x86_64` 交叉编译）后上传到 NOS/CDN。
+- macOS 另需系统版本不低于 helper 的部署目标 macOS 13（Electron 通过 `process.getSystemVersion()` 提供）；低于该版本时按不支持的平台处理。
 - 内置 entry 使用与市场 kit 一致的数据结构：
   - `id`
   - `name`
@@ -82,7 +83,7 @@ Computer Use MVP 阶段为了快速验证能力，LobsterAI 直接内置并启�
 ### FR-2: Skill Bundle 安装复用现有 Kit 流程
 
 - Computer Use skill 不随仓库默认放在 `SKILLs/computer-use` 下。
-- 内置 kit 的 `skills.bundle` 指向公开 CDN/NOS 上的 zip 包；macOS arm64 的 skill 包由独立源码项目构建后上传。
+- 内置 kit 的 `skills.bundle` 指向公开 CDN/NOS 上的 zip 包；macOS 的 skill 包由独立源码项目构建后上传，包内只有 `SKILL.md`，arm64 与 x64 共用同一个包（`ComputerUseKitBundle.MacOS`）。
 - 安装流程继续使用通用 kit 逻辑：
   1. 下载 zip。
   2. 解压到临时目录。
@@ -253,6 +254,8 @@ const shouldEnableComputerUse =
   && isComputerUseKitInstalled(store);
 ```
 
+runtime descriptor 按 `process.platform`、`process.arch` 和 descriptor 的 `minimumOsVersion` 匹配当前主机，平台判断都基于它。
+
 当 `shouldEnableComputerUse` 为 true：
 
 1. 调用 `installComputerUseRuntime()`，确保 runtime 可用。
@@ -277,6 +280,7 @@ skill/computer-use/SKILL.md
 - Swift helper 只使用 Apple 公开的 Accessibility、Screen Capture、CoreGraphics、AppKit 与 Text Input Source API。
 - TypeScript client 通过 JSON line 协议包装 helper，向 MCP bridge 暴露与 Windows helper 对齐的方法，并把 bridge 的回合元信息（`_meta`）透传给 helper；诊断日志写入 `LOBSTER_COMPUTER_USE_LOG_DIR`（不记录输入的文本）。
 - 构建脚本产出 runtime zip 和 skill zip，并生成 size/sha256；runtime zip 内同时携带 `skill/computer-use`，用于 runtime 升级时刷新已安装 kit 的 skill。
+- 构建脚本按 `--target mac-arm64|mac-x64` 出包：x64 helper 用 `--arch x86_64` 交叉编译，链接器不会给 x86_64 产物签名，构建时补 ad-hoc 签名，与 arm64 一致；`runtime.json` 的 `arch` 写 Node 的 `process.arch` 值（`arm64` / `x64`），LobsterAI 安装时按它校验。skill zip 在两个 target 间逐字节一致。
 - `SKILL.md` 必须带 YAML frontmatter（`name: computer-use` 与 `description`），否则 OpenClaw 会以 `description is required` 跳过该 skill。
 
 交互与投递策略（`delivery`）：
@@ -353,7 +357,9 @@ Computer Use kit 写入 `kits_installed` 的结构与普通 kit 保持一致：
 
 | 场景 | 处理方式 |
 |------|----------|
-| 平台不是 Windows x64 或 macOS arm64 | Kit 市场不追加 Computer Use built-in entry；MCP resolver 也不返回 Computer Use server |
+| 平台不是 Windows x64、macOS arm64 或 macOS x64 | Kit 市场不追加 Computer Use built-in entry；MCP resolver 也不返回 Computer Use server |
+| macOS 低于 13 | 与不支持的平台相同；旧版本留下的安装记录保留但不生效，系统升级到 macOS 13 后自动恢复 |
+| Apple 芯片上运行 x64 版 LobsterAI（Rosetta） | `process.arch` 为 `x64`，使用 mac-x64 runtime，helper 同样经 Rosetta 运行 |
 | macOS 未授予辅助功能/屏幕录制 | 工具返回缺失项和系统设置路径；`request_permissions` 打开对应面板；授权后新的 helper 进程生效 |
 | 用户拒绝某个应用的授权 | 该应用的动作直接失败并提示模型不要重试；本会话不再询问 |
 | macOS 后台无法投递的输入 | 默认短暂前台接管并恢复鼠标；`delivery: "background"` 时直接失败 |
@@ -394,7 +400,7 @@ Computer Use kit 写入 `kits_installed` 的结构与普通 kit 保持一致：
 ## 7. 验收标准
 
 1. 新安装或清空用户数据后，`SKILLs/computer-use` 不存在，SkillManager 不列出 Computer Use skill。
-2. Kit 市场在 Windows x64 上展示 Computer Use built-in kit，且与普通 kit 混合展示。
+2. Kit 市场在 Windows x64 和 macOS 13+（Apple 芯片与 Intel）上展示 Computer Use built-in kit，且与普通 kit 混合展示；macOS 12 上不展示。
 3. 安装 Computer Use kit 后，用户目录中出现 `SKILLs/computer-use/SKILL.md`。
 4. 安装 Computer Use kit 后，`kits_installed` 中出现 `computer-use` 记录。
 5. 安装 Computer Use kit 后，runtime/exe 安装到用户数据目录的 Computer Use runtime 位置。
@@ -415,7 +421,8 @@ Computer Use kit 写入 `kits_installed` 的结构与普通 kit 保持一致：
 
 - `npx tsc --project electron-tsconfig.json --noEmit`
 - `npx eslint` 针对本次涉及文件
-- `npm test -- computerUseMcpServer`
+- `npm test -- computerUseRuntime`
+- `npm test -- computerUseMcpServer`（把各 target 的 runtime zip 放进 `resources/computer-use/` 后，会用真实 helper 跑 MCP stdio bridge；Apple 芯片上 x64 helper 经 Rosetta 运行）
 - `npm test -- skillManager`
 - `npm test -- kitCapability`
 

@@ -44,6 +44,7 @@ import {
 } from './computerUseRuntime';
 
 const MAC_RUNTIME = ComputerUseRuntimes[ComputerUseRuntimeTarget.MacArm64];
+const MAC_X64_RUNTIME = ComputerUseRuntimes[ComputerUseRuntimeTarget.MacX64];
 
 function setProcessTarget(runtime: { platform: string; arch: string }): void {
   Object.defineProperty(process, 'platform', { value: runtime.platform });
@@ -61,6 +62,7 @@ afterEach(() => {
     configurable: true,
     value: originalResourcesPath,
   });
+  delete (process as { getSystemVersion?: unknown }).getSystemVersion;
   fs.rmSync(TEST_USER_DATA, { recursive: true, force: true });
   vi.unstubAllEnvs();
 });
@@ -70,9 +72,9 @@ describe('Computer Use kit bundle catalog', () => {
     const descriptor = getCurrentComputerUseKitBundleDescriptor();
 
     expect(descriptor).toEqual({
-      bundle: ComputerUseKitBundle.MacArm64,
-      sha256: ComputerUseKitBundleIntegrity.MacArm64.Sha256,
-      sizeBytes: ComputerUseKitBundleIntegrity.MacArm64.SizeBytes,
+      bundle: ComputerUseKitBundle.MacOS,
+      sha256: ComputerUseKitBundleIntegrity.MacOS.Sha256,
+      sizeBytes: ComputerUseKitBundleIntegrity.MacOS.SizeBytes,
     });
   });
 
@@ -93,9 +95,9 @@ describe('Computer Use kit bundle catalog', () => {
 
     const descriptor = {
       archiveName: 'computer-use-skill.zip',
-      bundle: ComputerUseKitBundle.MacArm64,
-      sha256: ComputerUseKitBundleIntegrity.MacArm64.Sha256,
-      sizeBytes: ComputerUseKitBundleIntegrity.MacArm64.SizeBytes,
+      bundle: ComputerUseKitBundle.MacOS,
+      sha256: ComputerUseKitBundleIntegrity.MacOS.Sha256,
+      sizeBytes: ComputerUseKitBundleIntegrity.MacOS.SizeBytes,
     };
 
     expect(resolveBundledComputerUseKitArchivePath(descriptor)).toBe(archivePath);
@@ -117,9 +119,9 @@ describe('Computer Use kit bundle catalog', () => {
 
     const descriptor = {
       archiveName: 'computer-use-skill.zip',
-      bundle: ComputerUseKitBundle.MacArm64,
-      sha256: ComputerUseKitBundleIntegrity.MacArm64.Sha256,
-      sizeBytes: ComputerUseKitBundleIntegrity.MacArm64.SizeBytes,
+      bundle: ComputerUseKitBundle.MacOS,
+      sha256: ComputerUseKitBundleIntegrity.MacOS.Sha256,
+      sizeBytes: ComputerUseKitBundleIntegrity.MacOS.SizeBytes,
     };
 
     expect(resolveBundledComputerUseKitArchivePath(descriptor)).toBe(archivePath);
@@ -139,10 +141,27 @@ describe('Computer Use kit bundle catalog', () => {
 
     expect(kit.id).toBe(ComputerUseKitId.BuiltIn);
     expect(kit.version).toBe(MAC_RUNTIME.version);
-    expect(kit.skills?.bundle).toBe(ComputerUseKitBundle.MacArm64);
-    expect(kit.skills?.bundleSha256).toBe(ComputerUseKitBundleIntegrity.MacArm64.Sha256);
-    expect(kit.skills?.bundleSizeBytes).toBe(ComputerUseKitBundleIntegrity.MacArm64.SizeBytes);
+    expect(kit.skills?.bundle).toBe(ComputerUseKitBundle.MacOS);
+    expect(kit.skills?.bundleSha256).toBe(ComputerUseKitBundleIntegrity.MacOS.Sha256);
+    expect(kit.skills?.bundleSizeBytes).toBe(ComputerUseKitBundleIntegrity.MacOS.SizeBytes);
     expect(kit.skills?.list?.map(skill => skill.id)).toEqual([ComputerUseSkillId.BuiltIn]);
+  });
+
+  test('offers the kit on Intel Macs with the shared macOS skill bundle', () => {
+    setProcessTarget(MAC_X64_RUNTIME);
+
+    const kit = buildComputerUseMarketplaceKit() as { skills?: { bundle?: unknown }; version?: unknown };
+
+    expect(isComputerUseKitSupportedPlatform()).toBe(true);
+    expect(kit.version).toBe(MAC_X64_RUNTIME.version);
+    expect(kit.skills?.bundle).toBe(ComputerUseKitBundle.MacOS);
+  });
+
+  test('hides the kit on macOS versions the helper does not support', () => {
+    Object.defineProperty(process, 'getSystemVersion', { configurable: true, value: () => '12.7.6' });
+
+    expect(isComputerUseKitSupportedPlatform()).toBe(false);
+    expect(getCurrentComputerUseKitBundleDescriptor()).toBeNull();
   });
 });
 

@@ -8,6 +8,7 @@ import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { promisify } from 'util';
 
+import { isClientVersionAtLeast } from '../../shared/clientVersion';
 import { getLanguage, type LanguageType } from '../i18n';
 
 export const ComputerUseRuntimeId = {
@@ -19,6 +20,7 @@ export type ComputerUseRuntimeId =
 export const ComputerUseRuntimeTarget = {
   WindowsX64: 'win-x64',
   MacArm64: 'mac-arm64',
+  MacX64: 'mac-x64',
 } as const;
 export type ComputerUseRuntimeTarget =
   typeof ComputerUseRuntimeTarget[keyof typeof ComputerUseRuntimeTarget];
@@ -49,12 +51,17 @@ export interface ComputerUseRuntimeDescriptor {
   archiveName: string;
   downloadUrl: string | null;
   id: typeof ComputerUseRuntimeId.BuiltIn;
+  /** Oldest OS version the helper runs on; older hosts get no runtime. */
+  minimumOsVersion?: string;
   platform: ComputerUseRuntimePlatform;
   sha256: string;
   sizeBytes: number;
   target: ComputerUseRuntimeTarget;
   version: string;
 }
+
+/** Deployment target of the macOS helper (`.macOS(.v13)` in its Package.swift). */
+const MAC_HELPER_MINIMUM_OS_VERSION = '13.0';
 
 export const ComputerUseRuntimes = {
   [ComputerUseRuntimeTarget.WindowsX64]: {
@@ -74,10 +81,23 @@ export const ComputerUseRuntimes = {
     platform: ComputerUseRuntimePlatform.MacOS,
     arch: ComputerUseRuntimeArch.Arm64,
     target: ComputerUseRuntimeTarget.MacArm64,
+    minimumOsVersion: MAC_HELPER_MINIMUM_OS_VERSION,
     archiveName: 'lobsterai-computer-use-runtime-mac-arm64-0.2.2.zip',
     downloadUrl: 'https://ydschool-video.nosdn.127.net/1791322101794lobsterai-computer-use-runtime-mac-arm64-0.2.2.zip',
     sha256: 'c46dd2f4a7786840336240dbd7795676b6e39171006914926f026995f286e0b2',
     sizeBytes: 211696,
+  },
+  [ComputerUseRuntimeTarget.MacX64]: {
+    id: ComputerUseRuntimeId.BuiltIn,
+    version: '0.2.2',
+    platform: ComputerUseRuntimePlatform.MacOS,
+    arch: ComputerUseRuntimeArch.X64,
+    target: ComputerUseRuntimeTarget.MacX64,
+    minimumOsVersion: MAC_HELPER_MINIMUM_OS_VERSION,
+    archiveName: 'lobsterai-computer-use-runtime-mac-x64-0.2.2.zip',
+    downloadUrl: 'https://ydschool-video.nosdn.127.net/1791804279073lobsterai-computer-use-runtime-mac-x64-0.2.2.zip',
+    sha256: '01b0746b13e387860b873c11e9e86d625e334f3483f5e84e59e3d35c80dbd52b',
+    sizeBytes: 221847,
   },
 } as const satisfies Record<ComputerUseRuntimeTarget, ComputerUseRuntimeDescriptor>;
 
@@ -138,7 +158,7 @@ export interface ComputerUseRuntimeDownloadProgress {
 const RUNTIME_STATE_FILE = 'runtime.json';
 const COMPUTER_USE_RESOURCE_DIR = 'computer-use';
 const RUNTIME_ARCHIVE_ENV = 'LOBSTER_COMPUTER_USE_RUNTIME_ARCHIVE';
-const SUPPORTED_PLATFORM_LABEL = 'Windows x64 or macOS arm64';
+const SUPPORTED_PLATFORM_LABEL = 'Windows x64 or macOS 13 or later';
 const STALE_STAGING_DIR_MS = 60 * 60 * 1000;
 const execFileAsync = promisify(execFile);
 
@@ -158,10 +178,22 @@ function isDirectory(filePath: string): boolean {
   }
 }
 
+function meetsMinimumOsVersion(descriptor: ComputerUseRuntimeDescriptor): boolean {
+  if (!descriptor.minimumOsVersion) {
+    return true;
+  }
+  // Electron reports the macOS version here (not the Darwin kernel version); outside
+  // Electron the version is unknown and not gated.
+  const osVersion = process.getSystemVersion?.();
+  return !osVersion || isClientVersionAtLeast(osVersion, descriptor.minimumOsVersion);
+}
+
 export function getCurrentComputerUseRuntimeDescriptor(): ComputerUseRuntimeDescriptor | null {
-  const descriptors = Object.values(ComputerUseRuntimes);
+  const descriptors: ComputerUseRuntimeDescriptor[] = Object.values(ComputerUseRuntimes);
   return descriptors.find(descriptor => (
-    process.platform === descriptor.platform && process.arch === descriptor.arch
+    process.platform === descriptor.platform
+    && process.arch === descriptor.arch
+    && meetsMinimumOsVersion(descriptor)
   )) ?? null;
 }
 

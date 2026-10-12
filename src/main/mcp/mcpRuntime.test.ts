@@ -11,21 +11,19 @@ import { McpRuntime } from './mcpRuntime';
 const TEST_USER_DATA = path.join(process.cwd(), '.test-mcp-runtime-computer-use');
 const originalPlatform = process.platform;
 const originalArch = process.arch;
-const MAC_RUNTIME = ComputerUseRuntimes[ComputerUseRuntimeTarget.MacArm64];
-const GENERATED_MAC_RUNTIME_ARCHIVE = path.join(
-  process.cwd(),
-  'resources',
-  'computer-use',
-  MAC_RUNTIME.archiveName,
-);
+const MAC_RUNTIMES = [
+  ComputerUseRuntimes[ComputerUseRuntimeTarget.MacArm64],
+  ComputerUseRuntimes[ComputerUseRuntimeTarget.MacX64],
+];
+type MacRuntime = typeof MAC_RUNTIMES[number];
+
 // Built by the lobsterai-computer-use-runtime project (npm run build:release) and copied
 // into resources/computer-use/ (gitignored) to run this end-to-end check locally.
-const generatedMacComputerUseTest =
-  originalPlatform === 'darwin' && fs.existsSync(GENERATED_MAC_RUNTIME_ARCHIVE)
-    ? test
-    : test.skip;
+function generatedMacRuntimeArchive(runtime: MacRuntime): string {
+  return path.join(process.cwd(), 'resources', 'computer-use', runtime.archiveName);
+}
 
-function setProcessTarget(target: typeof MAC_RUNTIME): void {
+function setProcessTarget(target: MacRuntime): void {
   Object.defineProperty(process, 'platform', { value: target.platform });
   Object.defineProperty(process, 'arch', { value: target.arch });
 }
@@ -50,10 +48,10 @@ vi.mock('./mcpStore', () => ({
   },
 }));
 
-function buildInstalledComputerUseRecord(): InstalledKitRecord {
+function buildInstalledComputerUseRecord(runtime: MacRuntime): InstalledKitRecord {
   return {
     id: ComputerUseKitId.BuiltIn,
-    version: MAC_RUNTIME.version,
+    version: runtime.version,
     installedAt: Date.now(),
     skills: {
       skillIds: [ComputerUseKitId.BuiltIn],
@@ -63,9 +61,14 @@ function buildInstalledComputerUseRecord(): InstalledKitRecord {
   };
 }
 
-describe('McpRuntime Computer Use integration', () => {
+describe.each(MAC_RUNTIMES)('McpRuntime Computer Use integration ($target)', (macRuntime) => {
+  const generatedArchive = generatedMacRuntimeArchive(macRuntime);
+  const generatedMacComputerUseTest = originalPlatform === 'darwin' && fs.existsSync(generatedArchive)
+    ? test
+    : test.skip;
+
   beforeEach(() => {
-    setProcessTarget(MAC_RUNTIME);
+    setProcessTarget(macRuntime);
   });
 
   afterEach(() => {
@@ -77,7 +80,7 @@ describe('McpRuntime Computer Use integration', () => {
 
   generatedMacComputerUseTest('injects the built-in Computer Use server when the kit is installed', async () => {
     const installed = {
-      [ComputerUseKitId.BuiltIn]: buildInstalledComputerUseRecord(),
+      [ComputerUseKitId.BuiltIn]: buildInstalledComputerUseRecord(macRuntime),
     };
     const sqliteStore = {
       get: vi.fn((key: string) => (key === KitStoreKey.Installed ? installed : undefined)),
@@ -91,7 +94,7 @@ describe('McpRuntime Computer Use integration', () => {
     (runtime as unknown as { bridgeServer: { askUserCallbackUrl: string } }).bridgeServer = {
       askUserCallbackUrl: 'http://127.0.0.1:1234/ask-user',
     };
-    vi.stubEnv('LOBSTER_COMPUTER_USE_RUNTIME_ARCHIVE', GENERATED_MAC_RUNTIME_ARCHIVE);
+    vi.stubEnv('LOBSTER_COMPUTER_USE_RUNTIME_ARCHIVE', generatedArchive);
 
     const servers = await runtime.refreshResolvedServersCache();
 
