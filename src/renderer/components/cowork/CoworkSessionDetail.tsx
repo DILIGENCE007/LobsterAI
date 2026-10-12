@@ -229,6 +229,7 @@ interface CoworkSessionDetailProps {
     selectedTextSnippets?: CoworkSelectedTextSnippet[],
     browserAnnotations?: import('@shared/cowork/browserAnnotations').CoworkBrowserAnnotationMessageBatch[],
     collaborationMode?: CoworkCollaborationModeType,
+    titleInput?: string,
   ) => boolean | void | Promise<boolean | void>;
   onStop: () => void;
   isSidebarCollapsed?: boolean;

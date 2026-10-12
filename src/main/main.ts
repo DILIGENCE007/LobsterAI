@@ -27,6 +27,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { CoworkSystemMessageKind } from '../common/coworkSystemMessages';
 import { buildGoalSettingMessageMetadata } from '../common/goalCommandDisplay';
 import type { OpenClawSessionPatch } from '../common/openclawSession';
+import type { GenerateSessionTitleRequest } from '../common/sessionTitle';
 import { buildSessionTitleFromInput } from '../common/sessionTitle';
 import { buildScheduledTaskEnginePrompt } from '../scheduledTask/enginePrompt';
 import {
@@ -367,7 +368,6 @@ import {
 import { CoworkTurnUsageService } from './libs/coworkTurnUsage';
 import {
   ensureElectronNodeShim,
-  generateSessionTitle,
   getElectronNodeRuntimePath,
   probeCoworkModelReadiness,
 } from './libs/coworkUtil';
@@ -543,6 +543,7 @@ import { runLegacyWeixinAllowFromMigration } from './libs/openclawWeixinPairingM
 import { migrateMainAgentWorkspace } from './libs/openclawWorkspaceMigration';
 import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
 import { isAnalyticsEndpointUrl, sanitizeUrlForLog, serializeForLog } from './libs/sanitizeForLog';
+import { SessionTitleGenerator } from './libs/sessionTitleGenerator';
 import { packageNodeServiceDeployment } from './libs/shareDeployment/nodeServiceDeploymentPackager';
 import {
   analyzeNodeServiceProjectDirectory,
@@ -9660,6 +9661,22 @@ if (!gotTheLock) {
 
 
   // Cowork IPC handlers
+  const sessionTitleGenerator = new SessionTitleGenerator({
+    getAuth: () => {
+      const tokens = getAuthTokens();
+      const sessionKey = getAuthSessionKey();
+      return tokens && sessionKey
+        ? { sessionKey, accessToken: tokens.accessToken, headers: getEnterpriseAccountHeaders() }
+        : null;
+    },
+    getBaseUrl: getServerApiBaseUrl,
+    fetch: (url, options) => net.fetch(url, options),
+    getSession: sessionId => getCoworkStore().getSession(sessionId),
+    setTitle: (sessionId, title) => {
+      getCoworkStore().updateSession(sessionId, { title }, { touchUpdatedAt: false });
+    },
+  });
+
   ipcMain.handle(
     'cowork:session:start',
     async (
@@ -10640,7 +10657,7 @@ if (!gotTheLock) {
   );
 
   ipcMain.handle(
-    'cowork:session:rename',
+    CoworkIpcChannel.RenameSession,
     async (_event, options: { sessionId: string; title: string }) => {
       try {
         const title = options.title.trim();
@@ -10648,6 +10665,7 @@ if (!gotTheLock) {
           return { success: false, error: 'Title is required' };
         }
         const coworkStoreInstance = getCoworkStore();
+        sessionTitleGenerator.cancel(options.sessionId);
         coworkStoreInstance.updateSession(options.sessionId, { title }, { touchUpdatedAt: false });
         return { success: true };
       } catch (error) {
@@ -13042,8 +13060,9 @@ if (!gotTheLock) {
     return getXaiOAuthStatus();
   });
 
-  ipcMain.handle('generate-session-title', async (_event, userInput: string | null) => {
-    return generateSessionTitle(userInput, t('coworkDefaultSessionTitle'));
+  ipcMain.handle(CoworkIpcChannel.GenerateSessionTitle, async (event, request: GenerateSessionTitleRequest) => {
+    if (event.sender !== mainWindow?.webContents) return null;
+    return sessionTitleGenerator.generate(request);
   });
 
   ipcMain.handle('get-recent-cwds', async (_event, limit?: number) => {

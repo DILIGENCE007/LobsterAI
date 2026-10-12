@@ -1,4 +1,5 @@
 import type { OpenClawSessionPatch } from '../../common/openclawSession';
+import type { GenerateSessionTitleRequest } from '../../common/sessionTitle';
 import type {
   ActivityActionResponse,
   ActivityContextResponse,
@@ -881,7 +882,7 @@ interface IElectronAPI {
     probeModel?: boolean;
   }) => Promise<{ hasConfig: boolean; config: CoworkApiConfig | null; error?: string }>;
   saveApiConfig: (config: CoworkApiConfig) => Promise<{ success: boolean; error?: string }>;
-  generateSessionTitle: (userInput: string | null) => Promise<string>;
+  generateSessionTitle: (request: GenerateSessionTitleRequest) => Promise<string | null>;
   getRecentCwds: (limit?: number) => Promise<string[]>;
   dsh: {
     getState: () => Promise<{
