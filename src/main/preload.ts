@@ -529,7 +529,8 @@ contextBridge.exposeInMainWorld('electron', {
     },
     presetTemplates: async () => {
       const result = await ipcRenderer.invoke(AgentIpcChannel.PresetTemplates);
-      return result?.success ? result.presets : [];
+      if (!result?.success) throw new Error(result?.error || 'Failed to load preset templates');
+      return result.presets;
     },
     addPreset: async (presetId: string) => {
       const result = await ipcRenderer.invoke(AgentIpcChannel.AddPreset, presetId);

@@ -1,20 +1,11 @@
 import { AgentAvatarSvg, encodeAgentAvatarIcon } from '../shared/agent/avatar';
+import { AgentSource } from '../shared/agent/constants';
+import type { ExpertDiscovery, PresetAgent } from '../shared/agent/presets';
 import type { CreateAgentRequest } from './coworkStore';
+import { ADDITIONAL_EXPERT_PRESETS, LEGACY_EXPERT_DISCOVERY } from './expertPresets';
 import { getLanguage } from './i18n';
 
-export interface PresetAgent {
-  id: string;
-  name: string;
-  nameEn: string;
-  icon: string;
-  description: string;
-  descriptionEn: string;
-  identity: string;
-  identityEn: string;
-  systemPrompt: string;
-  systemPromptEn: string;
-  skillIds: string[];
-}
+export type { PresetAgent } from '../shared/agent/presets';
 
 const PresetAgentIcon = {
   StockExpert: encodeAgentAvatarIcon({
@@ -45,7 +36,7 @@ const PresetAgentIcon = {
  * the target audience is Chinese-speaking users.  System prompts are
  * kept bilingual so models respond naturally in the user's language.
  */
-export const PRESET_AGENTS: PresetAgent[] = [
+const LEGACY_PRESET_AGENTS: Omit<PresetAgent, keyof ExpertDiscovery>[] = [
   {
     id: 'stockexpert',
     name: '股票助手',
@@ -368,6 +359,11 @@ export const PRESET_AGENTS: PresetAgent[] = [
   },
 ];
 
+export const PRESET_AGENTS: PresetAgent[] = [
+  ...LEGACY_PRESET_AGENTS.map(preset => ({ ...preset, ...LEGACY_EXPERT_DISCOVERY[preset.id] })),
+  ...ADDITIONAL_EXPERT_PRESETS,
+];
+
 /**
  * Convert a preset agent template to a CreateAgentRequest.
  * Selects localized fields based on the current language.
@@ -382,7 +378,7 @@ export function presetToCreateRequest(preset: PresetAgent): CreateAgentRequest {
     systemPrompt: isEn && preset.systemPromptEn ? preset.systemPromptEn : preset.systemPrompt,
     icon: preset.icon,
     skillIds: preset.skillIds,
-    source: 'preset',
+    source: AgentSource.Preset,
     presetId: preset.id,
   };
 }

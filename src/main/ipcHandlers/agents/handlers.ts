@@ -268,9 +268,14 @@ export function registerAgentHandlers(deps: AgentHandlerDeps): void {
   ipcMain.handle(AgentIpcChannel.AddPreset, async (_event, presetId: string) => {
     try {
       const agent = getAgentManager().addPresetAgent(presetId, resolveDefaultAgentModelRef());
-      syncOpenClawConfig({ reason: 'agent-preset-added' }).catch(err => {
-        console.error('[OpenClaw] config sync after agent-preset-added failed:', err);
-      });
+      if (!agent) return { success: false, error: 'Preset agent not found' };
+      // The composer must not become ready before OpenClaw knows this agent.
+      // If sync fails, a retry reuses the saved instance instead of duplicating it.
+      const syncResult = await syncOpenClawConfig({ reason: 'agent-preset-added' });
+      if (!syncResult.success) {
+        console.error('[OpenClaw] config sync after agent-preset-added failed:', syncResult.error);
+        return { success: false, error: syncResult.error || 'Failed to sync preset agent' };
+      }
       return { success: true, agent };
     } catch (error) {
       return {

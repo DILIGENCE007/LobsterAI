@@ -1,0 +1,189 @@
+import { ArrowRightIcon, MagnifyingGlassIcon, SparklesIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import type { ExpertCategory, PresetAgent } from '@shared/agent/presets';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+import { agentService } from '../../services/agent';
+import { i18nService } from '../../services/i18n';
+import type { Agent } from '../../types/agent';
+import AgentAvatarIcon from '../agent/AgentAvatarIcon';
+import { MANAGEMENT_PAGE_TITLE_TEXT } from '../common/managementTypography';
+import Modal from '../common/Modal';
+import ComposeIcon from '../icons/ComposeIcon';
+import SidebarToggleIcon from '../icons/SidebarToggleIcon';
+import { EXPERT_CATEGORY_LABELS, EXPERT_SCENARIOS, expertText, filterExperts } from './catalog';
+
+interface ExpertPlazaViewProps {
+  onSummon: (agent: Agent, prompt: string) => void;
+  isSidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
+  onNewChat?: () => void;
+  updateBadge?: React.ReactNode;
+}
+
+const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCollapsed, onToggleSidebar, onNewChat, updateBadge }) => {
+  const [presets, setPresets] = useState<PresetAgent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState<ExpertCategory | null>(null);
+  const [tag, setTag] = useState<string | null>(null);
+  const [detail, setDetail] = useState<PresetAgent | null>(null);
+  const [summoning, setSummoning] = useState<string | null>(null);
+  const [summonFailed, setSummonFailed] = useState(false);
+  const mountedRef = useRef(false);
+  const summoningRef = useRef(false);
+  const t = (key: string) => i18nService.t(key);
+  const language = i18nService.getLanguage();
+  const name = (preset: PresetAgent) => language === 'en' ? preset.nameEn : preset.name;
+  const description = (preset: PresetAgent) => language === 'en' ? preset.descriptionEn : preset.description;
+  const filtered = useMemo(() => filterExperts(presets, query, category, tag), [presets, query, category, tag]);
+  const selectedTag = presets.flatMap(preset => preset.tags).find(item => item.zh === tag);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadFailed(false);
+    try {
+      const catalog = await window.electron.agents.presetTemplates();
+      if (mountedRef.current) setPresets(catalog);
+    } catch (error) {
+      console.error('[ExpertPlaza] Failed to load experts:', error);
+      if (mountedRef.current) setLoadFailed(true);
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    void load();
+    return () => { mountedRef.current = false; };
+  }, [load]);
+
+  const summon = async (preset: PresetAgent, prompt = expertText(preset.starterPrompts[0], language)) => {
+    if (summoningRef.current) return;
+    summoningRef.current = true;
+    setSummoning(preset.id);
+    setSummonFailed(false);
+    try {
+      const agent = await agentService.addPreset(preset.id);
+      if (!agent) throw new Error('Expert preparation failed');
+      if (mountedRef.current) onSummon(agent, prompt);
+    } catch (error) {
+      console.error('[ExpertPlaza] Failed to summon expert:', error);
+      if (mountedRef.current) setSummonFailed(true);
+    } finally {
+      summoningRef.current = false;
+      if (mountedRef.current) setSummoning(null);
+    }
+  };
+
+  const summonButton = (preset: PresetAgent, large = false) => (
+    <button type="button" disabled={summoning !== null} onClick={() => void summon(preset)}
+      aria-label={`${t('expertSummon')} ${name(preset)}`}
+      className={`inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary text-white font-medium transition-colors hover:bg-primary-hover disabled:opacity-50 ${large ? 'px-5 py-2.5 text-sm' : 'px-3 py-1.5 text-xs'}`}>
+      <SparklesIcon className="h-3.5 w-3.5" />
+      {summoning === preset.id ? t('expertSummoning') : t('expertSummon')}
+    </button>
+  );
+
+  const closeDetail = () => setDetail(null);
+  const errorNotice = summonFailed && <p role="alert" className="rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-400">{t('expertSummonFailed')}</p>;
+
+  return (
+    <div data-skin-management-page="true" className="relative z-10 flex h-full min-w-0 flex-1 flex-col bg-background">
+      <div className="draggable flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
+        {isSidebarCollapsed && window.electron.platform !== 'win32' && (
+          <div className={`non-draggable flex items-center gap-1 ${window.electron.platform === 'darwin' ? 'pl-[68px]' : ''}`}>
+            <button type="button" aria-label={t('expertExpandSidebar')} onClick={onToggleSidebar} className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary hover:bg-surface-raised"><SidebarToggleIcon className="h-4 w-4" isCollapsed /></button>
+            <button type="button" aria-label={t('newChat')} onClick={onNewChat} className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary hover:bg-surface-raised"><ComposeIcon className="h-4 w-4" /></button>
+            {updateBadge}
+          </div>
+        )}
+        <h1 className={`${MANAGEMENT_PAGE_TITLE_TEXT} font-semibold text-foreground`}>{t('expertPlaza')}</h1>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+        <div className="mx-auto w-full max-w-[1200px] space-y-8 px-6 py-7 lg:px-8">
+          <div className="flex flex-wrap items-end justify-between gap-5">
+            <div>
+              <h2 className="text-2xl font-semibold tracking-tight text-foreground">{t('expertPlazaHeading')}</h2>
+              <p className="mt-2 text-sm text-secondary">{t('expertPlazaDescription')}</p>
+            </div>
+            <div className="relative w-full sm:w-72">
+              <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted" />
+              <input value={query} onChange={event => setQuery(event.target.value)} aria-label={t('expertSearch')} placeholder={t('expertSearch')}
+                className="h-10 w-full rounded-xl border border-border bg-surface pl-9 pr-9 text-sm text-foreground outline-none transition-colors placeholder:text-muted focus:border-primary" />
+              {query && <button type="button" aria-label={t('expertClearSearch')} onClick={() => setQuery('')} className="absolute right-2 top-2 rounded p-1 text-secondary hover:bg-surface-raised"><XMarkIcon className="h-4 w-4" /></button>}
+            </div>
+          </div>
+
+          {loading ? <p role="status" className="py-20 text-center text-sm text-secondary">{t('loading')}</p> : loadFailed ? (
+            <div role="alert" className="space-y-4 py-16 text-center"><p className="text-sm text-secondary">{t('expertLoadFailed')}</p><button type="button" onClick={() => void load()} className="rounded-lg border border-border px-4 py-2 text-sm hover:bg-surface-raised">{t('retry')}</button></div>
+          ) : <>
+            {!query.trim() && !category && !tag && presets.length > 0 && (
+              <section aria-labelledby="expert-featured-title">
+                <div className="mb-4 flex items-center gap-2"><SparklesIcon className="h-4 w-4 text-primary" /><h2 id="expert-featured-title" className="text-sm font-semibold text-foreground">{t('expertFeatured')}</h2></div>
+                <div className="grid grid-cols-1 gap-4 min-[1000px]:grid-cols-3">
+                  {EXPERT_SCENARIOS.map(scenario => (
+                    <div key={scenario.titleKey} className={`rounded-2xl border border-border bg-gradient-to-br p-5 ${scenario.className}`}>
+                      <h3 className="font-semibold text-foreground">{t(scenario.titleKey)}</h3>
+                      <p className="mb-4 mt-1 text-xs text-secondary">{t(scenario.descriptionKey)}</p>
+                      <div className="space-y-1">
+                        {scenario.ids.map(id => presets.find(preset => preset.id === id)).filter((preset): preset is PresetAgent => Boolean(preset)).map(preset => (
+                          <button key={preset.id} type="button" onClick={() => setDetail(preset)} className="group flex w-full items-center gap-3 rounded-lg py-2 text-left transition-colors hover:bg-surface/70">
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-surface/80"><AgentAvatarIcon value={preset.icon} className="h-5 w-5" /></span>
+                            <span className="min-w-0 flex-1 truncate text-sm text-foreground">{name(preset)}</span><ArrowRightIcon className="mr-1 h-3.5 w-3.5 shrink-0 text-muted transition-transform group-hover:translate-x-0.5" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+            <section aria-labelledby="expert-list-title" className="space-y-4">
+              <div className="flex items-center justify-between"><h2 id="expert-list-title" className="text-base font-semibold text-foreground">{t('expertAll')}</h2><span className="text-xs text-muted" role="status">{t('expertCount').replace('{count}', String(filtered.length))}</span></div>
+              <div className="flex flex-wrap gap-2" aria-label={t('expertCategories')}>
+                {[null, ...Object.keys(EXPERT_CATEGORY_LABELS) as ExpertCategory[]].map(item => (
+                  <button key={item ?? 'all'} type="button" aria-pressed={category === item} onClick={() => { setCategory(item); setTag(null); }}
+                    className={`rounded-full px-3.5 py-1.5 text-xs transition-colors ${category === item ? 'bg-primary text-white' : 'bg-surface-raised text-secondary hover:text-foreground'}`}>
+                    {item ? t(EXPERT_CATEGORY_LABELS[item]) : t('expertCategoryAll')}
+                  </button>
+                ))}
+                {selectedTag && <button type="button" onClick={() => setTag(null)} className="flex items-center gap-1 rounded-full border border-primary/30 px-3 py-1 text-xs text-primary">{expertText(selectedTag, language)}<XMarkIcon className="h-3 w-3" /><span className="sr-only">{t('expertClearFilters')}</span></button>}
+              </div>
+              {!detail && errorNotice}
+              {filtered.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-border py-16 text-center"><MagnifyingGlassIcon className="mx-auto mb-3 h-6 w-6 text-muted" /><p className="text-sm text-secondary">{t('expertEmpty')}</p><button type="button" onClick={() => { setQuery(''); setCategory(null); setTag(null); }} className="mt-3 text-sm text-primary hover:underline">{t('expertClearFilters')}</button></div>
+              ) : <div className="grid grid-cols-1 gap-4 min-[900px]:grid-cols-2 min-[1280px]:grid-cols-3">
+                {filtered.map(preset => (
+                  <article key={preset.id} className="group flex flex-col rounded-2xl border border-border bg-surface p-5 transition-all hover:border-primary/30 hover:shadow-sm">
+                    <button type="button" onClick={() => setDetail(preset)} className="flex items-center gap-3 text-left">
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-surface-raised"><AgentAvatarIcon value={preset.icon} className="h-7 w-7" /></span>
+                      <span className="min-w-0"><span className="block text-sm font-semibold text-foreground group-hover:text-primary">{name(preset)}</span><span className="mt-1 block text-xs text-muted">{t(EXPERT_CATEGORY_LABELS[preset.category])}</span></span>
+                    </button>
+                    <p className="mb-4 mt-4 min-h-[3.75rem] text-sm leading-5 text-secondary">{description(preset)}</p>
+                    <div className="mb-5 flex flex-wrap gap-1.5">{preset.tags.map(item => <button key={item.zh} type="button" onClick={() => { setTag(item.zh); setCategory(null); }} className="rounded-md bg-surface-raised px-2 py-1 text-[11px] text-secondary hover:text-primary">{expertText(item, language)}</button>)}</div>
+                    <div className="mt-auto flex items-center justify-between gap-3 border-t border-border/60 pt-3"><button type="button" onClick={() => setDetail(preset)} className="text-xs text-secondary hover:text-foreground">{t('expertViewExamples')}</button>{summonButton(preset)}</div>
+                  </article>
+                ))}
+              </div>}
+            </section>
+          </>}
+        </div>
+      </div>
+      {detail && <Modal onClose={closeDetail} onEscape={closeDetail} className="mx-5 flex max-h-[85vh] w-full max-w-[600px] flex-col rounded-2xl border border-border bg-surface shadow-xl">
+        <div role="dialog" aria-modal="true" aria-labelledby="expert-detail-title" className="overflow-y-auto p-7">
+          <div className="flex items-start gap-4"><span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-surface-raised"><AgentAvatarIcon value={detail.icon} className="h-9 w-9" /></span><div className="flex-1"><h2 id="expert-detail-title" className="text-xl font-semibold text-foreground">{name(detail)}</h2><p className="mt-1.5 text-xs text-muted">{t(EXPERT_CATEGORY_LABELS[detail.category])}</p></div><button type="button" autoFocus aria-label={t('close')} onClick={closeDetail} className="rounded-lg p-1 text-secondary hover:bg-surface-raised"><XMarkIcon className="h-5 w-5" /></button></div>
+          <p className="my-5 text-sm leading-6 text-secondary">{description(detail)}</p>
+          <div className="mb-7 flex flex-wrap gap-2">{detail.tags.map(item => <span key={item.zh} className="rounded-md bg-surface-raised px-2.5 py-1 text-xs text-secondary">{expertText(item, language)}</span>)}</div>
+          <h3 className="mb-3 text-sm font-semibold text-foreground">{t('expertExampleHeading')}</h3>
+          <div className="space-y-3">{detail.starterPrompts.map(prompt => <button type="button" key={prompt.zh} disabled={summoning !== null} onClick={() => void summon(detail, expertText(prompt, language))} className="flex w-full items-center gap-4 rounded-xl border border-border p-4 text-left text-sm leading-6 text-secondary transition-colors hover:border-primary/40 hover:bg-primary/5 disabled:opacity-50"><span className="flex-1">{expertText(prompt, language)}</span><ArrowRightIcon className="h-4 w-4 shrink-0 text-muted" /></button>)}</div>
+          <div className="mt-5">{errorNotice}</div>
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-5"><p className="max-w-[300px] text-xs leading-5 text-muted">{t('expertDraftHint')}</p>{summonButton(detail, true)}</div>
+        </div>
+      </Modal>}
+    </div>
+  );
+};
+
+export default ExpertPlazaView;

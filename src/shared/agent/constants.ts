@@ -4,6 +4,13 @@ export const AgentId = {
 
 export type AgentId = typeof AgentId[keyof typeof AgentId];
 
+export const AgentSource = {
+  Custom: 'custom',
+  Preset: 'preset',
+} as const;
+
+export type AgentSource = typeof AgentSource[keyof typeof AgentSource];
+
 export const AgentIpcChannel = {
   List: 'agents:list',
   Get: 'agents:get',

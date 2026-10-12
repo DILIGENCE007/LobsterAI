@@ -48,7 +48,12 @@ const agentSlice = createSlice({
     },
 
     addAgent(state, action: PayloadAction<AgentSummary>) {
-      state.agents.push(action.payload);
+      const index = state.agents.findIndex(agent => agent.id === action.payload.id);
+      if (index === -1) {
+        state.agents.push(action.payload);
+      } else {
+        state.agents[index] = action.payload;
+      }
     },
 
     updateAgent(state, action: PayloadAction<{ id: string; updates: Partial<AgentSummary> }>) {
