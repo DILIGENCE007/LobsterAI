@@ -74,8 +74,6 @@ const AgentAvatar: React.FC<{ agent: AgentSidebarAgentNode }> = ({ agent }) => {
       value={agent.icon}
       className="h-[18px] w-[18px]"
       iconClassName="h-[18px] w-[18px]"
-      legacyClassName="text-[15px]"
-      fallbackText={getAgentDisplayName(agent).trim().slice(0, 1).toUpperCase() || 'A'}
     />
   );
 };

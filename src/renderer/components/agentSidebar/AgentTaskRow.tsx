@@ -208,6 +208,13 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
     onSelect();
   };
 
+  const handleRowMouseClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    // The first click already opened the task; later clicks of a double click
+    // belong to the rename gesture. Batch mode keeps every click as a toggle.
+    if (event.detail > 1 && !isBatchMode) return;
+    handleRowClick();
+  };
+
   const handleRowKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) return;
     if (event.key === 'Enter' || event.key === ' ') {
@@ -234,6 +241,20 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
           ? (currentIndex + 1 + menuItems.length) % menuItems.length
           : (currentIndex - 1 + menuItems.length) % menuItems.length;
     menuItems[nextIndex]?.focus();
+  };
+
+  const startRename = (actionType: 'task_rename_start' | 'task_rename_double_click') => {
+    onSidebarAction?.(actionType, analyticsParams);
+    setIsRenaming(true);
+  };
+
+  const handleTitleDoubleClick = (event: React.MouseEvent<HTMLSpanElement>) => {
+    // Batch mode uses clicks to toggle selection, so a double click there must
+    // not open the editor on top of two selection toggles.
+    if (isBatchMode || isSelectionDisabled) return;
+    event.stopPropagation();
+    window.getSelection()?.removeAllRanges();
+    startRename('task_rename_double_click');
   };
 
   const handleRenameSave = async () => {
@@ -284,7 +305,7 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
             isActivityRow ? 'text-foreground' : 'text-foreground/75'
           }`
       }`}
-      onClick={handleRowClick}
+      onClick={handleRowMouseClick}
       onKeyDown={handleRowKeyDown}
       onMouseMove={() => setSuppressPinHover(false)}
       onMouseLeave={() => setSuppressPinHover(false)}
@@ -377,7 +398,10 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
               />
             </span>
           )}
-          <span className={`min-w-0 flex-1 ${isActivityRow ? 'flex flex-col gap-0.5' : 'truncate'}`}>
+          <span
+            className={`min-w-0 flex-1 ${isActivityRow ? 'flex flex-col gap-0.5' : 'truncate'}`}
+            onDoubleClick={handleTitleDoubleClick}
+          >
             <span className="truncate">{displayTitle}</span>
             {contextLabel && (
               <span className="flex min-w-0 items-center gap-1 text-[11px] font-normal leading-4 text-secondary">
@@ -469,8 +493,7 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
             onClick={(event) => {
               event.stopPropagation();
               closeMenu();
-              onSidebarAction?.('task_rename_start', analyticsParams);
-              setIsRenaming(true);
+              startRename('task_rename_start');
             }}
             className={menuItemClassName}
             role="menuitem"
