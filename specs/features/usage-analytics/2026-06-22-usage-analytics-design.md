@@ -704,7 +704,7 @@ export const LogReporterActionPrefix = {
   - `actionType`：string，动作类型。当前取值包括：
     - 顶部入口：`new_task`、`open_search`、`open_scheduled_tasks`、`open_kits`、`open_skills`、`open_mcp`、`collapse_sidebar`、`expand_sidebar`。
     - Agent 行：`agent_header_click`、`agent_create_task`、`agent_menu_open`、`agent_edit`、`agent_pin_toggle`、`agent_delete_confirm_open`、`agent_delete_cancel`、`agent_delete_submit`、`agent_delete_success`、`agent_delete_failed`。
-    - 历史任务：`select_task`、`task_menu_open`、`task_pin_toggle`、`task_rename_start`、`task_rename_cancel`、`task_rename_submit`、`task_share_open`、`task_delete_confirm_open`、`task_delete_cancel`、`task_delete_submit`、`task_delete_success`、`task_delete_failed`。
+    - 历史任务：`select_task`、`task_menu_open`、`task_pin_toggle`、`task_rename_start`、`task_rename_double_click`、`task_rename_cancel`、`task_rename_submit`、`task_share_open`、`task_delete_confirm_open`、`task_delete_cancel`、`task_delete_submit`、`task_delete_success`、`task_delete_failed`。从任务菜单进入重命名发送 `task_rename_start`，双击任务标题进入重命名发送 `task_rename_double_click`，两者之后共用 `task_rename_cancel` / `task_rename_submit`。双击时只有第一下发送 `select_task`，第二下不再重复打开任务。
     - 列表加载：`task_list_expand_more`、`task_list_collapse`、`task_list_retry_load`。
     - 批量操作：`batch_mode_enter`、`batch_mode_exit`、`batch_item_toggle`、`batch_select_all_toggle`、`batch_delete_confirm_open`、`batch_delete_cancel`、`batch_delete_submit`、`batch_delete_success`、`batch_delete_failed`。
     - 子任务：`select_subagent_task`、`subagent_delete_confirm_open`、`subagent_delete_cancel`、`subagent_delete_submit`、`subagent_delete_success`、`subagent_delete_failed`。
