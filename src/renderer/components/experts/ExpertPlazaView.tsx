@@ -146,13 +146,13 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
                 {filtered.map(preset => (
                   <article key={preset.id} className="group relative flex flex-col rounded-2xl border border-border bg-surface p-5 transition-all hover:border-primary/30 hover:shadow-sm">
                     <button type="button" onClick={() => setDetail(preset)} aria-label={`${name(preset)} · ${t('expertViewExamples')}`} className="absolute inset-0 cursor-pointer rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background" />
-                    <div className="pointer-events-none flex items-center gap-3 text-left">
+                    <div className="pointer-events-none flex items-start gap-3 text-left">
                       <AgentAvatarIcon value={preset.icon} expertFallback className="h-12 w-12" iconClassName="h-7 w-7" />
-                      <span className="min-w-0"><span className="block text-sm font-semibold text-foreground group-hover:text-primary">{name(preset)}</span><span className="mt-1 block text-xs text-muted">{categoryName(preset.category)}</span></span>
+                      <span className="min-w-0 flex-1"><span className="block break-words text-sm font-semibold text-foreground group-hover:text-primary">{name(preset)}</span><span className="mt-1 block text-xs text-muted">{categoryName(preset.category)}</span></span>
+                      {summonButton(preset)}
                     </div>
                     <p className="pointer-events-none mb-4 mt-4 min-h-[3.75rem] text-sm leading-5 text-secondary">{description(preset)}</p>
-                    <div className="pointer-events-none mb-5 flex flex-wrap gap-1.5">{preset.tags.map(item => <span key={item.zh} className="rounded-md bg-surface-raised px-2 py-1 text-[11px] text-secondary">{expertText(item, language)}</span>)}</div>
-                    <div className="pointer-events-none mt-auto flex items-center justify-between gap-3 border-t border-border/60 pt-3"><span className="text-xs text-secondary group-hover:text-foreground">{t('expertViewExamples')}</span>{summonButton(preset)}</div>
+                    <div className="pointer-events-none mt-auto flex flex-wrap gap-1.5">{preset.tags.map(item => <span key={item.zh} className="rounded-md bg-surface-raised px-2 py-1 text-[11px] text-secondary">{expertText(item, language)}</span>)}</div>
                   </article>
                 ))}
               </div>}
