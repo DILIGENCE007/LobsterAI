@@ -530,7 +530,13 @@ contextBridge.exposeInMainWorld('electron', {
     },
     presetTemplates: async () => {
       const result = await ipcRenderer.invoke(AgentIpcChannel.PresetTemplates);
-      return result?.success ? result.presets : [];
+      if (!result?.success) throw new Error(result?.error || 'Failed to load preset templates');
+      return result.presets;
+    },
+    expertCatalog: async () => {
+      const result = await ipcRenderer.invoke(AgentIpcChannel.ExpertCatalog);
+      if (!result?.success) throw new Error(result?.error || 'Failed to load expert catalog');
+      return result.catalog;
     },
     addPreset: async (presetId: string) => {
       const result = await ipcRenderer.invoke(AgentIpcChannel.AddPreset, presetId);

@@ -220,6 +220,7 @@ export class SqliteStore {
         thinking_level TEXT NOT NULL DEFAULT '',
         working_directory TEXT NOT NULL DEFAULT '',
         icon TEXT NOT NULL DEFAULT '',
+        icon_customized INTEGER,
         skill_ids TEXT NOT NULL DEFAULT '[]',
         subagent_allow_agent_ids TEXT NOT NULL DEFAULT '[]',
         enabled INTEGER NOT NULL DEFAULT 1,
@@ -606,6 +607,13 @@ export class SqliteStore {
     } catch (error) {
       console.error('[SqliteStore] failed to add agents.thinking_level:', error);
       throw error;
+    }
+
+    // Null preserves legacy ownership inference; explicit edits are recorded from now on.
+    const avatarColumns = this.db.pragma('table_info(agents)') as Array<{ name: string }>;
+    if (!avatarColumns.some(column => column.name.toLowerCase() === 'icon_customized')) {
+      this.db.exec('ALTER TABLE agents ADD COLUMN icon_customized INTEGER;');
+      this.didRunMigration = true;
     }
 
     // Migration: Add model preference and layout columns to agents
