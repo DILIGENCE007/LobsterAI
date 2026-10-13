@@ -57,7 +57,7 @@ import {
 } from '../../shared/desktopCompanion/geometry';
 import { companionHintCopyKeys, type CompanionHintTopic } from '../../shared/desktopCompanion/hintPolicy';
 import { isSpeechActive, SpeechCommand } from '../../shared/desktopCompanion/languageTools';
-import { COMPANION_SKINS, normalizeCompanionSkin } from '../../shared/desktopCompanion/skins';
+import { COMPANION_SKINS, companionOrbSize, normalizeCompanionSkin } from '../../shared/desktopCompanion/skins';
 import { t } from '../i18n';
 import { CompanionHintsController } from './companionHints';
 import { CompanionSelectionController, type SelectionHookModule } from './companionSelection';
@@ -292,7 +292,9 @@ export class DesktopCompanionManager {
     if (updatingShortcut) this.shortcutUnavailable = false;
     const turningOn = next.enabled && !this.preferences.enabled;
     const exclusionsChanged = next.selectionExcludedApps.join('\n') !== this.preferences.selectionExcludedApps.join('\n');
+    const previousOrbSize = this.orbSize();
     this.preferences = next;
+    this.resizeOrb(previousOrbSize);
     if (!next.enabled) this.languageTools.reset();
     this.options.store.set(DesktopCompanionStoreKey.Preferences, next);
     if (turningOn && this.snooze) this.wake(false);
@@ -425,7 +427,24 @@ export class DesktopCompanionManager {
     const display = point && Number.isFinite(point.x) && Number.isFinite(point.y)
       ? screen.getDisplayNearestPoint(point)
       : screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-    return resolveCompanionBounds(point, display.workArea);
+    return resolveCompanionBounds(point, display.workArea, this.orbSize());
+  }
+
+  private orbSize(): { width: number; height: number } {
+    return companionOrbSize(this.preferences.skin);
+  }
+
+  /** A skin with a different window size keeps the orb centered where it was. */
+  private resizeOrb(previous: { width: number; height: number }): void {
+    const size = this.orbSize();
+    if (size.width === previous.width && size.height === previous.height) return;
+    if (this.position && Number.isFinite(this.position.x) && Number.isFinite(this.position.y)) {
+      this.savePosition({
+        x: Math.round(this.position.x + (previous.width - size.width) / 2),
+        y: Math.round(this.position.y + (previous.height - size.height) / 2),
+      });
+    }
+    if (this.orb && !this.orb.isDestroyed()) this.reposition();
   }
 
   /** Where the orb sits, or null when it is not on screen. */
@@ -493,7 +512,7 @@ export class DesktopCompanionManager {
     if (!this.dragOrigin) return;
     const workArea = screen.getDisplayNearestPoint(cursor).workArea;
     const moved = clampCompanionBounds({
-      ...DesktopCompanionSize.Orb,
+      ...this.orbSize(),
       x: this.dragOrigin.position.x + cursor.x - this.dragOrigin.cursor.x,
       y: this.dragOrigin.position.y + cursor.y - this.dragOrigin.cursor.y,
     }, workArea);

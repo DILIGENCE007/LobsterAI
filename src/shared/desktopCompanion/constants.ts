@@ -312,6 +312,12 @@ export const EMPTY_DESKTOP_COMPANION_DRAFT: DesktopCompanionDraft = {
 
 export const DesktopCompanionSize = {
   Orb: { width: 84, height: 84 },
+  // Default brand disc; about Doubao's floating orb. A solid disc reads heavier than a
+  // figure of the same size, so this stays smaller than the 64px character skins.
+  BrandMark: 36,
+  // Window for the brand disc, its working ring, badge and shadow. Cards beside the orb
+  // line up with the window's edges, so the window has to fit the art closely.
+  BrandOrb: { width: 56, height: 56 },
   // Window sizes include the transparent SurfacePad margin that holds the card shadow.
   // The quick panel is the home composer in a narrow card that grows upward. Its
   // window adds room above the card and toward the middle of the screen, so the

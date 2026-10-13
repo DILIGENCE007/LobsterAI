@@ -272,6 +272,21 @@ describe('desktop companion lifecycle', () => {
     expect(manager.getState().preferences.selectionExcludedApps).toEqual(['com.google.Chrome']);
   });
 
+  test('the brand mark gets a smaller orb, and switching skins keeps the orb centered', () => {
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    values.set(DesktopCompanionStoreKey.Position, { x: 600, y: 400 });
+    create();
+    const center = () => ({ x: orb().bounds.x + orb().bounds.width / 2, y: orb().bounds.y + orb().bounds.height / 2 });
+    expect(orb().bounds).toMatchObject(DesktopCompanionSize.BrandOrb);
+    const start = center();
+    manager.setPreferences({ skin: 'qianqian' });
+    expect(orb().bounds).toMatchObject(DesktopCompanionSize.Orb);
+    expect(center()).toEqual(start);
+    manager.setPreferences({ skin: 'lobster' });
+    expect(orb().bounds).toMatchObject(DesktopCompanionSize.BrandOrb);
+    expect(center()).toEqual(start);
+  });
+
   test('hiding the panel flushes unsent materials and keeps the window alive', () => {
     create();
     manager.togglePanel();

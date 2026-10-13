@@ -31,8 +31,7 @@ function isPoint(value: unknown): value is CompanionPoint {
 }
 
 /** Restores the orb at its saved spot, or the lower-right corner of the work area. */
-export function resolveCompanionBounds(position: unknown, workArea: CompanionRect): CompanionRect {
-  const size = DesktopCompanionSize.Orb;
+export function resolveCompanionBounds(position: unknown, workArea: CompanionRect, size: CompanionSize = DesktopCompanionSize.Orb): CompanionRect {
   return clampCompanionBounds({
     ...size,
     x: isPoint(position) ? position.x : workArea.x + workArea.width - size.width - DesktopCompanionSize.Margin,

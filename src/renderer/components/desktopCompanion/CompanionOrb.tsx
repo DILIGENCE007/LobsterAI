@@ -5,12 +5,13 @@ import {
   type CompanionGaze,
   DesktopCompanionDragPhase,
   DesktopCompanionFileDragPhase,
+  DesktopCompanionSize,
   DesktopCompanionStageCommandType,
   DesktopCompanionStageKind,
   type DesktopCompanionState,
 } from '../../../shared/desktopCompanion/constants';
 import { isSpeechActive, LanguageTool } from '../../../shared/desktopCompanion/languageTools';
-import { getCompanionSkin } from '../../../shared/desktopCompanion/skins';
+import { CompanionSkinKind, getCompanionSkin } from '../../../shared/desktopCompanion/skins';
 import { i18nService } from '../../services/i18n';
 import { CoworkSessionStatusValue } from '../../types/cowork';
 import { fileKindsFromDataTransfer, filesToAttachments, hasFiles } from './companionTasks';
@@ -58,6 +59,7 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
     hintShowing: state.stage.kind === DesktopCompanionStageKind.Hint,
   });
   const speaking = isSpeechActive(state.speechStatus);
+  const skinKind = getCompanionSkin(state.preferences.skin).kind;
 
   // News about the followed task brings its status strip back next to the orb.
   const taskNews = state.sessionId && (mood === CompanionMood.Done || mood === CompanionMood.Attention || mood === CompanionMood.Error)
@@ -128,6 +130,7 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
       <button
         type="button"
         className="orb-button"
+        data-kind={skinKind}
         data-moving={moving}
         aria-label={i18nService.t(companionMoodLabelKey(mood))}
         title={i18nService.t(companionMoodLabelKey(mood))}
@@ -153,8 +156,8 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
         onMouseLeave={() => setHovering(false)}
         onContextMenu={event => { event.preventDefault(); void api.showContextMenu(); }}
       >
-        <CompanionCharacter skin={state.preferences.skin} mood={mood} size={CHARACTER_SIZE} gaze={gaze} />
-        {mood === CompanionMood.Working && getCompanionSkin(state.preferences.skin).asset && <span className="orb-ring" aria-hidden="true" />}
+        <CompanionCharacter skin={state.preferences.skin} mood={mood} size={skinKind === CompanionSkinKind.Brand ? DesktopCompanionSize.BrandMark : CHARACTER_SIZE} gaze={gaze} />
+        {mood === CompanionMood.Working && skinKind !== CompanionSkinKind.Mascot && <span className="orb-ring" aria-hidden="true" />}
       </button>
       {speaking && <button type="button" className="orb-speech"
         aria-label={i18nService.t('desktopToolsPlayback')} title={i18nService.t('desktopToolsPlayback')}

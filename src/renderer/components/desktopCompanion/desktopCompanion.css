@@ -72,11 +72,16 @@ svg { flex-shrink: 0; }
 .lobster-hood .hood-sparkle { transform-box: fill-box; transform-origin: center; animation: twinkle 1.6s ease-in-out infinite; }
 .lobster-hood .hood-z { animation: z-float 3s ease-in-out infinite; }
 .lobster-hood .hood-sweat { animation: sweat 2s ease-in-out infinite; }
-.companion-character[data-mood="done"] > :is(svg, img),
-.companion-character[data-mood="happy"] > :is(svg, img) { animation: hop 0.5s ease-in-out 1; }
-.companion-character[data-mood="catch"] > :is(svg, img) { animation: squash 0.45s ease-in-out infinite alternate; }
-.companion-character[data-mood="attention"] > :is(svg, img) { animation: wiggle 2.4s ease-in-out infinite; }
+.companion-character:not([data-kind="brand"])[data-mood="done"] > :is(svg, img),
+.companion-character:not([data-kind="brand"])[data-mood="happy"] > :is(svg, img) { animation: hop 0.5s ease-in-out 1; }
+.companion-character:not([data-kind="brand"])[data-mood="catch"] > :is(svg, img) { animation: squash 0.45s ease-in-out infinite alternate; }
+.companion-character:not([data-kind="brand"])[data-mood="attention"] > :is(svg, img) { animation: wiggle 2.4s ease-in-out infinite; }
 .companion-character[data-mood="snooze"] { opacity: 0.82; }
+/* The brand mark never moves on its own: moods show as the working ring, a badge, scale, or color. */
+.companion-character > .lobster-mark { transform-origin: 50% 50%; transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1), filter 0.3s ease; }
+.companion-character[data-kind="brand"][data-mood="snooze"] > .lobster-mark { filter: saturate(0.15); }
+.companion-character[data-kind="brand"] .character-badge { right: -3px; top: -3px; width: 16px; height: 16px; border-width: 1.5px; font-size: 10px; }
+.companion-character[data-kind="brand"] .character-badge svg { width: 9px; height: 9px; }
 .companion-character[data-kind="image"][data-mood="working"] > img { animation: bob 1.4s ease-in-out infinite; }
 .companion-character[data-kind="image"][data-mood="curious"] > img { transform: rotate(-6deg); transition: transform 0.2s; }
 .companion-character[data-kind="image"][data-mood="snooze"] > img { filter: saturate(0.55); transform: rotate(-6deg); }
@@ -119,6 +124,9 @@ svg { flex-shrink: 0; }
 }
 .orb-button:hover .companion-character { transform: translateY(-2px); filter: drop-shadow(0 6px 8px rgba(80, 25, 10, 0.3)); }
 .orb-button[data-moving="true"] .companion-character { transform: scale(1.04); filter: drop-shadow(0 8px 12px rgba(80, 25, 10, 0.3)); }
+.orb-button[data-kind="brand"] .companion-character { filter: drop-shadow(0 2px 3px rgba(80, 25, 10, 0.32)); }
+.orb-button[data-kind="brand"]:hover .companion-character { filter: drop-shadow(0 3px 5px rgba(80, 25, 10, 0.34)); }
+.orb-button[data-kind="brand"][data-moving="true"] .companion-character { filter: drop-shadow(0 4px 7px rgba(80, 25, 10, 0.34)); }
 /* The drawn lobster only pricks up its antennae. */
 .orb-button:hover .lobster-hood[data-mood="idle"] .hood-antenna-left { transform: rotate(6deg); }
 .orb-button:hover .lobster-hood[data-mood="idle"] .hood-antenna-right { transform: rotate(-6deg); }
@@ -133,6 +141,14 @@ svg { flex-shrink: 0; }
   border: 2.5px solid color-mix(in srgb, var(--c-accent) 18%, transparent); border-top-color: var(--c-accent);
   animation: spin 1.1s linear infinite;
 }
+/* Brand window is DesktopCompanionSize.BrandOrb; the ring hugs the 36px disc. */
+.orb-button[data-kind="brand"] { width: 44px; height: 44px; }
+.orb-button[data-kind="brand"] .orb-ring { border-width: 2px; }
+.orb-button[data-kind="brand"] ~ .orb-speech { right: 0; bottom: 0; width: 20px; height: 20px; }
+.orb-button[data-kind="brand"] ~ .orb-speech svg { width: 12px; height: 12px; }
+/* A file coming near: the disc leans in; over it: the disc opens up to take it. */
+.orb-button .companion-character[data-kind="brand"][data-mood="curious"] > .lobster-mark { transform: scale(1.06); }
+.orb-button .companion-character[data-kind="brand"][data-mood="catch"] > .lobster-mark { transform: scale(1.14); }
 
 /* ── Stage: hint bubble and drop zone ──────────────────── */
 

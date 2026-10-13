@@ -6,14 +6,21 @@ import {
   CompanionPermission,
   type DesktopCompanionPreferences,
 } from '../../../shared/desktopCompanion/constants';
-import { COMPANION_SKINS } from '../../../shared/desktopCompanion/skins';
+import { COMPANION_SKINS, type CompanionSkin, CompanionSkinKind } from '../../../shared/desktopCompanion/skins';
 import { i18nService } from '../../services/i18n';
 import { CompanionMood } from './mascot/companionMood';
 import LobsterHood from './mascot/LobsterHood';
+import LobsterMark from './mascot/LobsterMark';
 import { companionShortcutFromKeys } from './shortcut';
 import { useDesktopCompanionState } from './useDesktopCompanionState';
 
 type ToggleKey = 'enabled' | 'selectionToolbar' | 'dragAssist' | 'contextHints';
+
+function SkinPreview({ skin }: { skin: CompanionSkin }) {
+  if (skin.kind === CompanionSkinKind.Brand) return <LobsterMark size={32} />;
+  if (skin.kind === CompanionSkinKind.Mascot || !skin.asset) return <LobsterHood mood={CompanionMood.Idle} size={44} />;
+  return <img src={skin.asset} alt="" className="h-11 w-11 object-contain" draggable={false} />;
+}
 
 // Same labeled card as the General tab's groups.
 function SettingsGroup({ title, footer, children }: { title: string; footer?: ReactNode; children: ReactNode }) {
@@ -116,9 +123,7 @@ export default function DesktopCompanionSettings() {
                     + (selected ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-secondary hover:bg-secondary/10')}
                 >
                   <span className="grid h-11 w-11 place-items-center">
-                    {skin.asset
-                      ? <img src={skin.asset} alt="" className="h-11 w-11 object-contain" draggable={false} />
-                      : <LobsterHood mood={CompanionMood.Idle} size={44} />}
+                    <SkinPreview skin={skin} />
                   </span>
                   <span className="max-w-full truncate">{t(skin.nameKey)}</span>
                 </button>
