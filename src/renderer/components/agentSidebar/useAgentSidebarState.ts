@@ -248,6 +248,7 @@ export const useAgentSidebarState = ({
         id: agent.id,
         name: agent.name,
         icon: agent.icon,
+        iconCustomized: agent.iconCustomized,
         source: agent.source,
         enabled: agent.enabled,
         pinned: agent.pinned ?? false,

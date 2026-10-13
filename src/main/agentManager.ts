@@ -1,4 +1,6 @@
+import { parseAgentAvatarImageUrl } from '../shared/agent/avatar';
 import { AgentSource } from '../shared/agent/constants';
+import { usesManagedPresetAvatar } from '../shared/agent/presetAvatar';
 import type { ExpertCatalog, PresetAgent } from '../shared/agent/presets';
 import type { Agent, CoworkStore, CreateAgentRequest, UpdateAgentRequest } from './coworkStore';
 import { presetToCreateRequest } from './presetAgents';
@@ -64,8 +66,20 @@ export class AgentManager {
     return presets.filter(p => !existingPresetIds.has(p.id));
   }
 
-  getExpertCatalog(): Promise<ExpertCatalog> {
-    return this.loadCatalog();
+  async getExpertCatalog(): Promise<ExpertCatalog> {
+    const catalog = await this.loadCatalog();
+    const presets = new Map(catalog.experts.map(preset => [preset.id, preset]));
+    for (const agent of this.store.listAgents()) {
+      const icon = presets.get(agent.presetId)?.icon;
+      if (icon && parseAgentAvatarImageUrl(icon) && usesManagedPresetAvatar(agent) && agent.icon !== icon) {
+        try {
+          this.store.updatePresetAgentAvatar(agent.id, icon);
+        } catch (error) {
+          console.warn('[AgentManager] Failed to refresh preset avatar:', agent.id, error);
+        }
+      }
+    }
+    return catalog;
   }
 
   async getAllPresetAgents(): Promise<PresetAgent[]> {

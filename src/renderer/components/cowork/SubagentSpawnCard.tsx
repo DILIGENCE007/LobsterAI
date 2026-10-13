@@ -7,7 +7,7 @@ import type { SubagentSessionSummary } from '@/types/cowork';
 import { getSubagentDisplayInitial, getSubagentDisplayName } from '@/utils/subagentDisplay';
 
 import { i18nService } from '../../services/i18n';
-import { isPresetExpert } from '../../utils/agentDisplay';
+import { usesManagedPresetAvatar } from '../../utils/agentDisplay';
 import AgentAvatarIcon from '../agent/AgentAvatarIcon';
 
 /**
@@ -37,10 +37,10 @@ const SubagentSpawnCard: React.FC<{
             className="group w-full flex items-center gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-surface-raised/40"
             aria-label={displayName}
           >
-            {agentIcon || isPresetExpert(agent) ? (
+            {agentIcon || usesManagedPresetAvatar(agent) ? (
               <AgentAvatarIcon
                 value={agentIcon}
-                expertFallback={isPresetExpert(agent)}
+                expertFallback={usesManagedPresetAvatar(agent)}
                 className="h-8 w-8 bg-primary/10"
                 iconClassName="h-4 w-4"
               />

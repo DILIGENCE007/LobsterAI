@@ -150,7 +150,7 @@ const AgentAvatarIcon: React.FC<AgentAvatarIconProps> = ({
       onError={() => setFailedImage(imageUrl)} className={`inline-block shrink-0 rounded-full object-cover ${className}`} />;
   }
 
-  if (expertFallback && (imageUrl || avatar.svg === AgentAvatarSvg.Lobster)) {
+  if (expertFallback) {
     return <img src={expertDefaultAvatarUrl} alt="" decoding="async"
       className={`inline-block shrink-0 rounded-full object-cover ${className}`} />;
   }

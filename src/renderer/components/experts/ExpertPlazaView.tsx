@@ -50,6 +50,7 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
     setLoadFailed(false);
     try {
       const result = await window.electron.agents.expertCatalog();
+      await agentService.loadAgents();
       if (mountedRef.current) setCatalog(result);
     } catch (error) {
       console.error('[ExpertPlaza] Failed to load experts:', error);

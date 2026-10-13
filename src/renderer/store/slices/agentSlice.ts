@@ -6,6 +6,7 @@ interface AgentSummary {
   name: string;
   description: string;
   icon: string;
+  iconCustomized?: boolean;
   model: string;
   thinkingLevel: ModelThinkingLevel | '';
   workingDirectory: string;

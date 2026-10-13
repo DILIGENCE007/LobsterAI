@@ -8,6 +8,7 @@ export interface AgentSidebarAgentSummary {
   id: string;
   name: string;
   icon: string;
+  iconCustomized?: boolean;
   source?: AgentSource;
   enabled: boolean;
   pinned: boolean;

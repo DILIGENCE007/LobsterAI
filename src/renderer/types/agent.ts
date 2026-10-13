@@ -13,6 +13,7 @@ export interface Agent {
   thinkingLevel: ModelThinkingLevel | '';
   workingDirectory: string;
   icon: string;
+  iconCustomized?: boolean;
   skillIds: string[];
   subagentAllowAgentIds: string[];
   enabled: boolean;

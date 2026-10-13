@@ -6,7 +6,7 @@ import { agentService } from '../../services/agent';
 import { i18nService } from '../../services/i18n';
 import type { RootState } from '../../store';
 import type { PresetAgent } from '../../types/agent';
-import { isPresetExpert } from '../../utils/agentDisplay';
+import { usesManagedPresetAvatar } from '../../utils/agentDisplay';
 import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import AgentAvatarIcon from './AgentAvatarIcon';
@@ -108,7 +108,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                 {presetAgents.map((agent) => (
                   <AgentCard
                     key={agent.id}
-                    expertFallback={isPresetExpert(agent)}
+                    expertFallback={usesManagedPresetAvatar(agent)}
                     icon={agent.icon}
                     name={agent.name}
                     description={agent.description}

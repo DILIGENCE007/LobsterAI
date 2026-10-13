@@ -100,7 +100,7 @@ import { setActiveSkillIds, setSkills, toggleActiveSkill } from '../../store/sli
 import { CoworkCollaborationMode, CoworkImageAttachment } from '../../types/cowork';
 import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { Skill } from '../../types/skill';
-import { getAgentDisplayName, isPresetExpert } from '../../utils/agentDisplay';
+import { getAgentDisplayName, usesManagedPresetAvatar } from '../../utils/agentDisplay';
 import { applyOptimisticGoalCommand } from '../../utils/goalCommand';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import { getCompactFolderName } from '../../utils/path';
@@ -393,6 +393,7 @@ interface AgentSelectorOption {
   id: string;
   name?: string;
   icon?: string;
+  iconCustomized?: boolean;
   enabled?: boolean;
   source?: RootState['agent']['agents'][number]['source'];
 }
@@ -401,7 +402,7 @@ const AgentContextAvatar: React.FC<{ agent: AgentSelectorOption; className?: str
   return (
     <AgentAvatarIcon
       value={agent.icon}
-      expertFallback={isPresetExpert(agent)}
+      expertFallback={usesManagedPresetAvatar(agent)}
       className={className}
       iconClassName={className}
       inheritColor
