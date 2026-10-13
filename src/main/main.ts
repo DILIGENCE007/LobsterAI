@@ -676,7 +676,8 @@ const gwDiagTs = (): string => {
 app.name = APP_NAME;
 app.setName(APP_NAME);
 if (process.platform === 'win32') {
-  app.setAppUserModelId(APP_USER_MODEL_ID);
+  // Electron creates a Start Menu shortcut for notifications, so dev must not share the installed app's identity.
+  app.setAppUserModelId(app.isPackaged ? APP_USER_MODEL_ID : `${APP_USER_MODEL_ID}.dev`);
 }
 
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
