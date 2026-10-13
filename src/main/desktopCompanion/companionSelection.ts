@@ -280,8 +280,7 @@ export class CompanionSelectionController {
     switch (command?.type) {
       case DesktopCompanionSelectionCommandType.Run:
         if (!selection || !isCompanionSelectionAction(command.action)) return;
-        this.cardHeight = Math.min(DesktopCompanionSize.Answer.height,
-          this.anchor ? companionCardSlot(this.anchor, this.workArea(this.anchor)).room : DesktopCompanionSize.Answer.height);
+        this.cardHeight = this.anchor ? companionCardSlot(this.anchor, this.workArea(this.anchor)).room : DesktopCompanionSize.Answer.height;
         this.selection = {
           ...selection,
           mode: DesktopCompanionSelectionMode.Answer,
@@ -290,7 +289,7 @@ export class CompanionSelectionController {
           menuUp: false,
           cardMaxHeight: this.cardHeight - DesktopCompanionSize.SurfacePad * 2,
         };
-        this.size = { width: DesktopCompanionSize.Answer.width, height: this.cardHeight };
+        this.size = { width: DesktopCompanionSize.Answer.width, height: Math.min(this.cardHeight, DesktopCompanionSize.AnswerStartHeight) };
         this.window?.setFocusable(true);
         this.place();
         this.sendSelection();

@@ -87,7 +87,7 @@ export class CompanionLanguageToolsController {
     this.anchor = this.host.getSelectionAnchor() ?? companionPointerAnchor(cursor);
     this.host.hideSelection();
     if (this.window) this.host.abortFollowUp(this.window.webContents.id);
-    this.cardHeight = Math.min(DesktopCompanionSize.Answer.height, companionCardSlot(this.anchor, this.workArea()).room);
+    this.cardHeight = companionCardSlot(this.anchor, this.workArea()).room;
     this.input = {
       tool: input.tool, text: input.text, id: randomUUID(), cardMaxHeight: this.cardHeight - DesktopCompanionSize.SurfacePad * 2,
     };

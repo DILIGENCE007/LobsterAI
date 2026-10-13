@@ -329,11 +329,13 @@ export const DesktopCompanionSize = {
   Task: { width: 420, height: 112 },
   Hint: { width: 320, height: 168 },
   Drop: { width: 448, height: 214 },
-  // A 36px toolbar plus the margin; its menu adds up to ToolbarMenu below or above it.
-  Toolbar: { width: 600, height: 80 },
+  // A 42px toolbar plus the margin; its menu adds up to ToolbarMenu below or above it.
+  Toolbar: { width: 680, height: 86 },
   ToolbarMenu: 200,
-  // A 400px card plus the margin.
-  Answer: { width: 444, height: 484 },
+  // A card up to 400 × 600 plus the margin.
+  Answer: { width: 444, height: 644 },
+  // About an answer card's first frame (title, quote, thinking, input), so one opening above the selection does not jump once measured.
+  AnswerStartHeight: 240,
   SurfacePad: 22,
   Margin: 12,
   Gap: 6,

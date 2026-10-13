@@ -142,25 +142,59 @@ describe('selection toolbar placement', () => {
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(1440);
   });
 
+  const full = DesktopCompanionSize.Answer;
+
   test('cards open under the selection and keep it readable', () => {
     const card = resolveCompanionCardBounds(paragraph, { width: 444, height: 484 }, area);
     expect(card.y + pad).toBeGreaterThanOrEqual(300);
     expect(card.height).toBe(484);
   });
 
-  test('near the bottom a card opens above the selection, capped to the room there', () => {
+  test('near the bottom a card opens above the selection and grows upward', () => {
     const above = resolveCompanionCardBounds({ ...word, top: 760, bottom: 780 }, { width: 444, height: 300 }, area);
     expect(above.y + above.height - pad).toBeLessThanOrEqual(760);
-    const squeezed = resolveCompanionCardBounds({ ...word, top: 320, bottom: 600 }, { width: 444, height: 484 }, area);
-    expect(squeezed.height).toBe(320 - DesktopCompanionSize.Gap + pad);
-    expect(squeezed.y).toBe(0);
+    const taller = resolveCompanionCardBounds({ ...word, top: 760, bottom: 780 }, { width: 444, height: 500 }, area);
+    expect(taller.y + taller.height).toBe(above.y + above.height);
   });
 
-  test('a selection taller than the screen gets a full card over its last lines', () => {
+  test('stays under the selection whenever the full card fits there, even with more room above', () => {
+    const portrait = { x: 0, y: 0, width: 1080, height: 1440 };
+    const card = resolveCompanionCardBounds({ ...word, top: 760, bottom: 780 }, full, portrait);
+    expect(card.y + pad).toBeGreaterThanOrEqual(780);
+    expect(card.height).toBe(full.height);
+  });
+
+  test('opens on the side with more room when the full card fits on neither', () => {
+    // 376px below the selection, 536px above it.
+    const card = resolveCompanionCardBounds({ ...word, top: 520, bottom: 540 }, { width: 444, height: 300 }, area);
+    expect(card.y + card.height - pad).toBeLessThanOrEqual(520);
+  });
+
+  test('a card that outgrows its side slides over the selection instead of scrolling, staying on screen', () => {
+    // 516px below the selection, 396px above it.
+    const middle = { ...word, top: 380, bottom: 400 };
+    const short = resolveCompanionCardBounds(middle, { width: 444, height: 300 }, area);
+    expect(short.y + pad).toBeGreaterThanOrEqual(400);
+    const long = resolveCompanionCardBounds(middle, { width: 444, height: 900 }, area);
+    expect(long.height).toBe(full.height);
+    expect(long.y + long.height).toBe(900);
+    expect(long.y + pad).toBeLessThan(380);
+    // Above the selection, the card meets the top edge and then reaches down over it.
+    const high = resolveCompanionCardBounds({ ...word, top: 500, bottom: 520 }, { width: 444, height: 900 }, area);
+    expect(high).toMatchObject({ y: 0, height: full.height });
+  });
+
+  test('a selection taller than the screen gets a full card over it', () => {
     const tall = { left: 300, right: 200, top: 120, bottom: 820, multiline: true };
-    const card = resolveCompanionCardBounds(tall, { width: 444, height: 484 }, area);
-    expect(card.height).toBe(484);
-    expect(card.y + card.height).toBe(900);
+    const card = resolveCompanionCardBounds(tall, full, area);
+    expect(card).toEqual(clampCompanionBounds(card, area));
+    expect(card.height).toBe(full.height);
+  });
+
+  test('on a screen shorter than the full card, the card is as tall as the screen', () => {
+    const short = { x: 0, y: 25, width: 1280, height: 560 };
+    const card = resolveCompanionCardBounds({ ...word, top: 300, bottom: 320 }, full, short);
+    expect(card).toMatchObject({ y: 25, height: 560 });
   });
 
   test('opens the menu away from the selection, unless only the other side has room', () => {

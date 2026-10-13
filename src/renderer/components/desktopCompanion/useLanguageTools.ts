@@ -163,6 +163,5 @@ export function useLanguageTools() {
   return {
     input, target, translation, translating, translationKey, translate, stopTranslation, error, retry, quota,
     playback, speechText, segmentTotal, rate, changeRate, togglePlayback, stopSpeech,
-    readTranslation: () => start(LanguageTool.Tts, translation),
   };
 }

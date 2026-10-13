@@ -106,10 +106,6 @@ export function companionPointerAnchor(point: CompanionPoint): CompanionSelectio
 
 /** How far the toolbar's first button and the card's text sit inside the visible edge. */
 const SELECTION_INSET = 12;
-/** Below this much room a card opens above the selection, unless there is even less room up there. */
-const CARD_COMFORT_HEIGHT = 340;
-/** A card needs this much to show its title, a few lines and the input; with less on both sides it overlaps the selection. */
-const CARD_MIN_HEIGHT = 240;
 
 /** Toolbar and cards share a column: centered on a one-line selection, starting where a longer one starts. */
 function selectionColumnX(anchor: CompanionSelectionAnchor, width: number): number {
@@ -147,27 +143,26 @@ export function resolveCompanionToolbarBounds(
 export interface CompanionCardSlot {
   /** Under the selection (the usual place), or above it. */
   below: boolean;
-  /** The selection is taller than the screen: the card sits at the bottom, over its last lines. */
-  overlap: boolean;
-  /** The window height that fits there; the card scrolls inside rather than grow past it. */
+  /** The window height the card may grow to: the full card, or the whole screen when that is shorter. */
   room: number;
 }
 
 /**
  * Answer, translate and read-aloud cards open under the selection so the
- * selected text stays readable, and grow downward; with little room below
- * they open above it.
+ * selected text stays readable, and grow downward. When the full card does not
+ * fit there they open on the side with more room. A card that outgrows its side
+ * slides over the selection, which it quotes, rather than scroll a short card.
  */
 export function companionCardSlot(anchor: CompanionSelectionAnchor, workArea: CompanionRect): CompanionCardSlot {
   const pad = DesktopCompanionSize.SurfacePad;
   const gap = DesktopCompanionSize.Gap;
+  const room = Math.min(DesktopCompanionSize.Answer.height, workArea.height);
   const roomBelow = workArea.y + workArea.height - (anchor.bottom + gap - pad);
   const roomAbove = anchor.top - gap + pad - workArea.y;
-  if (Math.max(roomBelow, roomAbove) < CARD_MIN_HEIGHT) return { below: true, overlap: true, room: workArea.height };
-  const below = roomBelow >= CARD_COMFORT_HEIGHT || roomBelow >= roomAbove;
-  return { below, overlap: false, room: below ? roomBelow : roomAbove };
+  return { below: roomBelow >= room || roomBelow >= roomAbove, room };
 }
 
+/** The card next to the selection; past the screen edge it is pushed back over the selection, never off screen. */
 export function resolveCompanionCardBounds(
   anchor: CompanionSelectionAnchor,
   size: CompanionSize,
@@ -177,8 +172,7 @@ export function resolveCompanionCardBounds(
   const gap = DesktopCompanionSize.Gap;
   const slot = companionCardSlot(anchor, workArea);
   const height = Math.min(size.height, slot.room);
-  const y = slot.overlap ? workArea.y + workArea.height - height
-    : slot.below ? anchor.bottom + gap - pad : anchor.top - gap - height + pad;
+  const y = slot.below ? anchor.bottom + gap - pad : anchor.top - gap - height + pad;
   return clampCompanionBounds({ width: size.width, height, x: selectionColumnX(anchor, size.width), y }, workArea);
 }
 

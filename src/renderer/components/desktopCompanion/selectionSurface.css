@@ -24,6 +24,10 @@
   --s-danger: #dc4545;
   /* Fits inside --surface-pad so the transparent window never clips it. */
   --s-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 6px 16px rgba(0, 0, 0, 0.1);
+  /* The toolbar and its menu float over any page, often a white one: a tinted fill and a firmer edge keep them visible. */
+  --s-bar-bg: #f3f3f5;
+  --s-bar-line: rgba(0, 0, 0, 0.14);
+  --s-bar-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 6px 16px -2px rgba(0, 0, 0, 0.22);
   position: relative;
   width: 100%;
   height: 100%;
@@ -49,6 +53,9 @@
   --s-ok: #4ade80;
   --s-danger: #ff7b7b;
   --s-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 6px 16px rgba(0, 0, 0, 0.45);
+  --s-bar-bg: #323236;
+  --s-bar-line: rgba(255, 255, 255, 0.16);
+  --s-bar-shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 6px 16px -2px rgba(0, 0, 0, 0.55);
 }
 .sel-surface :focus-visible { outline: 2px solid color-mix(in srgb, var(--s-accent) 60%, transparent); outline-offset: 1px; }
 .sel-surface button:disabled { opacity: 1; color: var(--s-ink-4); }
@@ -62,42 +69,41 @@
 }
 .sel-surface[data-menu="up"] .sel-stack { top: auto; bottom: var(--surface-pad); flex-direction: column-reverse; }
 .sel-toolbar {
-  align-self: flex-start; display: flex; align-items: center; gap: 1px; width: max-content; height: 36px; padding: 3px;
-  background: var(--s-bg); border: 0.5px solid var(--s-line); border-radius: 10px; box-shadow: var(--s-shadow);
+  align-self: flex-start; display: flex; align-items: center; gap: 2px; width: max-content; height: 42px; padding: 4px;
+  background: var(--s-bar-bg); border: 1px solid var(--s-bar-line); border-radius: 12px; box-shadow: var(--s-bar-shadow);
   animation: sel-in 0.14s cubic-bezier(0.2, 0, 0, 1);
 }
 .sel-tool {
-  display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 9px 0 8px; border-radius: 7px;
-  color: var(--s-ink); font-size: 13px; line-height: 1; white-space: nowrap; transition: background-color 0.12s;
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 9px; border-radius: 8px;
+  color: var(--s-ink); font-size: 14px; font-weight: 500; line-height: 1; white-space: nowrap; transition: background-color 0.12s;
 }
-.sel-tool svg { width: 16px; height: 16px; color: var(--s-ink-2); stroke-width: 1.7; transition: color 0.12s, transform 0.15s; }
+.sel-tool svg { width: 18px; height: 18px; color: var(--s-ink); stroke-width: 1.8; transition: color 0.12s, transform 0.15s; }
 .sel-tool:hover { background: var(--s-fill); }
-.sel-tool:hover svg { color: var(--s-ink); }
 .sel-tool:active { background: var(--s-fill-strong); }
 .sel-tool[data-done="true"], .sel-tool[data-done="true"] svg { color: var(--s-ok); }
 /* Stacked labels: the wider one sets the width, only the current one shows. */
 .sel-swap { display: inline-grid; }
 .sel-swap > span { grid-area: 1 / 1; }
 .sel-swap > span[aria-hidden="true"] { visibility: hidden; }
-.sel-sep { width: 1px; height: 16px; margin: 0 2px; background: var(--s-divider); }
-.sel-more { width: 26px; padding: 0; justify-content: center; }
-.sel-more svg { width: 14px; height: 14px; stroke-width: 2; }
+.sel-sep { width: 1px; height: 18px; margin: 0 3px; background: var(--s-line); }
+.sel-more { width: 30px; padding: 0; justify-content: center; }
+.sel-more svg { width: 16px; height: 16px; stroke-width: 2; }
 .sel-more[data-active="true"] { background: var(--s-fill-strong); }
-.sel-more[data-active="true"] svg { color: var(--s-ink); transform: rotate(180deg); }
+.sel-more[data-active="true"] svg { transform: rotate(180deg); }
 
 .sel-menu {
   align-self: flex-end; width: 200px; padding: 4px;
-  background: var(--s-bg); border: 0.5px solid var(--s-line); border-radius: 10px; box-shadow: var(--s-shadow);
+  background: var(--s-bar-bg); border: 1px solid var(--s-bar-line); border-radius: 12px; box-shadow: var(--s-bar-shadow);
   transform-origin: top right; animation: sel-menu-in 0.12s cubic-bezier(0.2, 0, 0, 1);
 }
 .sel-surface[data-menu="up"] .sel-menu { transform-origin: bottom right; animation-name: sel-menu-in-up; }
-.sel-menu-group[data-divided="true"] { margin-top: 4px; padding-top: 4px; border-top: 0.5px solid var(--s-divider); }
+.sel-menu-group[data-divided="true"] { margin-top: 4px; padding-top: 4px; border-top: 0.5px solid var(--s-line); }
 .sel-menu-item {
-  display: flex; align-items: center; gap: 9px; width: 100%; height: 30px; padding: 0 8px; border-radius: 6px;
-  color: var(--s-ink); font-size: 13px; text-align: left; white-space: nowrap; transition: background-color 0.1s;
+  display: flex; align-items: center; gap: 9px; width: 100%; height: 32px; padding: 0 8px; border-radius: 8px;
+  color: var(--s-ink); font-size: 14px; text-align: left; white-space: nowrap; transition: background-color 0.1s;
 }
 .sel-menu-item span { overflow: hidden; text-overflow: ellipsis; }
-.sel-menu-item svg { width: 16px; height: 16px; color: var(--s-ink-2); stroke-width: 1.7; }
+.sel-menu-item svg { width: 17px; height: 17px; color: var(--s-ink); stroke-width: 1.7; }
 .sel-menu-item:hover { background: var(--s-fill); }
 .sel-menu-item:active { background: var(--s-fill-strong); }
 .sel-menu-item[data-secondary="true"] { color: var(--s-ink-2); }
@@ -107,8 +113,8 @@
 
 .sel-card {
   position: absolute; left: var(--surface-pad); top: var(--surface-pad);
-  /* With less room beside the selection, the main process sends a lower max-height; the card scrolls inside it. */
-  width: 400px; max-height: 440px; display: flex; flex-direction: column; overflow: hidden;
+  /* On a screen shorter than the card, the main process sends a lower max-height; the card scrolls inside it. */
+  width: 400px; max-height: 600px; display: flex; flex-direction: column; overflow: hidden;
   background: var(--s-bg); border: 0.5px solid var(--s-line); border-radius: 14px; box-shadow: var(--s-shadow);
   animation: sel-card-in 0.18s cubic-bezier(0.2, 0, 0, 1);
 }

@@ -1,19 +1,20 @@
 /* Translate and read-aloud cards; the shared card parts live in selectionSurface.css. */
 
-.lt-langs { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
+/* Source and target sit in equal halves under the title bar, so the direction stays in view while answers scroll. */
+.lt-langs { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 10px; flex-shrink: 0; padding: 2px 16px 14px; }
 .lt-lang {
-  position: relative; display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 8px;
-  background: var(--s-field); color: var(--s-ink-2); font-size: 12.5px; white-space: nowrap;
+  position: relative; display: flex; align-items: center; height: 36px; padding: 0 12px; overflow: hidden;
+  border: 1px solid var(--s-line); border-radius: 10px; color: var(--s-ink-3); font-size: 13.5px; white-space: nowrap; text-overflow: ellipsis;
 }
-.lt-arrow { width: 14px; height: 14px; color: var(--s-ink-3); stroke-width: 1.8; }
-.lt-select { padding: 0; color: var(--s-ink); transition: background-color 0.12s; }
-.lt-select:hover { background: var(--s-fill-strong); }
-.lt-select:focus-within { box-shadow: 0 0 0 1px var(--s-line-strong); }
+.lt-arrow { width: 16px; height: 16px; color: var(--s-ink-3); stroke-width: 1.8; }
+.lt-select { padding: 0; overflow: visible; color: var(--s-ink); font-weight: 500; transition: background-color 0.12s, border-color 0.12s; }
+.lt-select:hover { background: var(--s-fill); }
+.lt-select:focus-within { border-color: var(--s-line-strong); }
 .lt-select select {
-  height: 100%; padding: 0 28px 0 10px; border: 0; border-radius: inherit; outline: none; appearance: none;
-  background: transparent; color: inherit; font: inherit; cursor: pointer;
+  width: 100%; height: 100%; padding: 0 32px 0 12px; border: 0; border-radius: inherit; outline: none; appearance: none;
+  background: transparent; color: inherit; font: inherit; text-overflow: ellipsis; cursor: pointer;
 }
-.lt-select svg { position: absolute; right: 9px; width: 12px; height: 12px; color: var(--s-ink-3); stroke-width: 2.2; pointer-events: none; }
+.lt-select svg { position: absolute; right: 11px; width: 14px; height: 14px; color: var(--s-ink-3); stroke-width: 2; pointer-events: none; }
 
 .lt-translation { min-height: 24px; color: var(--s-ink); font-size: 15px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .lt-translation .sel-thinking { font-size: 13px; }

@@ -223,16 +223,31 @@ describe('selection toolbar', () => {
     controller.dispose();
   });
 
-  test('a card with little room on either side is capped there and scrolls instead of covering the selection', () => {
+  test('with little room on either side, a long answer slides the card over the selection instead of scrolling it', () => {
     const controller = create();
     // A long passage from y=300 to y=600 leaves about 316px on each side.
     select('ambient co-worker', 'com.microsoft.Word', 300, 580);
     vi.advanceTimersByTime(200);
     controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
-    const room = 900 - (600 + DesktopCompanionSize.Gap - PAD);
-    expect(sentSelection().cardMaxHeight).toBe(room - PAD * 2);
-    controller.setContentSize({ width: 444, height: 600 });
-    expect(win.bounds).toMatchObject({ y: 900 - room, height: room });
+    expect(sentSelection().cardMaxHeight).toBe(DesktopCompanionSize.Answer.height - PAD * 2);
+    controller.setContentSize({ width: 444, height: 280 });
+    expect(win.bounds.y + PAD).toBeGreaterThanOrEqual(600);
+    controller.setContentSize({ width: 444, height: 900 });
+    expect(win.bounds).toMatchObject({ y: 900 - DesktopCompanionSize.Answer.height, height: DesktopCompanionSize.Answer.height });
+    controller.dispose();
+  });
+
+  test('a card above the selection starts about its measured size, so measuring it does not move it', () => {
+    const controller = create();
+    select('ambient co-worker', 'com.microsoft.Word', 800);
+    vi.advanceTimersByTime(200);
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
+    expect(win.bounds.height).toBe(DesktopCompanionSize.AnswerStartHeight);
+    const bottom = visibleBottom();
+    expect(bottom).toBeLessThanOrEqual(800);
+    controller.setContentSize({ width: 444, height: 236 });
+    expect(visibleBottom()).toBe(bottom);
+    expect(win.bounds.height).toBe(236);
     controller.dispose();
   });
 

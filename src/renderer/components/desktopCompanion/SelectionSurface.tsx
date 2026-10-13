@@ -9,7 +9,6 @@ import {
   Cog6ToothIcon,
   LanguageIcon,
   NoSymbolIcon,
-  PauseCircleIcon,
   PencilSquareIcon,
   SpeakerWaveIcon,
   Square2StackIcon,
@@ -261,10 +260,9 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
       { key: 'copy', icon: copied ? CheckIcon : Square2StackIcon, label: '', run: copySelection },
     ];
     const menu: MenuItem[] = [
+      actionItem(CompanionSelectionAction.Explain),
       actionItem(CompanionSelectionAction.Ask),
-      actionItem(CompanionSelectionAction.Polish),
       { key: 'exclude', icon: NoSymbolIcon, label: t('desktopCompanionSelectionExclude'), run: () => command({ type: DesktopCompanionSelectionCommandType.ExcludeApp }), secondary: true },
-      { key: 'pause', icon: PauseCircleIcon, label: t('desktopCompanionSelectionPause'), run: () => command({ type: DesktopCompanionSelectionCommandType.Pause }), secondary: true },
       { key: 'settings', icon: Cog6ToothIcon, label: t('desktopCompanionSelectionSettings'), run: () => command({ type: DesktopCompanionSelectionCommandType.Settings }), secondary: true },
     ];
     const menuOpen = selection.menuOpen;

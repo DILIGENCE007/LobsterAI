@@ -117,22 +117,23 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
           )}
         </SelectionCardHeader>
 
+        {isTranslation && (
+          <div className="lt-langs">
+            <span className="lt-lang">{t('desktopToolsDetectLanguage')}</span>
+            <ArrowRightIcon className="lt-arrow" aria-hidden="true" />
+            <label className="lt-lang lt-select">
+              <select aria-label={t('desktopToolsTarget')} value={tools.target}
+                onChange={event => tools.translate(event.target.value as TranslationTarget)}>
+                <option value={TranslationTarget.Chinese}>{t('desktopToolsChinese')}</option>
+                <option value={TranslationTarget.English}>{t('desktopToolsEnglish')}</option>
+              </select>
+              <ChevronDownIcon aria-hidden="true" />
+            </label>
+          </div>
+        )}
+
         <div className="sel-scroll" ref={conversationRef}>
-          {isTranslation && (
-            <div className="lt-langs">
-              <span className="lt-lang">{t('desktopToolsDetectLanguage')}</span>
-              <ArrowRightIcon className="lt-arrow" aria-hidden="true" />
-              <label className="lt-lang lt-select">
-                <select aria-label={t('desktopToolsTarget')} value={tools.target}
-                  onChange={event => tools.translate(event.target.value as TranslationTarget)}>
-                  <option value={TranslationTarget.Chinese}>{t('desktopToolsChinese')}</option>
-                  <option value={TranslationTarget.English}>{t('desktopToolsEnglish')}</option>
-                </select>
-                <ChevronDownIcon aria-hidden="true" />
-              </label>
-            </div>
-          )}
-          <SourceQuote key={input.id} text={source} lines={isTranslation ? 2 : 4} />
+          {!isTranslation && <SourceQuote key={input.id} text={source} lines={4} />}
 
           {isTranslation && (
             <div className="lt-translation" aria-live="polite">
@@ -213,10 +214,6 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
                   aria-label={t(copied ? 'desktopCompanionSelectionCopied' : 'desktopCompanionSelectionCopy')}>
                   {copied ? <CheckIcon /> : <Square2StackIcon />}
                 </button>
-                <button type="button" className="sel-icon" onClick={tools.readTranslation}
-                  title={t('desktopToolsReadTranslation')} aria-label={t('desktopToolsReadTranslation')}>
-                  <SpeakerWaveIcon />
-                </button>
                 <button type="button" className="sel-icon" onClick={() => tools.translate()}
                   title={t('desktopToolsRetranslate')} aria-label={t('desktopToolsRetranslate')}>
                   <ArrowPathIcon />
@@ -240,14 +237,16 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
           />
         )}
 
-        <footer className="lt-quota" title={t('desktopToolsResetTime')}>
-          {currentQuota ? <>
-            <span>{t('desktopToolsRemaining').replace('{count}', String(currentQuota.remainingRequests))}</span>
-            {currentQuota.remainingCharacters !== null && (
-              <span>{t('desktopToolsRemainingCharacters').replace('{count}', currentQuota.remainingCharacters.toLocaleString())}</span>
-            )}
-          </> : <span>{t('desktopToolsQuotaHint')}</span>}
-        </footer>
+        {!isTranslation && (
+          <footer className="lt-quota" title={t('desktopToolsResetTime')}>
+            {currentQuota ? <>
+              <span>{t('desktopToolsRemaining').replace('{count}', String(currentQuota.remainingRequests))}</span>
+              {currentQuota.remainingCharacters !== null && (
+                <span>{t('desktopToolsRemainingCharacters').replace('{count}', currentQuota.remainingCharacters.toLocaleString())}</span>
+              )}
+            </> : <span>{t('desktopToolsQuotaHint')}</span>}
+          </footer>
+        )}
       </div>
     </div>
   );
