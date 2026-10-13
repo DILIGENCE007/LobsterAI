@@ -383,6 +383,11 @@ import {
 } from './libs/dataMigration/dataMigrationService';
 import { DesktopNotificationManager } from './libs/desktopNotificationManager';
 import {
+  buildDevelopmentProtocolArgs,
+  DevelopmentProtocolSwitch,
+  resolveDevelopmentLaunchContext,
+} from './libs/developmentProtocolContext';
+import {
   getExpertStoreUrl,
   getHtmlSharePublicBaseUrl,
   getKitStoreUrl,
@@ -1990,15 +1995,16 @@ const savePngWithDialog = async (
   return { success: true, canceled: false, path: outputPath };
 };
 
-/** Development builds only: automated end-to-end runs use a throwaway profile. */
-const DEV_USER_DATA_DIR_ENV = 'LOBSTERAI_DEV_USER_DATA_DIR';
+const developmentLaunchContext = resolveDevelopmentLaunchContext({
+  isPackaged: app.isPackaged,
+  environment: process.env,
+  userDataDirArgument: app.commandLine.getSwitchValue(DevelopmentProtocolSwitch.UserDataDir),
+  startUrlArgument: app.commandLine.getSwitchValue(DevelopmentProtocolSwitch.StartUrl),
+});
 
 const configureUserDataPath = (): void => {
   const appDataPath = app.getPath('appData');
-  const devUserDataPath = app.isPackaged ? undefined : process.env[DEV_USER_DATA_DIR_ENV]?.trim();
-  const preferredUserDataPath = devUserDataPath && path.isAbsolute(devUserDataPath)
-    ? devUserDataPath
-    : path.join(appDataPath, APP_NAME);
+  const preferredUserDataPath = developmentLaunchContext.userDataDir || path.join(appDataPath, APP_NAME);
   const currentUserDataPath = app.getPath('userData');
 
   if (currentUserDataPath !== preferredUserDataPath) {
@@ -2023,11 +2029,11 @@ if (startupDataMigrationRestoreResult) {
   console.log(`[DataMigration] pending restore finished with status ${status}`);
 }
 
-const isDev = process.env.NODE_ENV === 'development';
+const isDev = developmentLaunchContext.isDev;
 const isLinux = process.platform === 'linux';
 const isMac = process.platform === 'darwin';
 const isWindows = process.platform === 'win32';
-const DEV_SERVER_URL = process.env.ELECTRON_START_URL || 'http://localhost:5175';
+const DEV_SERVER_URL = developmentLaunchContext.serverUrl;
 const shouldOpenDevTools =
   isDev && (
     process.env.ELECTRON_OPEN_DEVTOOLS === '1'
@@ -5132,11 +5138,14 @@ if (!gotTheLock) {
 } else {
   // Register custom protocol for OAuth callback
   if (!app.isPackaged) {
-    // In dev mode, setAsDefaultProtocolClient needs the electron exe path
-    // and the app entry point as extra args so the OS can relaunch correctly
-    app.setAsDefaultProtocolClient('lobsterai', process.execPath, [
-      path.resolve(process.argv[1]),
-    ]);
+    // The OS does not inherit our shell environment. Replay the profile before
+    // acquiring the single-instance lock, and the renderer URL for cold launches.
+    app.setAsDefaultProtocolClient('lobsterai', process.execPath, buildDevelopmentProtocolArgs({
+      entryPoint: path.resolve(process.argv[1]),
+      userDataDir: app.getPath('userData'),
+      isDev,
+      serverUrl: DEV_SERVER_URL,
+    }));
   } else {
     app.setAsDefaultProtocolClient('lobsterai');
   }
