@@ -5,6 +5,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { buildSessionTitleFromInput } from '../../../common/sessionTitle';
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
 import {
+  DesktopCompanionPanelPlacement,
   DesktopCompanionSize,
   type DesktopCompanionState,
   EMPTY_DESKTOP_COMPANION_DRAFT,
@@ -25,6 +26,7 @@ import { buildCoworkStartPlan, COWORK_START_BLOCK_MESSAGE_KEYS, resolveCoworkSta
 import { useHomeStartContext } from '../cowork/useHomeStartContext';
 import Toast, { type ToastEventDetail } from '../Toast';
 import { bootstrapCompanionComposer, refreshCompanionComposer } from './companionComposerBootstrap';
+import { ComposerExit, useComposerMotion } from './useComposerMotion';
 import { useMeasuredSurface } from './useMeasuredSurface';
 
 const t = (key: string) => i18nService.t(key);
@@ -34,9 +36,20 @@ const TOAST_MS = 2_200;
 const ACTION_TOAST_MS = 6_000;
 
 /**
- * The desktop companion's quick panel: the home page's own composer, opened
- * beside the orb. Sending starts a task exactly like the home page does; the
- * orb then follows it and the result opens in the main window.
+ * Like the hint bubbles, the card's corner nearest the orb is tight, so it
+ * reads as coming out of the character. The context tray is that corner.
+ */
+const TAIL_CORNER_CLASS: Record<DesktopCompanionPanelPlacement, string> = {
+  [DesktopCompanionPanelPlacement.Left]: 'rounded-br-md [&_[data-prompt-context-tray]]:rounded-br-md',
+  [DesktopCompanionPanelPlacement.Right]: 'rounded-bl-md [&_[data-prompt-context-tray]]:rounded-bl-md',
+  [DesktopCompanionPanelPlacement.Center]: '',
+};
+
+/**
+ * The desktop companion's quick panel: the home page's own composer in a
+ * narrow card beside the orb, or a little below mid-screen when the orb is
+ * off. Sending starts a task exactly like the home page does; the card folds
+ * into the orb's status strip and the result opens in the main window.
  */
 export default function CompanionComposer() {
   const api = window.electron.desktopCompanion;
@@ -46,6 +59,7 @@ export default function CompanionComposer() {
   const [toast, setToast] = useState<ToastEventDetail | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
   const cardRef = useRef<HTMLDivElement>(null);
+  const motionRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<CoworkPromptInputRef>(null);
   const submittingRef = useRef(false);
   const passThroughRef = useRef<boolean | null>(null);
@@ -59,7 +73,9 @@ export default function CompanionComposer() {
   const homePrompt = useSelector((state: RootState) => state.cowork.draftPrompts[HOME_DRAFT_KEY] ?? '');
   const homeAttachments = useSelector((state: RootState) => state.cowork.draftAttachments[HOME_DRAFT_KEY]);
   const visible = companion?.panelVisible ?? false;
+  const placement = companion?.panelPlacement ?? DesktopCompanionPanelPlacement.Left;
   useMeasuredSurface(cardRef, visible);
+  const playExit = useComposerMotion(motionRef, visible, placement);
 
   const showToast = useCallback((value: string | ToastEventDetail) => {
     const detail = typeof value === 'string' ? { message: value } : value;
@@ -128,13 +144,13 @@ export default function CompanionComposer() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented) return;
-      void api.hidePanel();
+      void playExit(ComposerExit.Dismiss).then(() => api.hidePanel());
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [api]);
+  }, [api, playExit]);
 
-  // The window keeps room above the card for the composer's menus; clicks there reach the app behind.
+  // The window keeps room around the card for the composer's menus; clicks there reach the app behind.
   useEffect(() => {
     const onMove = (event: MouseEvent) => {
       const target = document.elementFromPoint(event.clientX, event.clientY);
@@ -200,6 +216,9 @@ export default function CompanionComposer() {
         showToast(error ? t('coworkErrorSessionStartFailed').replace('{error}', error) : t('desktopCompanionRequestFailed'));
         return false;
       }
+      // Beside the orb, the card folds into the strip the orb shows for the task, in the
+      // same spot. With no orb on screen there is no strip, so it just closes.
+      await playExit(placement === DesktopCompanionPanelPlacement.Center ? ComposerExit.Dismiss : ComposerExit.Handoff);
       dispatch(clearActiveSkills());
       dispatch(clearActiveKits());
       dispatch(setDraftKitIds({ draftKey: HOME_DRAFT_KEY, kitIds: [] }));
@@ -213,45 +232,55 @@ export default function CompanionComposer() {
     } finally {
       submittingRef.current = false;
     }
-  }, [activeKitIds, activeSkillIds, api, dispatch, installedKits, marketplaceKits, mediaSelection, showToast, skills, start]);
+  }, [activeKitIds, activeSkillIds, api, dispatch, installedKits, marketplaceKits, mediaSelection, placement, playExit, showToast, skills, start]);
 
   const openMain = useCallback(() => { void api.openMain(null); }, [api]);
 
+  // The card sits in the window's corner by the orb; the rest of the window is room for menus.
+  const cardAlignClass = placement === DesktopCompanionPanelPlacement.Left ? 'items-end' : 'items-start';
+
   return (
-    <div className="flex h-full w-full flex-col justify-end" data-composer-room="true">
-      {/* The home page's background sits behind its composer; out on the desktop the card brings its own. */}
+    <div className={`flex h-full w-full flex-col justify-end ${cardAlignClass}`} data-composer-room="true">
       <div
         ref={cardRef}
-        className="rounded-3xl bg-background shadow-popover ring-1 ring-black/5 dark:ring-white/10"
+        className="relative shrink-0"
         style={{ width: DesktopCompanionSize.Composer.width, margin: DesktopCompanionSize.SurfacePad }}
       >
-        <CoworkPromptInput
-          ref={inputRef}
-          onSubmit={submit}
-          placeholder={t('coworkPlaceholder')}
-          disabled={!ready}
-          size="large"
-          workingDirectory={start.workingDirectory}
-          onWorkingDirectoryChange={async (dir: string) => {
-            await agentService.updateAgent(start.currentAgentId, { workingDirectory: dir });
-          }}
-          showFolderSelector
-          showModelSelector
-          showAgentSelector
-          onManageSkills={openMain}
-          onManageKits={openMain}
-          onGoalCommand={command => submit(command)}
-        />
+        {/* The home page's background sits behind its composer; out on the desktop the card brings its own. */}
+        <div
+          ref={motionRef}
+          className={`rounded-3xl bg-background shadow-popover ring-1 ring-black/5 dark:ring-white/10 ${TAIL_CORNER_CLASS[placement]}`}
+        >
+          <CoworkPromptInput
+            ref={inputRef}
+            onSubmit={submit}
+            placeholder={t('coworkPlaceholder')}
+            disabled={!ready}
+            size="large"
+            narrow
+            workingDirectory={start.workingDirectory}
+            onWorkingDirectoryChange={async (dir: string) => {
+              await agentService.updateAgent(start.currentAgentId, { workingDirectory: dir });
+            }}
+            showFolderSelector
+            showModelSelector
+            showAgentSelector
+            onManageSkills={openMain}
+            onManageKits={openMain}
+            onGoalCommand={command => submit(command)}
+          />
+        </div>
+        {toast && (
+          <Toast
+            contained
+            message={toast.message}
+            actionLabel={toast.actionLabel}
+            onAction={toast.onAction}
+            closeLabel={t('close')}
+            onClose={() => setToast(null)}
+          />
+        )}
       </div>
-      {toast && (
-        <Toast
-          message={toast.message}
-          actionLabel={toast.actionLabel}
-          onAction={toast.onAction}
-          closeLabel={t('close')}
-          onClose={() => setToast(null)}
-        />
-      )}
     </div>
   );
 }

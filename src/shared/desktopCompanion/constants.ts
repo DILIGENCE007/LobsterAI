@@ -109,6 +109,10 @@ export type DesktopCompanionStageKind = typeof DesktopCompanionStageKind[keyof t
 export const DesktopCompanionStageSide = { Left: 'left', Right: 'right' } as const;
 export type DesktopCompanionStageSide = typeof DesktopCompanionStageSide[keyof typeof DesktopCompanionStageSide];
 
+/** Where the quick panel's card sits: beside the orb on the side it opens to, or mid-screen when no orb is on screen. */
+export const DesktopCompanionPanelPlacement = { ...DesktopCompanionStageSide, Center: 'center' } as const;
+export type DesktopCompanionPanelPlacement = typeof DesktopCompanionPanelPlacement[keyof typeof DesktopCompanionPanelPlacement];
+
 export const DesktopCompanionDropSource = { Global: 'global', Orb: 'orb' } as const;
 export type DesktopCompanionDropSource = typeof DesktopCompanionDropSource[keyof typeof DesktopCompanionDropSource];
 
@@ -152,6 +156,8 @@ export interface DesktopCompanionState {
   stage: DesktopCompanionStage;
   /** Which side of the character the stage opens on, so its tail can point back at it. */
   stageSide: DesktopCompanionStageSide;
+  /** Where the quick panel's card sits in its window, and so which corner points back at the orb. */
+  panelPlacement: DesktopCompanionPanelPlacement;
   fileDragActive: boolean;
   foreground: DesktopCompanionForeground | null;
   capabilities: DesktopCompanionCapabilities;
@@ -199,6 +205,12 @@ export interface DesktopCompanionSelection {
   mode: DesktopCompanionSelectionMode;
   action: CompanionSelectionAction | null;
   pinned: boolean;
+  /** The toolbar's "more" menu is open inside the same window. */
+  menuOpen: boolean;
+  /** The menu opens above the toolbar, so the window grows upward. */
+  menuUp: boolean;
+  /** How tall the answer card may grow beside the selection before it scrolls. */
+  cardMaxHeight?: number;
 }
 
 export const DesktopCompanionSelectionCommandType = {
@@ -209,6 +221,9 @@ export const DesktopCompanionSelectionCommandType = {
   Pause: 'pause',
   FocusInput: 'focus-input',
   More: 'more',
+  Settings: 'settings',
+  /** The pointer left the toolbar or card for the window's transparent margin, or came back. */
+  PassThrough: 'pass-through',
 } as const;
 
 export type DesktopCompanionSelectionCommand =
@@ -218,7 +233,9 @@ export type DesktopCompanionSelectionCommand =
   | { type: typeof DesktopCompanionSelectionCommandType.ExcludeApp }
   | { type: typeof DesktopCompanionSelectionCommandType.Pause }
   | { type: typeof DesktopCompanionSelectionCommandType.FocusInput }
-  | { type: typeof DesktopCompanionSelectionCommandType.More };
+  | { type: typeof DesktopCompanionSelectionCommandType.More; open: boolean }
+  | { type: typeof DesktopCompanionSelectionCommandType.Settings }
+  | { type: typeof DesktopCompanionSelectionCommandType.PassThrough; passThrough: boolean };
 
 export interface CompanionQuickAnswerTurn {
   role: 'user' | 'assistant';
@@ -296,16 +313,21 @@ export const EMPTY_DESKTOP_COMPANION_DRAFT: DesktopCompanionDraft = {
 export const DesktopCompanionSize = {
   Orb: { width: 84, height: 84 },
   // Window sizes include the transparent SurfacePad margin that holds the card shadow.
-  // The quick panel is the home composer: its card is Composer wide and the
-  // window adds room above it for the composer's menus, which open upward.
-  Composer: { width: 600, maxHeight: 420 },
+  // The quick panel is the home composer in a narrow card that grows upward. Its
+  // window adds room above the card and toward the middle of the screen, so the
+  // composer's menus and their submenus open beside the card without moving it.
+  Composer: { width: 380, maxHeight: 560 },
   ComposerMenuRoom: 360,
-  PanelCompactHeight: 210,
+  ComposerSideRoom: 400,
+  PanelCompactHeight: 280,
   Task: { width: 420, height: 112 },
   Hint: { width: 320, height: 168 },
   Drop: { width: 448, height: 214 },
-  Toolbar: { width: 600, height: 64 },
-  Answer: { width: 436, height: 460 },
+  // A 36px toolbar plus the margin; its menu adds up to ToolbarMenu below or above it.
+  Toolbar: { width: 600, height: 80 },
+  ToolbarMenu: 200,
+  // A 400px card plus the margin.
+  Answer: { width: 444, height: 484 },
   SurfacePad: 22,
   Margin: 12,
   Gap: 6,

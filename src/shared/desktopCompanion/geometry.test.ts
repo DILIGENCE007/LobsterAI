@@ -1,14 +1,17 @@
 import { describe, expect, test } from 'vitest';
 
-import { DesktopCompanionSize } from './constants';
+import { DesktopCompanionPanelPlacement, DesktopCompanionSize } from './constants';
 import {
   clampCompanionBounds,
   companionGaze,
+  companionMenuOpensUp,
   companionStageOpensLeft,
   resolveCompanionBounds,
-  resolveCompanionComposerBounds,
-  resolveCompanionSelectionBounds,
+  resolveCompanionCardBounds,
+  resolveCompanionComposerLayout,
   resolveCompanionStageBounds,
+  resolveCompanionToolbarBounds,
+  resolveCompanionToolbarMenuBounds,
 } from './geometry';
 
 const orb = DesktopCompanionSize.Orb;
@@ -40,21 +43,50 @@ describe('orb placement', () => {
 describe('surfaces around the orb', () => {
   const area = { x: 0, y: 25, width: 1440, height: 875 };
 
-  test('opens the composer right beside the orb, with room for its menus above the card', () => {
+  describe('composer', () => {
     const pad = DesktopCompanionSize.SurfacePad;
-    const card = { width: DesktopCompanionSize.Composer.width + pad * 2, height: 170 + pad * 2 };
-    const room = DesktopCompanionSize.ComposerMenuRoom;
-    const low = { ...orb, x: 1356, y: 790 };
-    const beside = resolveCompanionComposerBounds(low, card, room, area);
-    // The card (inside the transparent pad) ends at the orb's edge and its bottom meets the character's.
-    expect(beside.x + beside.width - pad).toBe(low.x);
-    expect(beside.y + beside.height - pad).toBe(low.y + low.height - pad / 2);
-    expect(beside.height).toBe(card.height + room);
-    // Near the top there is less room, but the card stays where it was.
-    const high = { ...orb, x: 1356, y: 120 };
-    const near = resolveCompanionComposerBounds(high, card, room, area);
-    expect(near.y).toBe(area.y);
-    expect(near.y + near.height).toBe(resolveCompanionStageBounds(high, card, area).y + card.height);
+    const card = { width: DesktopCompanionSize.Composer.width + pad * 2, height: 230 + pad * 2 };
+    const room = { above: DesktopCompanionSize.ComposerMenuRoom, side: DesktopCompanionSize.ComposerSideRoom };
+
+    test('opens right beside the orb, with room above the card and toward the middle of the screen', () => {
+      const low = { ...orb, x: 1356, y: 790 };
+      const { bounds, placement } = resolveCompanionComposerLayout(low, card, room, area);
+      expect(placement).toBe(DesktopCompanionPanelPlacement.Left);
+      // The card (inside the transparent pad) ends at the orb's edge and its bottom meets the character's.
+      expect(bounds.x + bounds.width - pad).toBe(low.x);
+      expect(bounds.y + bounds.height - pad).toBe(low.y + low.height - pad / 2);
+      expect(bounds.height).toBe(card.height + room.above);
+      expect(bounds.width).toBe(card.width + room.side);
+    });
+
+    test('opens to the right of an orb on the left half, with the room on that side', () => {
+      const left = { ...orb, x: 40, y: 700 };
+      const { bounds, placement } = resolveCompanionComposerLayout(left, card, room, area);
+      expect(placement).toBe(DesktopCompanionPanelPlacement.Right);
+      expect(bounds.x + pad).toBe(left.x + left.width);
+      expect(bounds.width).toBe(card.width + room.side);
+    });
+
+    test('keeps the card in place and trims the room near the screen edges', () => {
+      const high = { ...orb, x: 1356, y: 120 };
+      const near = resolveCompanionComposerLayout(high, card, room, area).bounds;
+      expect(near.y).toBe(area.y);
+      expect(near.y + near.height).toBe(resolveCompanionStageBounds(high, card, area).y + card.height);
+      // A wide card next to an orb near the middle cannot take the whole side room.
+      const narrowArea = { x: 0, y: 25, width: 900, height: 875 };
+      const middle = resolveCompanionComposerLayout({ ...orb, x: 470, y: 700 }, card, room, narrowArea).bounds;
+      expect(middle.x).toBe(narrowArea.x);
+    });
+
+    test('opens a little below the middle of the screen when no orb is on screen', () => {
+      const { bounds, placement } = resolveCompanionComposerLayout(null, card, room, area);
+      expect(placement).toBe(DesktopCompanionPanelPlacement.Center);
+      expect(bounds.x + card.width / 2).toBe(area.x + area.width / 2);
+      const cardBottom = bounds.y + bounds.height;
+      expect(cardBottom).toBeGreaterThan(area.y + area.height / 2 + card.height / 2);
+      expect(cardBottom).toBeLessThan(area.y + area.height);
+      expect(bounds.width).toBe(card.width + room.side);
+    });
   });
 
   test('opens the stage toward the middle of the screen, bottom-aligned with the orb', () => {
@@ -78,22 +110,74 @@ describe('surfaces around the orb', () => {
 
 describe('selection toolbar placement', () => {
   const area = { x: 0, y: 0, width: 1440, height: 900 };
-  const size = { width: 400, height: 64 };
+  const size = { width: 400, height: 80 };
+  const pad = DesktopCompanionSize.SurfacePad;
+  const word = { left: 300, right: 380, top: 200, bottom: 220, multiline: false };
+  const paragraph = { left: 520, right: 260, top: 200, bottom: 300, multiline: true };
 
-  test('sits just under the selected line', () => {
-    const bounds = resolveCompanionSelectionBounds({ x: 300, top: 200, bottom: 220 }, size, area);
-    expect(bounds.y + DesktopCompanionSize.SurfacePad).toBeGreaterThanOrEqual(220);
-    expect(bounds.y + DesktopCompanionSize.SurfacePad).toBeLessThan(240);
+  test('sits just above the selection, centered on a one-line selection', () => {
+    const { bounds, above } = resolveCompanionToolbarBounds(word, size, area);
+    expect(above).toBe(true);
+    expect(bounds.y + bounds.height - pad).toBeLessThanOrEqual(200);
+    expect(bounds.y + bounds.height - pad).toBeGreaterThan(188);
+    expect(bounds.x + bounds.width / 2).toBe(340);
   });
 
-  test('flips above the selection near the bottom edge', () => {
-    const bounds = resolveCompanionSelectionBounds({ x: 300, top: 860, bottom: 880 }, size, area);
-    expect(bounds.y + bounds.height - DesktopCompanionSize.SurfacePad).toBeLessThanOrEqual(860);
+  test('lines up with where a longer selection starts, above its first line', () => {
+    const { bounds } = resolveCompanionToolbarBounds(paragraph, size, area);
+    expect(bounds.y + bounds.height - pad).toBeLessThanOrEqual(200);
+    // The first button sits over the first selected character.
+    expect(bounds.x + pad).toBeGreaterThan(500);
+    expect(bounds.x + pad).toBeLessThan(520);
+  });
+
+  test('drops below the selection only when there is no room above', () => {
+    const { bounds, above } = resolveCompanionToolbarBounds({ ...word, top: 30, bottom: 50 }, size, area);
+    expect(above).toBe(false);
+    expect(bounds.y + pad).toBeGreaterThanOrEqual(50);
   });
 
   test('never runs off the right edge', () => {
-    const bounds = resolveCompanionSelectionBounds({ x: 1400, top: 200, bottom: 220 }, size, area);
+    const { bounds } = resolveCompanionToolbarBounds({ ...word, left: 1400, right: 1430 }, size, area);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(1440);
+  });
+
+  test('cards open under the selection and keep it readable', () => {
+    const card = resolveCompanionCardBounds(paragraph, { width: 444, height: 484 }, area);
+    expect(card.y + pad).toBeGreaterThanOrEqual(300);
+    expect(card.height).toBe(484);
+  });
+
+  test('near the bottom a card opens above the selection, capped to the room there', () => {
+    const above = resolveCompanionCardBounds({ ...word, top: 760, bottom: 780 }, { width: 444, height: 300 }, area);
+    expect(above.y + above.height - pad).toBeLessThanOrEqual(760);
+    const squeezed = resolveCompanionCardBounds({ ...word, top: 320, bottom: 600 }, { width: 444, height: 484 }, area);
+    expect(squeezed.height).toBe(320 - DesktopCompanionSize.Gap + pad);
+    expect(squeezed.y).toBe(0);
+  });
+
+  test('a selection taller than the screen gets a full card over its last lines', () => {
+    const tall = { left: 300, right: 200, top: 120, bottom: 820, multiline: true };
+    const card = resolveCompanionCardBounds(tall, { width: 444, height: 484 }, area);
+    expect(card.height).toBe(484);
+    expect(card.y + card.height).toBe(900);
+  });
+
+  test('opens the menu away from the selection, unless only the other side has room', () => {
+    const below = { x: 300, y: 204, width: 400, height: 80 };
+    expect(companionMenuOpensUp(below, 200, area, false)).toBe(false);
+    expect(companionMenuOpensUp({ ...below, y: 760 }, 200, area, false)).toBe(true);
+    const above = { x: 300, y: 600, width: 400, height: 80 };
+    expect(companionMenuOpensUp(above, 200, area, true)).toBe(true);
+    expect(companionMenuOpensUp({ ...above, y: 100 }, 200, area, true)).toBe(false);
+  });
+
+  test('grows the window for the menu while the toolbar stays where it was', () => {
+    const toolbar = { x: 300, y: 600, width: 400, height: 80 };
+    expect(resolveCompanionToolbarMenuBounds(toolbar, { width: 400, height: 260 }, false, area))
+      .toEqual({ x: 300, y: 600, width: 400, height: 260 });
+    const up = resolveCompanionToolbarMenuBounds(toolbar, { width: 400, height: 260 }, true, area);
+    expect(up.y + up.height).toBe(toolbar.y + toolbar.height);
   });
 });
 

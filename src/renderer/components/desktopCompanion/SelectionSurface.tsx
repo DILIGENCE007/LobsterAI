@@ -1,60 +1,74 @@
 import {
   ArrowPathIcon,
-  ArrowTopRightOnSquareIcon,
-  ArrowUpIcon,
+  ArrowUpRightIcon,
+  Bars3BottomLeftIcon,
+  BookOpenIcon,
   ChatBubbleLeftEllipsisIcon,
   CheckIcon,
-  DocumentDuplicateIcon,
-  EllipsisHorizontalIcon,
+  ChevronDownIcon,
+  Cog6ToothIcon,
   LanguageIcon,
-  ListBulletIcon,
-  QuestionMarkCircleIcon,
-  SparklesIcon,
+  NoSymbolIcon,
+  PauseCircleIcon,
+  PencilSquareIcon,
   SpeakerWaveIcon,
-  StopIcon,
-  XMarkIcon,
+  Square2StackIcon,
 } from '@heroicons/react/24/outline';
-import { MapPinIcon } from '@heroicons/react/24/solid';
-import { type ComponentType, type SVGProps, useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   CompanionQuickAnswerEventType,
   type CompanionQuickAnswerTurn,
   type DesktopCompanionSelection,
+  type DesktopCompanionSelectionCommand,
   DesktopCompanionSelectionCommandType,
   DesktopCompanionSelectionMode,
   type DesktopCompanionState,
 } from '../../../shared/desktopCompanion/constants';
 import { LanguageTool } from '../../../shared/desktopCompanion/languageTools';
-import {
-  CompanionSelectionAction,
-  companionTranslationTarget,
-} from '../../../shared/desktopCompanion/selectionActions';
+import { CompanionSelectionAction } from '../../../shared/desktopCompanion/selectionActions';
 import { i18nService } from '../../services/i18n';
-import CompanionMarkdown from './CompanionMarkdown';
-import CompanionCharacter from './mascot/CompanionCharacter';
-import { CompanionMood } from './mascot/companionMood';
+import {
+  SelectionAnswer,
+  SelectionCardHeader,
+  SelectionComposer,
+  SelectionError,
+  type SelectionIcon,
+  SelectionThinking,
+  SourceQuote,
+  SwapLabel,
+} from './SelectionCard';
 import { useMeasuredSurface } from './useMeasuredSurface';
+import { usePointerPassThrough } from './usePointerPassThrough';
 
 const t = (key: string) => i18nService.t(key);
 
-const ACTION_ICONS: Record<CompanionSelectionAction, ComponentType<SVGProps<SVGSVGElement>>> = {
+/** Each action keeps one icon, on its toolbar button and in its card's title. */
+const ACTION_ICONS: Record<CompanionSelectionAction, SelectionIcon> = {
   [CompanionSelectionAction.Translate]: LanguageIcon,
-  [CompanionSelectionAction.Explain]: QuestionMarkCircleIcon,
-  [CompanionSelectionAction.Summarize]: ListBulletIcon,
-  [CompanionSelectionAction.Polish]: SparklesIcon,
+  [CompanionSelectionAction.Explain]: BookOpenIcon,
+  [CompanionSelectionAction.Summarize]: Bars3BottomLeftIcon,
+  [CompanionSelectionAction.Polish]: PencilSquareIcon,
   [CompanionSelectionAction.Ask]: ChatBubbleLeftEllipsisIcon,
 };
 
-const actionLabel = (action: CompanionSelectionAction) => t(`desktopCompanionAction${action.charAt(0).toUpperCase()}${action.slice(1)}`);
+/** How long "Copied" stays on the toolbar before it goes away. */
+const COPIED_TOOLBAR_MS = 650;
 
-function Answer({ text }: { text: string }) {
-  return <div className="sel-markdown"><CompanionMarkdown text={text} /></div>;
-}
+const actionLabel = (action: CompanionSelectionAction) => t(`desktopCompanionAction${action.charAt(0).toUpperCase()}${action.slice(1)}`);
 
 interface Streaming {
   requestId: string;
   text: string;
+}
+
+interface MenuItem {
+  key: string;
+  icon: SelectionIcon;
+  label: string;
+  run: () => void;
+  /** Settings-like entries sit below a divider in a quieter color. */
+  secondary?: boolean;
 }
 
 export default function SelectionSurface({ state }: { state: DesktopCompanionState }) {
@@ -71,16 +85,23 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout>>();
   const answering = selection?.mode === DesktopCompanionSelectionMode.Answer;
   useMeasuredSurface(rootRef, !!selection, `${selection?.id ?? ''}:${selection?.mode ?? ''}`);
 
   const setStream = (value: Streaming | null) => { streamRef.current = value; setStreaming(value); };
+  const command = useCallback((value: DesktopCompanionSelectionCommand) => { void api.selectionCommand(value); }, [api]);
+  const setPassThrough = useCallback((passThrough: boolean) => {
+    command({ type: DesktopCompanionSelectionCommandType.PassThrough, passThrough });
+  }, [command]);
+  usePointerPassThrough(selection?.id, setPassThrough);
 
   useEffect(() => api.onSelection(next => {
     const previous = selectionRef.current;
     selectionRef.current = next;
     setSelection(next);
     if (!next || next.id !== previous?.id || next.action !== previous?.action) {
+      clearTimeout(copiedTimer.current);
       setStream(null);
       setTurns([]);
       setQuestion('');
@@ -89,6 +110,8 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
       setCopied(false);
     }
   }), [api]);
+
+  useEffect(() => () => clearTimeout(copiedTimer.current), []);
 
   useEffect(() => api.onQuickAnswer(event => {
     const current = streamRef.current;
@@ -126,7 +149,7 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
     });
   }, [api]);
 
-  // Native overflow-menu actions and toolbar actions enter the same answer flow.
+  // Toolbar and menu actions enter the same answer flow; Ask waits for a question first.
   const autoAnswerAction = answering && selection.action !== CompanionSelectionAction.Ask
     && selection.action !== CompanionSelectionAction.Translate ? selection.action : null;
   useEffect(() => {
@@ -138,11 +161,10 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
       void api.openLanguageTool({ tool: LanguageTool.Translate, text: selectionRef.current?.text });
       return;
     }
-    void api.selectionCommand({ type: DesktopCompanionSelectionCommandType.Run, action });
+    command({ type: DesktopCompanionSelectionCommandType.Run, action });
     if (action === CompanionSelectionAction.Ask) {
-      void api.selectionCommand({ type: DesktopCompanionSelectionCommandType.FocusInput });
+      command({ type: DesktopCompanionSelectionCommandType.FocusInput });
       setTimeout(() => inputRef.current?.focus(), 60);
-      return;
     }
   };
 
@@ -163,11 +185,25 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
 
   const latestAnswer = streaming?.text || [...turns].reverse().find(turn => turn.role === 'assistant')?.content || '';
 
-  const copy = () => {
+  const flashCopied = () => {
+    clearTimeout(copiedTimer.current);
+    setCopied(true);
+    copiedTimer.current = setTimeout(() => setCopied(false), 1_400);
+  };
+
+  const copyAnswer = () => {
     if (!latestAnswer) return;
-    void api.copyText(latestAnswer).then(() => {
+    void api.copyText(latestAnswer).then(flashCopied);
+  };
+
+  // The toolbar confirms the copy before it steps aside.
+  const copySelection = () => {
+    const current = selectionRef.current;
+    if (!current) return;
+    void api.copyText(current.text).then(() => {
+      clearTimeout(copiedTimer.current);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1_400);
+      copiedTimer.current = setTimeout(() => command({ type: DesktopCompanionSelectionCommandType.Dismiss }), COPIED_TOOLBAR_MS);
     });
   };
 
@@ -188,136 +224,149 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
     ask(current.action, turns[turns.length - 1]?.role === 'user' ? turns : [], question || undefined);
   };
 
+  // Drops the newest answer and asks for it again with the same history.
+  const regenerate = () => {
+    const current = selectionRef.current;
+    if (!current?.action || streamRef.current || turns[turns.length - 1]?.role !== 'assistant') return;
+    const history = turns.slice(0, -1);
+    setTurns(history);
+    ask(current.action, history[history.length - 1]?.role === 'user' ? history : [], question || undefined);
+  };
+
   useEffect(() => {
     if (!answering) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.isComposing) void api.selectionCommand({ type: DesktopCompanionSelectionCommandType.Dismiss });
+      if (event.key === 'Escape' && !event.isComposing) command({ type: DesktopCompanionSelectionCommandType.Dismiss });
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [answering, api]);
+  }, [answering, command]);
 
   if (!selection) return null;
 
   if (!answering) {
+    const actionItem = (value: CompanionSelectionAction): MenuItem => ({
+      key: value, icon: ACTION_ICONS[value], label: actionLabel(value), run: () => run(value),
+    });
+    const tools: MenuItem[] = [
+      actionItem(CompanionSelectionAction.Translate),
+      actionItem(CompanionSelectionAction.Explain),
+      actionItem(CompanionSelectionAction.Summarize),
+      {
+        key: 'read',
+        icon: SpeakerWaveIcon,
+        label: t('desktopToolsReadAloud'),
+        run: () => { void api.openLanguageTool({ tool: LanguageTool.Tts, text: selection.text }); },
+      },
+      { key: 'copy', icon: copied ? CheckIcon : Square2StackIcon, label: '', run: copySelection },
+    ];
+    const menu: MenuItem[] = [
+      actionItem(CompanionSelectionAction.Ask),
+      actionItem(CompanionSelectionAction.Polish),
+      { key: 'exclude', icon: NoSymbolIcon, label: t('desktopCompanionSelectionExclude'), run: () => command({ type: DesktopCompanionSelectionCommandType.ExcludeApp }), secondary: true },
+      { key: 'pause', icon: PauseCircleIcon, label: t('desktopCompanionSelectionPause'), run: () => command({ type: DesktopCompanionSelectionCommandType.Pause }), secondary: true },
+      { key: 'settings', icon: Cog6ToothIcon, label: t('desktopCompanionSelectionSettings'), run: () => command({ type: DesktopCompanionSelectionCommandType.Settings }), secondary: true },
+    ];
+    const menuOpen = selection.menuOpen;
     return (
-      <div className="sel-surface">
-        <div className="sel-toolbar" ref={rootRef} role="toolbar" aria-label={t('desktopCompanionSelection')}>
-          <span className="sel-brand"><CompanionCharacter skin={state.preferences.skin} mood={CompanionMood.Idle} size={22} showBadge={false} /></span>
-          <button type="button" className="sel-action" data-primary="true" onClick={() => run(CompanionSelectionAction.Translate)}>
-            <LanguageIcon />{actionLabel(CompanionSelectionAction.Translate)}
-          </button>
-          <button type="button" className="sel-action" onClick={() => { void api.openLanguageTool({ tool: LanguageTool.Tts, text: selection.text }); }}>
-            <SpeakerWaveIcon />{t('desktopToolsReadAloud')}
-          </button>
-          <button type="button" className="sel-action" onClick={() => {
-            void api.copyText(selection.text).then(() => api.selectionCommand({ type: DesktopCompanionSelectionCommandType.Dismiss }));
-          }}>
-            <DocumentDuplicateIcon />{t('desktopCompanionSelectionCopy')}
-          </button>
-          <button type="button" className="sel-action" onClick={() => run(CompanionSelectionAction.Ask)}>
-            <ChatBubbleLeftEllipsisIcon />{actionLabel(CompanionSelectionAction.Ask)}
-          </button>
-          <span className="sel-divider" />
-          <button
-            type="button"
-            className="sel-action sel-more"
-            title={t('desktopCompanionSelectionMore')}
-            aria-label={t('desktopCompanionSelectionMore')}
-            onClick={() => { void api.selectionCommand({ type: DesktopCompanionSelectionCommandType.More }); }}
-          >
-            <EllipsisHorizontalIcon />
-          </button>
+      <div className="sel-surface" data-menu={menuOpen ? (selection.menuUp ? 'up' : 'down') : undefined}>
+        <div className="sel-stack" ref={rootRef}>
+          <div className="sel-toolbar" role="toolbar" aria-label={t('desktopCompanionSelection')}>
+            {tools.map(({ key, icon: ToolIcon, label, run: onClick }) => (
+              <button key={key} type="button" className="sel-tool" data-done={key === 'copy' && copied} onClick={onClick}>
+                <ToolIcon />
+                {key === 'copy'
+                  ? <SwapLabel off={t('desktopCompanionSelectionCopy')} on={t('desktopCompanionSelectionCopied')} showOn={copied} />
+                  : <span>{label}</span>}
+              </button>
+            ))}
+            <span className="sel-sep" aria-hidden="true" />
+            <button
+              type="button"
+              className="sel-tool sel-more"
+              data-active={menuOpen}
+              title={t('desktopCompanionSelectionMore')}
+              aria-label={t('desktopCompanionSelectionMore')}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={() => command({ type: DesktopCompanionSelectionCommandType.More, open: !menuOpen })}
+            >
+              <ChevronDownIcon />
+            </button>
+          </div>
+          {menuOpen && (
+            <div className="sel-menu" role="menu">
+              {menu.map(({ key, icon: ItemIcon, label, run: onClick, secondary }, index) => (
+                <div key={key} className="sel-menu-group" data-divided={secondary && !menu[index - 1]?.secondary}>
+                  <button type="button" role="menuitem" className="sel-menu-item" data-secondary={secondary} onClick={onClick}>
+                    <ItemIcon /><span>{label}</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
   const action = selection.action ?? CompanionSelectionAction.Explain;
-  const Icon = ACTION_ICONS[action];
-  const direction = action === CompanionSelectionAction.Translate
-    ? t(companionTranslationTarget(selection.text) === 'zh' ? 'desktopCompanionTranslateToZh' : 'desktopCompanionTranslateToEn')
-    : '';
   const awaitingQuestion = action === CompanionSelectionAction.Ask && !question && turns.length === 0 && !streaming;
+  const showActions = !!latestAnswer && !streaming;
 
   return (
     <div className="sel-surface">
-      <div className="sel-card" ref={rootRef}>
-        <header className="sel-header">
-          <span className="sel-chip"><Icon />{actionLabel(action)}{direction && <em>{direction}</em>}</span>
-          <span className="sel-source" title={selection.text}>{selection.text}</span>
-          <button
-            type="button"
-            className="sel-icon"
-            data-on={selection.pinned}
-            title={t(selection.pinned ? 'desktopCompanionAnswerUnpin' : 'desktopCompanionAnswerPin')}
-            aria-label={t(selection.pinned ? 'desktopCompanionAnswerUnpin' : 'desktopCompanionAnswerPin')}
-            onClick={() => { void api.selectionCommand({ type: DesktopCompanionSelectionCommandType.Pin, pinned: !selection.pinned }); }}
-          >
-            <MapPinIcon />
-          </button>
-          <button
-            type="button"
-            className="sel-icon"
-            title={t('desktopCompanionAnswerClose')}
-            aria-label={t('desktopCompanionAnswerClose')}
-            onClick={() => { void api.selectionCommand({ type: DesktopCompanionSelectionCommandType.Dismiss }); }}
-          >
-            <XMarkIcon />
-          </button>
-        </header>
-        {!awaitingQuestion && (
-          <div className="sel-body" ref={bodyRef} aria-live="polite">
-            {question && <p className="sel-question">{question}</p>}
-            {turns.map((turn, index) => turn.role === 'user'
-              ? <p key={index} className="sel-question">{turn.content}</p>
-              : <Answer key={index} text={turn.content} />)}
-            {streaming && (streaming.text
-              ? <div className="sel-streaming"><Answer text={streaming.text} /><span className="sel-caret" /></div>
-              : <p className="sel-thinking"><span className="sel-dots"><i /><i /><i /></span>{t('desktopCompanionAnswerThinking')}</p>)}
-            {error && (
-              <p className="sel-error" role="alert">
-                {error}
-                <button type="button" onClick={retry}><ArrowPathIcon />{t('desktopCompanionAnswerRetry')}</button>
-              </p>
+      <div className="sel-card" ref={rootRef} style={{ maxHeight: selection.cardMaxHeight }}>
+        <SelectionCardHeader
+          icon={ACTION_ICONS[action]}
+          title={actionLabel(action)}
+          pinned={selection.pinned}
+          onPin={() => command({ type: DesktopCompanionSelectionCommandType.Pin, pinned: !selection.pinned })}
+          onClose={() => command({ type: DesktopCompanionSelectionCommandType.Dismiss })}
+        />
+        <div className="sel-scroll" ref={bodyRef} aria-live="polite">
+          <SourceQuote key={selection.id} text={selection.text} />
+          {question && <p className="sel-question">{question}</p>}
+          {turns.map((turn, index) => turn.role === 'user'
+            ? <p key={index} className="sel-question">{turn.content}</p>
+            : <SelectionAnswer key={index} text={turn.content} />)}
+          {streaming && (streaming.text
+            ? <SelectionAnswer text={streaming.text} streaming />
+            : <SelectionThinking label={t('desktopCompanionAnswerThinking')} />)}
+          {error && (
+            <SelectionError
+              message={error}
+              action={<button type="button" onClick={retry}>{t('desktopCompanionAnswerRetry')}</button>}
+            />
+          )}
+        </div>
+        {showActions && (
+          <div className="sel-actions">
+            <button type="button" className="sel-icon" data-done={copied} onClick={copyAnswer}
+              title={t(copied ? 'desktopCompanionSelectionCopied' : 'desktopCompanionSelectionCopy')}
+              aria-label={t(copied ? 'desktopCompanionSelectionCopied' : 'desktopCompanionSelectionCopy')}>
+              {copied ? <CheckIcon /> : <Square2StackIcon />}
+            </button>
+            {turns[turns.length - 1]?.role === 'assistant' && (
+              <button type="button" className="sel-icon" onClick={regenerate}
+                title={t('desktopCompanionAnswerRegenerate')} aria-label={t('desktopCompanionAnswerRegenerate')}>
+                <ArrowPathIcon />
+              </button>
             )}
+            <button type="button" className="sel-action sel-action-end" onClick={() => { void toTask(); }}>
+              {t('desktopCompanionAnswerToTask')}<ArrowUpRightIcon />
+            </button>
           </div>
         )}
-        <footer className="sel-footer">
-          <form className="sel-ask" onSubmit={event => { event.preventDefault(); submit(); }}>
-            <input
-              ref={inputRef}
-              value={input}
-              placeholder={t(awaitingQuestion ? 'desktopCompanionAnswerAskPlaceholder' : 'desktopCompanionAnswerFollowUp')}
-              onChange={event => setInput(event.target.value)}
-              onMouseDown={() => { void api.selectionCommand({ type: DesktopCompanionSelectionCommandType.FocusInput }); }}
-              maxLength={4_000}
-            />
-            {streaming ? (
-              <button
-                type="button"
-                className="sel-send"
-                title={t('desktopCompanionAnswerStop')}
-                aria-label={t('desktopCompanionAnswerStop')}
-                onClick={() => { void api.abortQuickAnswer(streaming.requestId); setStream(null); }}
-              >
-                <StopIcon />
-              </button>
-            ) : (
-              <button type="submit" className="sel-send" disabled={!input.trim()} aria-label={t('desktopCompanionSend')}><ArrowUpIcon /></button>
-            )}
-          </form>
-          {!awaitingQuestion && (
-            <>
-              <button type="button" className="sel-ghost" disabled={!latestAnswer} onClick={copy}>
-                {copied ? <CheckIcon /> : <DocumentDuplicateIcon />}{t(copied ? 'desktopCompanionSelectionCopied' : 'desktopCompanionSelectionCopy')}
-              </button>
-              <button type="button" className="sel-ghost" disabled={!latestAnswer || !!streaming} onClick={() => { void toTask(); }}>
-                <ArrowTopRightOnSquareIcon />{t('desktopCompanionAnswerToTask')}
-              </button>
-            </>
-          )}
-        </footer>
+        <SelectionComposer
+          inputRef={inputRef}
+          value={input}
+          placeholder={t(awaitingQuestion ? 'desktopCompanionAnswerAskPlaceholder' : 'desktopCompanionAnswerFollowUp')}
+          onChange={setInput}
+          onSubmit={submit}
+          onStop={streaming ? () => { void api.abortQuickAnswer(streaming.requestId); setStream(null); } : undefined}
+          onPointerDown={() => command({ type: DesktopCompanionSelectionCommandType.FocusInput })}
+        />
       </div>
     </div>
   );

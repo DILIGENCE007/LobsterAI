@@ -7,12 +7,12 @@ import {
   DesktopCompanionIpc,
   DesktopCompanionSelectionCommandType,
   DesktopCompanionSelectionMode,
+  DesktopCompanionSize,
 } from '../../shared/desktopCompanion/constants';
 import { CompanionSelectionAction } from '../../shared/desktopCompanion/selectionActions';
 
 const trusted = vi.hoisted(() => ({ value: true }));
 const focused = vi.hoisted(() => ({ value: null as unknown }));
-const menu = vi.hoisted(() => ({ build: vi.fn(), popup: vi.fn() }));
 
 vi.mock('electron', () => ({
   BrowserWindow: { getFocusedWindow: () => focused.value },
@@ -24,7 +24,6 @@ vi.mock('electron', () => ({
   systemPreferences: { isTrustedAccessibilityClient: () => trusted.value },
   shell: { openExternal: vi.fn(() => Promise.resolve()) },
   clipboard: { writeText: vi.fn() },
-  Menu: { buildFromTemplate: menu.build },
 }));
 vi.mock('../i18n', () => ({ t: (key: string) => key }));
 
@@ -53,6 +52,7 @@ class FakeWindow extends EventEmitter {
   getBounds() { return this.bounds; }
   setBounds(bounds: typeof this.bounds) { this.bounds = bounds; }
   setFocusable(value: boolean) { this.focusable = value; }
+  setIgnoreMouseEvents = vi.fn();
   showInactive() { this.visible = true; }
   hide() { this.visible = false; }
   focus() {}
@@ -62,33 +62,43 @@ class FakeWindow extends EventEmitter {
 let preferences = { ...DEFAULT_DESKTOP_COMPANION_PREFERENCES, enabled: true };
 let win: FakeWindow;
 let quickAnswer: { abortOwnedBy: ReturnType<typeof vi.fn> };
+let openSettings: ReturnType<typeof vi.fn>;
 
 function create() {
   win = new FakeWindow();
   quickAnswer = { abortOwnedBy: vi.fn() };
+  openSettings = vi.fn();
   const controller = new CompanionSelectionController({
     preferences: () => preferences,
     isAvailable: () => preferences.enabled,
     createWindow: () => win as never,
     setPreferences: patch => { preferences = { ...preferences, ...patch }; },
     publish: vi.fn(),
-    openSettings: vi.fn(),
+    openSettings,
   }, quickAnswer as never, () => FakeHook as never);
   controller.sync();
   return controller;
 }
 
-function select(text = 'ambient co-worker', programName = 'com.microsoft.Word') {
+function select(text = 'ambient co-worker', programName = 'com.microsoft.Word', lineTop = 200, lastLineTop = lineTop) {
   FakeHook.last!.emit('text-selection', {
     text,
     programName,
     posLevel: 3,
-    startTop: { x: 300, y: 200 },
-    endTop: { x: 500, y: 200 },
-    endBottom: { x: 500, y: 220 },
-    mousePosEnd: { x: 480, y: 218 },
+    startTop: { x: 300, y: lineTop },
+    startBottom: { x: 300, y: lineTop + 20 },
+    endTop: { x: 500, y: lastLineTop },
+    endBottom: { x: 500, y: lastLineTop + 20 },
+    mousePosEnd: { x: 480, y: lastLineTop + 18 },
   });
 }
+
+const PAD = DesktopCompanionSize.SurfacePad;
+const MAC_COMMAND = 0x100000;
+const MAC_SHIFT = 0x20000;
+
+/** The bottom edge of the toolbar or card inside its window. */
+const visibleBottom = () => win.bounds.y + win.bounds.height - PAD;
 
 function sentSelection() {
   const calls = win.webContents.send.mock.calls.filter(([channel]) => channel === DesktopCompanionIpc.Selection);
@@ -116,52 +126,188 @@ const chromeSelection = { text: 'first selection', programName: 'com.google.Chro
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers();
-  menu.build.mockReturnValue({ popup: menu.popup });
   trusted.value = true;
   focused.value = null;
   preferences = { ...DEFAULT_DESKTOP_COMPANION_PREFERENCES, enabled: true };
 });
 
 describe('selection toolbar', () => {
-  test('overflow actions keep the selection while the native menu handles mouse and keyboard input', () => {
+  test('the more menu opens inside the toolbar window, growing it without moving the toolbar', () => {
+    const controller = create();
+    select();
+    controller.setContentSize({ width: 450, height: 80 });
+    vi.advanceTimersByTime(200);
+    const toolbar = { ...win.bounds };
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.More, open: true });
+    expect(sentSelection()).toMatchObject({ mode: DesktopCompanionSelectionMode.Toolbar, menuOpen: true, menuUp: false });
+    controller.setContentSize({ width: 450, height: 260 });
+    expect(win.bounds).toEqual({ ...toolbar, height: 260 });
+    // A click in the menu keeps the toolbar; its actions run on the same selection.
+    FakeHook.last!.emit('mouse-down', { x: toolbar.x + 300, y: toolbar.y + 200, button: 0 });
+    expect(win.visible).toBe(true);
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Polish });
+    expect(sentSelection()).toMatchObject({
+      text: 'ambient co-worker', mode: DesktopCompanionSelectionMode.Answer, action: CompanionSelectionAction.Polish, menuOpen: false,
+    });
+    expect(win.focusable).toBe(true);
+    controller.dispose();
+  });
+
+  test('with room above the toolbar, its menu opens upward and leaves the selection visible', () => {
+    const controller = create();
+    select('ambient co-worker', 'com.microsoft.Word', 800);
+    controller.setContentSize({ width: 450, height: 80 });
+    vi.advanceTimersByTime(200);
+    const toolbar = { ...win.bounds };
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.More, open: true });
+    expect(sentSelection()).toMatchObject({ menuOpen: true, menuUp: true });
+    controller.setContentSize({ width: 450, height: 260 });
+    expect(win.bounds.y + win.bounds.height).toBe(toolbar.y + toolbar.height);
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.More, open: false });
+    controller.setContentSize({ width: 450, height: 80 });
+    expect(win.bounds).toEqual(toolbar);
+    expect(sentSelection()).toMatchObject({ menuOpen: false });
+    controller.dispose();
+  });
+
+  test('a new selection comes with the menu closed', () => {
     const controller = create();
     select();
     vi.advanceTimersByTime(200);
-    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.More });
-    const items = menu.build.mock.calls[0][0] as Array<{ label?: string; click?: () => void }>;
-    expect(items.slice(0, 3).map(item => item.label)).toEqual([
-      'desktopCompanionActionExplain', 'desktopCompanionActionSummarize', 'desktopCompanionActionPolish',
-    ]);
-    expect(items.some(item => item.label === 'desktopCompanionSelectionCopy')).toBe(false);
-    FakeHook.last!.emit('mouse-down', { x: 5, y: 5, button: 0 });
-    FakeHook.last!.emit('key-down', { uniKey: 'ArrowDown' });
-    controller.onForegroundChange();
-    expect(win.visible).toBe(true);
-    expect(sentSelection().text).toBe('ambient co-worker');
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.More, open: true });
+    select('a different passage');
+    expect(sentSelection()).toMatchObject({ text: 'a different passage', mode: DesktopCompanionSelectionMode.Toolbar, menuOpen: false });
+    controller.dispose();
+  });
 
-    items[1].click?.();
-    expect(sentSelection()).toMatchObject({
-      mode: DesktopCompanionSelectionMode.Answer, action: CompanionSelectionAction.Summarize,
-    });
-    expect(win.focusable).toBe(true);
-    const { callback } = menu.popup.mock.calls[0][0] as { callback: () => void };
-    callback();
+  test('settings closes the toolbar and opens the settings page', () => {
+    const controller = create();
+    select();
+    vi.advanceTimersByTime(200);
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Settings });
+    expect(win.visible).toBe(false);
+    expect(openSettings).toHaveBeenCalledTimes(1);
+    controller.dispose();
+  });
+
+  test('a card the user drags is pinned and keeps its new spot as the answer grows', () => {
+    const controller = create();
+    select();
+    vi.advanceTimersByTime(200);
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
+    controller.setContentSize({ width: 444, height: 200 });
+    win.bounds = { ...win.bounds, x: 100, y: 500 };
+    win.emit('will-move');
+    expect(sentSelection()).toMatchObject({ pinned: true });
+    controller.setContentSize({ width: 444, height: 320 });
+    expect(win.bounds).toEqual({ x: 100, y: 500, width: 444, height: 320 });
+    FakeHook.last!.emit('mouse-down', { x: 5, y: 5, button: 0 });
+    expect(win.visible).toBe(true);
+    // The next selection starts from the anchor again.
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Dismiss });
+    select();
+    controller.setContentSize({ width: 450, height: 80 });
+    expect(visibleBottom()).toBeLessThanOrEqual(200);
+    expect(visibleBottom()).toBeGreaterThan(180);
+    controller.dispose();
+  });
+
+  test('a card opens under the selection so the selected text stays readable', () => {
+    const controller = create();
+    select();
+    vi.advanceTimersByTime(200);
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
+    controller.setContentSize({ width: 444, height: 300 });
+    expect(win.bounds.y + PAD).toBeGreaterThanOrEqual(220);
+    expect(sentSelection().cardMaxHeight).toBe(DesktopCompanionSize.Answer.height - PAD * 2);
+    controller.dispose();
+  });
+
+  test('a card with little room on either side is capped there and scrolls instead of covering the selection', () => {
+    const controller = create();
+    // A long passage from y=300 to y=600 leaves about 316px on each side.
+    select('ambient co-worker', 'com.microsoft.Word', 300, 580);
+    vi.advanceTimersByTime(200);
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
+    const room = 900 - (600 + DesktopCompanionSize.Gap - PAD);
+    expect(sentSelection().cardMaxHeight).toBe(room - PAD * 2);
+    controller.setContentSize({ width: 444, height: 600 });
+    expect(win.bounds).toMatchObject({ y: 900 - room, height: room });
+    controller.dispose();
+  });
+
+  test('the transparent margin over the selected line lets clicks through to the app', () => {
+    const controller = create();
+    select();
+    controller.setContentSize({ width: 450, height: 80 });
+    vi.advanceTimersByTime(200);
+    expect(win.setIgnoreMouseEvents).toHaveBeenLastCalledWith(true, { forward: true });
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.PassThrough, passThrough: false });
+    expect(win.setIgnoreMouseEvents).toHaveBeenLastCalledWith(false, { forward: true });
+    // A click on the first selected line, inside the window but below the toolbar itself.
+    FakeHook.last!.emit('mouse-down', { x: 400, y: win.bounds.y + win.bounds.height - 4, button: 0 });
+    expect(win.visible).toBe(false);
+    controller.dispose();
+  });
+
+  test('shortcuts leave the toolbar up and typing closes it', () => {
+    const controller = create();
+    select();
+    vi.advanceTimersByTime(200);
+    FakeHook.last!.emit('key-down', { uniKey: 'c', sys: true, flags: MAC_COMMAND });
+    FakeHook.last!.emit('key-down', { uniKey: 'F1', sys: false, flags: 0 });
+    expect(win.visible).toBe(true);
+    FakeHook.last!.emit('key-down', { uniKey: 'x', sys: false, flags: 0 });
+    expect(win.visible).toBe(false);
+    controller.dispose();
+  });
+
+  test('a macOS screenshot keeps the toolbar through its drag; the next click closes it', () => onMac(() => {
+    const controller = create();
+    select();
+    vi.advanceTimersByTime(200);
+    FakeHook.last!.emit('key-down', { uniKey: '$', vkCode: 0x15, sys: true, flags: MAC_COMMAND | MAC_SHIFT });
+    expect(controller.capturing).toBe(true);
+    // Space switches to window capture; the overlay may also count as an app switch.
+    FakeHook.last!.emit('key-down', { uniKey: ' ', sys: false, flags: 0 });
+    controller.onForegroundChange();
+    FakeHook.last!.emit('mouse-down', { x: 5, y: 5, button: 0 });
+    FakeHook.last!.emit('mouse-up', { x: 600, y: 500, button: 0 });
+    expect(win.visible).toBe(true);
+    vi.advanceTimersByTime(500);
+    expect(controller.capturing).toBe(false);
+    FakeHook.last!.emit('mouse-down', { x: 5, y: 5, button: 0 });
+    expect(win.visible).toBe(false);
+    controller.dispose();
+  }));
+
+  test('a screenshot overlay coming to the front keeps the toolbar until it goes away', () => {
+    const controller = create();
+    select();
+    vi.advanceTimersByTime(200);
+    controller.onForegroundChange('com.apple.screencaptureui');
+    FakeHook.last!.emit('mouse-down', { x: 5, y: 5, button: 0 });
+    FakeHook.last!.emit('mouse-up', { x: 600, y: 500, button: 0 });
+    FakeHook.last!.emit('mouse-down', { x: 700, y: 520, button: 0 });
+    expect(win.visible).toBe(true);
+    controller.onForegroundChange('com.microsoft.Word');
+    expect(win.visible).toBe(true);
+    vi.advanceTimersByTime(500);
     FakeHook.last!.emit('mouse-down', { x: 5, y: 5, button: 0 });
     expect(win.visible).toBe(false);
     controller.dispose();
   });
 
-  test('an old overflow menu cannot run an action against a replacement selection', () => {
+  test('a screenshot cancelled with Escape keeps the toolbar for the next try', () => onMac(() => {
     const controller = create();
     select();
     vi.advanceTimersByTime(200);
-    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.More });
-    const items = menu.build.mock.calls[0][0] as Array<{ click?: () => void }>;
-    select('a different passage');
-    items[0].click?.();
-    expect(sentSelection()).toMatchObject({ text: 'a different passage', mode: DesktopCompanionSelectionMode.Toolbar });
+    FakeHook.last!.emit('key-down', { uniKey: '$', vkCode: 0x15, sys: true, flags: MAC_COMMAND | MAC_SHIFT });
+    FakeHook.last!.emit('key-down', { uniKey: 'Escape', sys: false, flags: 0 });
+    expect(controller.capturing).toBe(false);
+    expect(win.visible).toBe(true);
     controller.dispose();
-  });
+  }));
 
   test('starts the hook without touching the clipboard and skips default-excluded apps natively', () => {
     const controller = create();
@@ -184,12 +330,14 @@ describe('selection toolbar', () => {
     controller.dispose();
   });
 
-  test('shows the ranked actions under the selection', () => {
-    create();
+  test('shows the toolbar just above the selection, centered on a one-line selection', () => {
+    const controller = create();
     select();
+    controller.setContentSize({ width: 450, height: 80 });
     vi.advanceTimersByTime(200);
     expect(win.visible).toBe(true);
-    expect(win.bounds.y).toBeGreaterThan(200);
+    expect(visibleBottom()).toBeLessThanOrEqual(200);
+    expect(win.bounds.x + win.bounds.width / 2).toBe(400);
     expect(sentSelection()).toMatchObject({
       text: 'ambient co-worker',
       appId: 'com.microsoft.Word',
@@ -210,7 +358,7 @@ describe('selection toolbar', () => {
     const controller = create();
     select();
     vi.advanceTimersByTime(200);
-    FakeHook.last!.emit('mouse-down', { x: win.bounds.x + 10, y: win.bounds.y + 10, button: 0 });
+    FakeHook.last!.emit('mouse-down', { x: win.bounds.x + PAD + 10, y: win.bounds.y + PAD + 10, button: 0 });
     expect(win.visible).toBe(true);
     FakeHook.last!.emit('key-down', { uniKey: 'Shift' });
     expect(win.visible).toBe(true);
@@ -284,7 +432,7 @@ describe('a selection the hook missed on macOS', () => {
     vi.advanceTimersByTime(200);
     expect(win.visible).toBe(true);
     // Anchored where the drag ended, not at the (0, 0) a direct read reports.
-    expect(win.bounds.x).toBeGreaterThan(400);
+    expect(win.bounds.x + win.bounds.width / 2).toBe(480);
   }));
 
   test('is given up after the last read', () => onMac(() => {

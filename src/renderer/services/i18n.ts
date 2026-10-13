@@ -2561,6 +2561,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // Media Generation
     mediaGeneration: '媒体生成',
+    mediaGenerationMenuItem: '图片/视频生成',
+    clearMediaModel: '清除生成模型',
     mediaImage: '图片',
     mediaVideo: '视频',
     mediaAuto: '自动',
@@ -7161,6 +7163,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // Media Generation
     mediaGeneration: 'Media Generation',
+    mediaGenerationMenuItem: 'Images & Videos',
+    clearMediaModel: 'Clear Generation Model',
     mediaImage: 'Image',
     mediaVideo: 'Video',
     mediaAuto: 'Auto',

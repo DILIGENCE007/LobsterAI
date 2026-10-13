@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { BrowserWindow, Menu, screen, shell, systemPreferences } from 'electron';
+import { BrowserWindow, screen, shell, systemPreferences } from 'electron';
 import type { EventEmitter } from 'events';
 
 import { DEFAULT_SELECTION_EXCLUDED_APPS, isCompanionSelectionBlocked } from '../../shared/desktopCompanion/appCategories';
@@ -15,20 +15,25 @@ import {
   DesktopCompanionSurface,
 } from '../../shared/desktopCompanion/constants';
 import {
+  clampCompanionBounds,
+  companionCardSlot,
+  companionMenuOpensUp,
+  type CompanionRect,
   type CompanionSelectionAnchor,
   type CompanionSize,
   rectContains,
-  resolveCompanionSelectionBounds,
+  resolveCompanionCardBounds,
+  resolveCompanionToolbarBounds,
+  resolveCompanionToolbarMenuBounds,
 } from '../../shared/desktopCompanion/geometry';
 import {
   COMPANION_SELECTION_MAX_CHARS,
-  CompanionSelectionAction,
   isCompanionSelectionAction,
   rankCompanionSelectionActions,
 } from '../../shared/desktopCompanion/selectionActions';
-import { t } from '../i18n';
 import type { CompanionQuickAnswerService } from './quickAnswerService';
 import { SelectionGestureTracker } from './selectionGesture';
+import { isScreenshotApp, SelectionKeyEffect, selectionKeyEffect,type SelectionKeyEvent } from './selectionKeys';
 
 const INVALID_COORDINATE = -99999;
 const PAUSE_MS = 60 * 60_000;
@@ -41,6 +46,14 @@ const LEFT_BUTTON = 0;
 // the previous read. Chromium and Electron apps turn their accessibility tree on 2 s after a
 // failed read, and every failed read, ours included, restarts that wait.
 const RECOVERY_READ_DELAYS_MS = [80, 2_500, 1_000];
+// A macOS screenshot keeps the toolbar and card on screen until it is taken: Cmd+Shift+4 at the
+// end of its click or drag (or this long at most), the Cmd+Shift+5 toolbar for this long.
+const CAPTURE_MS = 30_000;
+const CAPTURE_TOOLBAR_MS = 20_000;
+// After the shot, the screen flash and thumbnail still belong to the screenshot.
+const CAPTURE_SETTLE_MS = 400;
+// A pointer-only selection whose ends are this far apart vertically spans lines.
+const POINTER_LINE_SLOP = 12;
 
 interface Point { x: number; y: number }
 
@@ -50,9 +63,12 @@ interface MouseEventData extends Point { button?: number }
 export interface SelectionHookEvent {
   text: string;
   programName: string;
+  /** Top-left and bottom-left of the first line, top-right and bottom-right of the last. */
   startTop: Point;
+  startBottom?: Point;
   endTop: Point;
   endBottom: Point;
+  mousePosStart?: Point;
   mousePosEnd: Point;
   posLevel: number;
 }
@@ -95,19 +111,45 @@ const valid = (point: Point | undefined): point is Point => !!point
   && Number.isFinite(point.x) && Number.isFinite(point.y)
   && point.x !== INVALID_COORDINATE && point.y !== INVALID_COORDINATE;
 
+/** The toolbar or card inside its window, without the transparent margin that holds its shadow. */
+function visibleArea(bounds: CompanionRect): CompanionRect {
+  const pad = DesktopCompanionSize.SurfacePad;
+  return { x: bounds.x + pad, y: bounds.y + pad, width: bounds.width - pad * 2, height: bounds.height - pad * 2 };
+}
+
 /** Selection-hook reports physical pixels on Windows and points on macOS. */
 function toDip(point: Point): Point {
   return process.platform === 'win32' ? screen.screenToDipPoint(point) : point;
 }
 
 export function selectionAnchor(data: SelectionHookEvent, fullLevel: number, cursor: Point): CompanionSelectionAnchor {
-  const mouse = valid(data.mousePosEnd) ? toDip(data.mousePosEnd) : cursor;
-  if (data.posLevel >= fullLevel && valid(data.endBottom) && valid(data.endTop)) {
-    const top = toDip(data.endTop);
-    const bottom = toDip(data.endBottom);
-    return { x: mouse.x - 28, top: top.y, bottom: bottom.y };
+  if (data.posLevel >= fullLevel && valid(data.startTop) && valid(data.startBottom) && valid(data.endTop) && valid(data.endBottom)) {
+    const startTop = toDip(data.startTop);
+    const startBottom = toDip(data.startBottom);
+    const endTop = toDip(data.endTop);
+    const endBottom = toDip(data.endBottom);
+    // Apps that report the whole selection as one rectangle give equal tops: one block to center on.
+    const multiline = endTop.y - startTop.y >= Math.max(1, startBottom.y - startTop.y) / 2;
+    return {
+      left: multiline ? startTop.x : Math.min(startTop.x, endTop.x),
+      right: multiline ? endTop.x : Math.max(startTop.x, endTop.x),
+      top: Math.min(startTop.y, endTop.y),
+      bottom: Math.max(startBottom.y, endBottom.y),
+      multiline,
+    };
   }
-  return { x: mouse.x - 28, top: mouse.y - 18, bottom: mouse.y + 14 };
+  // Only the pointer is known: the lines around where the gesture started and ended.
+  const end = valid(data.mousePosEnd) ? toDip(data.mousePosEnd) : cursor;
+  const start = valid(data.mousePosStart) ? toDip(data.mousePosStart) : end;
+  const [first, last] = end.y < start.y ? [end, start] : [start, end];
+  const multiline = last.y - first.y > POINTER_LINE_SLOP;
+  return {
+    left: multiline ? first.x : Math.min(start.x, end.x),
+    right: multiline ? last.x : Math.max(start.x, end.x),
+    top: first.y - 18,
+    bottom: last.y + 14,
+    multiline,
+  };
 }
 
 /** Owns the system selection hook and the toolbar/answer window that follows a selection. */
@@ -119,8 +161,22 @@ export class CompanionSelectionController {
   private selection: DesktopCompanionSelection | null = null;
   private anchor: CompanionSelectionAnchor | null = null;
   private size: CompanionSize = { ...DesktopCompanionSize.Toolbar };
+  /** Where the bare toolbar sits; its menu grows the window from here. */
+  private toolbarBounds: CompanionRect | null = null;
+  /** The toolbar sits above the selection, its usual place. */
+  private toolbarAbove = true;
+  /** The window height an answer card may grow to beside the selection. */
+  private cardHeight: number = DesktopCompanionSize.Answer.height;
+  /** A screenshot is in progress until then (ms since epoch). */
+  private captureUntil = 0;
+  /** The screenshot is taken when its first click or drag ends. */
+  private captureOnRelease = false;
+  private capturePressed = false;
+  /** A screenshot tool's overlay is in front; the shot is done when it leaves. */
+  private captureOverlay = false;
+  /** The user dragged the answer card away from the selection. */
+  private moved = false;
   private pendingShow = false;
-  private menuOpen = false;
   private showTimer: ReturnType<typeof setTimeout> | undefined;
   private recoveryTimer: ReturnType<typeof setTimeout> | undefined;
   private permissionTimer: ReturnType<typeof setInterval> | undefined;
@@ -148,6 +204,11 @@ export class CompanionSelectionController {
 
   get selectionAnchor(): CompanionSelectionAnchor | null {
     return this.selection && this.anchor ? { ...this.anchor } : null;
+  }
+
+  /** A screenshot shortcut was pressed and its shot is not taken yet; nothing should close for it. */
+  get capturing(): boolean {
+    return Date.now() < this.captureUntil;
   }
 
   /** Re-evaluates whether the hook should run after preferences, snooze, or permission changes. */
@@ -186,9 +247,21 @@ export class CompanionSelectionController {
     this.sync();
   }
 
-  onForegroundChange(): void {
+  onForegroundChange(appId?: string): void {
     this.cancelRecovery();
-    if (this.menuOpen) return;
+    // Some screenshot shortcuts never reach the hook; their overlay coming to the front tells instead.
+    if (appId && isScreenshotApp(appId)) {
+      if (!this.capturing) this.startCapture(false);
+      this.captureOverlay = true;
+      return;
+    }
+    if (this.capturing) {
+      if (this.captureOverlay) {
+        this.captureOverlay = false;
+        this.captureUntil = Date.now() + CAPTURE_SETTLE_MS;
+      }
+      return;
+    }
     if (this.selection?.mode === DesktopCompanionSelectionMode.Toolbar) this.hide();
   }
 
@@ -207,8 +280,17 @@ export class CompanionSelectionController {
     switch (command?.type) {
       case DesktopCompanionSelectionCommandType.Run:
         if (!selection || !isCompanionSelectionAction(command.action)) return;
-        this.selection = { ...selection, mode: DesktopCompanionSelectionMode.Answer, action: command.action };
-        this.size = { ...DesktopCompanionSize.Answer };
+        this.cardHeight = Math.min(DesktopCompanionSize.Answer.height,
+          this.anchor ? companionCardSlot(this.anchor, this.workArea(this.anchor)).room : DesktopCompanionSize.Answer.height);
+        this.selection = {
+          ...selection,
+          mode: DesktopCompanionSelectionMode.Answer,
+          action: command.action,
+          menuOpen: false,
+          menuUp: false,
+          cardMaxHeight: this.cardHeight - DesktopCompanionSize.SurfacePad * 2,
+        };
+        this.size = { width: DesktopCompanionSize.Answer.width, height: this.cardHeight };
         this.window?.setFocusable(true);
         this.place();
         this.sendSelection();
@@ -239,8 +321,19 @@ export class CompanionSelectionController {
           this.window.focus();
         }
         return;
-      case DesktopCompanionSelectionCommandType.More:
-        this.showMoreMenu();
+      case DesktopCompanionSelectionCommandType.More: {
+        if (selection?.mode !== DesktopCompanionSelectionMode.Toolbar) return;
+        const open = command.open === true;
+        this.selection = { ...selection, menuOpen: open, menuUp: open && this.menuOpensUp() };
+        this.sendSelection();
+        return;
+      }
+      case DesktopCompanionSelectionCommandType.Settings:
+        this.hide();
+        this.host.openSettings();
+        return;
+      case DesktopCompanionSelectionCommandType.PassThrough:
+        if (this.window && !this.window.isDestroyed()) this.window.setIgnoreMouseEvents(command.passThrough === true, { forward: true });
         return;
       case DesktopCompanionSelectionCommandType.Dismiss:
         this.hide();
@@ -252,7 +345,7 @@ export class CompanionSelectionController {
   /** The renderer reports its measured content so the window hugs the toolbar or card. */
   setContentSize(size: CompanionSize): void {
     if (!this.selection) return;
-    const max = this.selection.mode === DesktopCompanionSelectionMode.Answer ? DesktopCompanionSize.Answer : DesktopCompanionSize.Toolbar;
+    const max = this.maxSize(this.selection);
     this.size = {
       width: Math.max(120, Math.min(Math.ceil(size.width), max.width)),
       height: Math.max(40, Math.min(Math.ceil(size.height), max.height)),
@@ -264,6 +357,7 @@ export class CompanionSelectionController {
   hide(): void {
     clearTimeout(this.showTimer);
     this.pendingShow = false;
+    this.endCapture();
     if (!this.selection) return;
     this.selection = null;
     const win = this.window;
@@ -285,26 +379,28 @@ export class CompanionSelectionController {
     this.window = null;
   }
 
-  private showMoreMenu(): void {
-    const selection = this.selection;
-    const win = this.window;
-    if (!selection || !win || win.isDestroyed()) return;
-    this.menuOpen = true;
-    const actions = [CompanionSelectionAction.Explain, CompanionSelectionAction.Summarize, CompanionSelectionAction.Polish];
-    Menu.buildFromTemplate([
-      ...actions.map(action => ({
-        label: t(`desktopCompanionAction${action.charAt(0).toUpperCase()}${action.slice(1)}`),
-        click: () => {
-          if (this.selection?.id !== selection.id) return;
-          this.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action });
-          win.focus();
-        },
-      })),
-      { type: 'separator' },
-      { label: t('desktopCompanionSelectionExclude'), click: () => this.handleCommand({ type: DesktopCompanionSelectionCommandType.ExcludeApp }) },
-      { label: t('desktopCompanionSelectionPause'), click: () => this.handleCommand({ type: DesktopCompanionSelectionCommandType.Pause }) },
-      { label: t('desktopCompanionSelectionSettings'), click: () => { this.hide(); this.host.openSettings(); } },
-    ]).popup({ window: win, callback: () => { this.menuOpen = false; } });
+  private maxSize(selection: DesktopCompanionSelection): CompanionSize {
+    if (selection.mode === DesktopCompanionSelectionMode.Answer) return { width: DesktopCompanionSize.Answer.width, height: this.cardHeight };
+    const { width, height } = DesktopCompanionSize.Toolbar;
+    return { width, height: height + (selection.menuOpen ? DesktopCompanionSize.ToolbarMenu : 0) };
+  }
+
+  private menuOpensUp(): boolean {
+    if (!this.toolbarBounds || !this.anchor) return false;
+    return companionMenuOpensUp(this.toolbarBounds, DesktopCompanionSize.ToolbarMenu, this.workArea(this.anchor), this.toolbarAbove);
+  }
+
+  private startCapture(onRelease: boolean): void {
+    this.captureUntil = Date.now() + (onRelease ? CAPTURE_MS : CAPTURE_TOOLBAR_MS);
+    this.captureOnRelease = onRelease;
+    this.capturePressed = false;
+  }
+
+  private endCapture(): void {
+    this.captureUntil = 0;
+    this.captureOnRelease = false;
+    this.capturePressed = false;
+    this.captureOverlay = false;
   }
 
   private startHook(): boolean {
@@ -359,6 +455,8 @@ export class CompanionSelectionController {
     if (this.window && !this.window.isDestroyed()) return this.window;
     const win = this.host.createWindow(DesktopCompanionSurface.Selection, false);
     win.on('closed', () => { if (this.window === win) this.window = null; });
+    // Only a drag by the user emits will-move; a card moved out of the way stays open.
+    win.on('will-move', () => this.onUserMove());
     win.webContents.on('did-finish-load', () => this.sendSelection());
     this.window = win;
     return win;
@@ -385,11 +483,18 @@ export class CompanionSelectionController {
       mode: DesktopCompanionSelectionMode.Toolbar,
       action: null,
       pinned: false,
+      menuOpen: false,
+      menuUp: false,
     };
+    this.toolbarBounds = null;
+    this.moved = false;
+    this.endCapture();
     const win = this.ensureWindow();
     if (!win.isDestroyed()) {
       this.quickAnswer.abortOwnedBy(win.webContents.id);
       win.setFocusable(false);
+      // The margin around the toolbar overlaps the selected line; clicks there belong to the app.
+      win.setIgnoreMouseEvents(true, { forward: true });
     }
     this.size = { ...DesktopCompanionSize.Toolbar };
     this.place();
@@ -404,28 +509,46 @@ export class CompanionSelectionController {
     this.cancelRecovery();
     if (!valid(data)) return;
     if (data.button === LEFT_BUTTON) this.gesture.down(data, Date.now());
-    if (this.menuOpen) return;
+    // The click or drag that takes the screenshot.
+    if (this.capturing) {
+      this.capturePressed = true;
+      return;
+    }
     if (!this.selection || !this.window || this.window.isDestroyed() || !this.window.isVisible()) return;
-    if (rectContains(this.window.getBounds(), toDip(data))) return;
+    if (rectContains(visibleArea(this.window.getBounds()), toDip(data))) return;
     if (this.selection.mode === DesktopCompanionSelectionMode.Toolbar || !this.selection.pinned) this.hide();
   };
 
   private onMouseUp = (data: MouseEventData): void => {
     if (data?.button !== LEFT_BUTTON || !valid(data)) return;
+    if (this.capturing && this.captureOnRelease && this.capturePressed) {
+      this.captureUntil = Date.now() + CAPTURE_SETTLE_MS;
+      this.captureOnRelease = false;
+    }
     if (this.gesture.up(data, Date.now()) && process.platform === 'darwin') this.recoverSelection({ x: data.x, y: data.y });
   };
 
   private onWheel = (): void => {
     this.cancelRecovery();
-    if (this.menuOpen) return;
+    if (this.capturing) return;
     if (this.selection?.mode === DesktopCompanionSelectionMode.Toolbar) this.hide();
   };
 
-  private onKeyDown = (data: { uniKey?: string }): void => {
+  /** Typing closes the toolbar; shortcuts leave it, so a screenshot shortcut can capture it. */
+  private onKeyDown = (data: SelectionKeyEvent): void => {
     if (data?.uniKey && MODIFIER_KEYS.has(data.uniKey)) return;
     this.cancelRecovery();
-    if (this.menuOpen) return;
-    if (this.selection?.mode === DesktopCompanionSelectionMode.Toolbar) this.hide();
+    if (this.capturing) {
+      // Escape cancels the screenshot and Space switches it to a window; neither is meant for the toolbar.
+      if (data?.uniKey === 'Escape') this.endCapture();
+      return;
+    }
+    const effect = selectionKeyEffect(data ?? {}, process.platform);
+    if (effect === SelectionKeyEffect.Capture || effect === SelectionKeyEffect.CaptureToolbar) {
+      this.startCapture(effect === SelectionKeyEffect.Capture);
+      return;
+    }
+    if (effect === SelectionKeyEffect.Dismiss && this.selection?.mode === DesktopCompanionSelectionMode.Toolbar) this.hide();
   };
 
   /**
@@ -448,7 +571,7 @@ export class CompanionSelectionController {
       if (data) {
         console.debug(`[DesktopCompanion] Recovered a selection the hook missed in ${data.programName}`);
         // A direct read reports the mouse at (0, 0); anchor where the gesture ended instead.
-        this.showSelection({ ...data, mousePosEnd: point });
+        this.showSelection({ ...data, mousePosStart: point, mousePosEnd: point });
       } else if (attempt + 1 < RECOVERY_READ_DELAYS_MS.length) {
         this.recoverSelection(point, attempt + 1);
       }
@@ -477,10 +600,39 @@ export class CompanionSelectionController {
     this.window.showInactive();
   }
 
+  private onUserMove(): void {
+    const selection = this.selection;
+    if (selection?.mode !== DesktopCompanionSelectionMode.Answer) return;
+    this.moved = true;
+    if (selection.pinned) return;
+    this.selection = { ...selection, pinned: true };
+    this.sendSelection();
+  }
+
+  private workArea(anchor: CompanionSelectionAnchor): CompanionRect {
+    return screen.getDisplayNearestPoint({ x: Math.round(anchor.left), y: Math.round(anchor.top) }).workArea;
+  }
+
   private place(): void {
     if (!this.window || this.window.isDestroyed() || !this.anchor) return;
-    const display = screen.getDisplayNearestPoint({ x: Math.round(this.anchor.x), y: Math.round(this.anchor.bottom) });
-    this.window.setBounds(resolveCompanionSelectionBounds(this.anchor, this.size, display.workArea));
+    const workArea = this.workArea(this.anchor);
+    const selection = this.selection;
+    if (selection?.mode === DesktopCompanionSelectionMode.Toolbar) {
+      if (selection.menuOpen && this.toolbarBounds) {
+        this.window.setBounds(resolveCompanionToolbarMenuBounds(this.toolbarBounds, this.size, selection.menuUp, workArea));
+        return;
+      }
+      const placement = resolveCompanionToolbarBounds(this.anchor, this.size, workArea);
+      this.toolbarBounds = placement.bounds;
+      this.toolbarAbove = placement.above;
+      this.window.setBounds(placement.bounds);
+    } else if (this.moved) {
+      // A card the user moved keeps its spot as the answer grows.
+      const { x, y } = this.window.getBounds();
+      this.window.setBounds(clampCompanionBounds({ ...this.size, x, y }, workArea));
+    } else {
+      this.window.setBounds(resolveCompanionCardBounds(this.anchor, this.size, workArea));
+    }
   }
 
   private sendSelection(): void {

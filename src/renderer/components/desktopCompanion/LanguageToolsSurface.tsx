@@ -1,18 +1,26 @@
 import './languageTools.css';
 
+import { PauseIcon, PlayIcon } from '@heroicons/react/16/solid';
 import {
-  ArrowPathIcon, ArrowRightIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, CheckIcon,
-  DocumentDuplicateIcon, LanguageIcon, MinusIcon, PauseIcon, PlayIcon, SpeakerWaveIcon, StopIcon, XMarkIcon,
+  ArrowPathIcon, ArrowRightIcon, ArrowUpRightIcon, CheckIcon, ChevronDownIcon, LanguageIcon, MinusIcon, SpeakerWaveIcon, Square2StackIcon,
 } from '@heroicons/react/24/outline';
-import { MapPinIcon } from '@heroicons/react/24/solid';
 import { useEffect, useRef, useState } from 'react';
 
 import { type DesktopCompanionState } from '../../../shared/desktopCompanion/constants';
 import { LanguageTool, LanguageToolCode, SpeechStatus, TranslationTarget } from '../../../shared/desktopCompanion/languageTools';
 import { i18nService } from '../../services/i18n';
-import CompanionMarkdown from './CompanionMarkdown';
+import {
+  SelectionAnswer,
+  SelectionCardHeader,
+  SelectionComposer,
+  SelectionError,
+  SelectionThinking,
+  SourceQuote,
+  StopGlyph,
+} from './SelectionCard';
 import { useLanguageTools } from './useLanguageTools';
 import { useMeasuredSurface } from './useMeasuredSurface';
+import { usePointerPassThrough } from './usePointerPassThrough';
 import { useTranslationFollowUp } from './useTranslationFollowUp';
 
 const t = (key: string) => i18nService.t(key);
@@ -27,6 +35,7 @@ const STATUS_KEYS: Record<SpeechStatus, string> = {
   [SpeechStatus.Playing]: 'desktopToolsPlaying', [SpeechStatus.Paused]: 'desktopToolsPaused',
   [SpeechStatus.Ended]: 'desktopToolsFinished', [SpeechStatus.Error]: 'desktopToolsAudioError',
 };
+const RATES = [0.75, 1, 1.25, 1.5, 2];
 
 export default function LanguageToolsSurface({ state }: { state: DesktopCompanionState }) {
   const api = window.electron.desktopCompanion;
@@ -39,8 +48,11 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
   const rootRef = useRef<HTMLDivElement>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
   useMeasuredSurface(rootRef, !!input, input?.id);
+  usePointerPassThrough(input?.id, api.setLanguageToolPassThrough);
 
   useEffect(() => { setPinned(false); setCopied(false); setHandoffError(false); }, [input?.id]);
+  // Dragging the card pins it in the main process.
+  useEffect(() => api.onLanguageToolPinned(value => setPinned(value)), [api]);
   useEffect(() => {
     document.title = t(input?.tool === LanguageTool.Tts ? 'desktopToolsReadAloud' : 'desktopCompanionActionTranslate');
   }, [input?.tool]);
@@ -62,9 +74,11 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
   const isTranslation = input.tool === LanguageTool.Translate;
   const currentQuota = tools.quota?.tools[input.tool];
   const speechVisible = !isTranslation || playback.status !== SpeechStatus.Idle;
+  const speechActive = playback.status !== SpeechStatus.Idle;
   const canResume = [SpeechStatus.Idle, SpeechStatus.Paused, SpeechStatus.Ended, SpeechStatus.Error].some(value => value === playback.status);
   const total = Math.max(tools.segmentTotal, playback.total);
   const completedSegments = playback.status === SpeechStatus.Ended ? playback.index : Math.max(0, playback.index - 1);
+  const progress = total > 0 ? Math.round((completedSegments / total) * 100) : 0;
 
   const toTask = async () => {
     const conversation = [translation, ...followUp.turns.map(turn =>
@@ -82,116 +96,158 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
       setCopied(true); setTimeout(() => setCopied(false), 1_400);
     });
   };
+  const playLabel = t(playback.status === SpeechStatus.Idle ? 'desktopToolsReadAloud' : canResume ? 'desktopToolsResume' : 'desktopToolsPause');
 
   return (
     <div className="sel-surface">
-      <div className="sel-card language-card" ref={rootRef}>
-        <header className="sel-header language-header">
-          <span className="sel-chip">{isTranslation ? <LanguageIcon /> : <SpeakerWaveIcon />}
-            {t(isTranslation ? 'desktopCompanionActionTranslate' : 'desktopToolsReadAloud')}
-          </span>
-          <span className="sel-source" title={source}>{source}</span>
-          <button type="button" className="sel-icon" data-on={pinned}
-            title={t(pinned ? 'desktopCompanionAnswerUnpin' : 'desktopCompanionAnswerPin')}
-            aria-label={t(pinned ? 'desktopCompanionAnswerUnpin' : 'desktopCompanionAnswerPin')}
-            onClick={() => { setPinned(!pinned); void api.pinLanguageTool(!pinned); }}><MapPinIcon /></button>
-          <button type="button" className="sel-icon" title={t('desktopToolsClose')} aria-label={t('desktopToolsClose')}
-            onClick={() => { void api.closeLanguageTool(); }}><XMarkIcon /></button>
-        </header>
+      <div className="sel-card" ref={rootRef} data-tool={input.tool} style={{ maxHeight: input.cardMaxHeight }}>
+        <SelectionCardHeader
+          icon={isTranslation ? LanguageIcon : SpeakerWaveIcon}
+          title={t(isTranslation ? 'desktopCompanionActionTranslate' : 'desktopToolsReadAloud')}
+          pinned={pinned}
+          onPin={() => { setPinned(!pinned); void api.pinLanguageTool(!pinned); }}
+          onClose={() => { void api.closeLanguageTool(); }}
+          closeLabel={t('desktopToolsClose')}
+        >
+          {speechActive && (
+            <button type="button" className="sel-icon" title={t('desktopToolsMinimize')} aria-label={t('desktopToolsMinimize')}
+              onClick={() => { void api.hideLanguageTool(); }}>
+              <MinusIcon />
+            </button>
+          )}
+        </SelectionCardHeader>
 
-        <div className="language-scroll" ref={conversationRef}>
-          {isTranslation ? <>
-            <div className="language-direction">
-              <span>{t('desktopToolsDetectLanguage')}</span><ArrowRightIcon />
-              <select aria-label={t('desktopToolsTarget')} value={tools.target}
-                onChange={event => tools.translate(event.target.value as TranslationTarget)}>
-                <option value={TranslationTarget.Chinese}>{t('desktopToolsChinese')}</option>
-                <option value={TranslationTarget.English}>{t('desktopToolsEnglish')}</option>
-              </select>
+        <div className="sel-scroll" ref={conversationRef}>
+          {isTranslation && (
+            <div className="lt-langs">
+              <span className="lt-lang">{t('desktopToolsDetectLanguage')}</span>
+              <ArrowRightIcon className="lt-arrow" aria-hidden="true" />
+              <label className="lt-lang lt-select">
+                <select aria-label={t('desktopToolsTarget')} value={tools.target}
+                  onChange={event => tools.translate(event.target.value as TranslationTarget)}>
+                  <option value={TranslationTarget.Chinese}>{t('desktopToolsChinese')}</option>
+                  <option value={TranslationTarget.English}>{t('desktopToolsEnglish')}</option>
+                </select>
+                <ChevronDownIcon aria-hidden="true" />
+              </label>
             </div>
-            <div className="language-translation" aria-live="polite">
-              {translation || (translating ? <span className="sel-thinking"><span className="sel-dots"><i /><i /><i /></span>{t('desktopToolsTranslating')}</span> : null)}
-              {translating && translation && <span className="sel-caret" />}
-            </div>
-            <div className="language-result-actions">
-              <button type="button" className="sel-icon" disabled={!translation} onClick={copy}
-                title={t(copied ? 'desktopCompanionSelectionCopied' : 'desktopCompanionSelectionCopy')}
-                aria-label={t(copied ? 'desktopCompanionSelectionCopied' : 'desktopCompanionSelectionCopy')}>
-                {copied ? <CheckIcon /> : <DocumentDuplicateIcon />}
-              </button>
-              <button type="button" className="sel-icon" onClick={() => translating ? tools.stopTranslation() : tools.translate()}
-                title={t(translating ? 'desktopToolsStop' : 'desktopToolsRetranslate')}
-                aria-label={t(translating ? 'desktopToolsStop' : 'desktopToolsRetranslate')}>
-                {translating ? <StopIcon /> : <ArrowPathIcon />}
-              </button>
-              <button type="button" className="sel-icon" disabled={!translation || translating} onClick={tools.readTranslation}
-                title={t('desktopToolsReadTranslation')} aria-label={t('desktopToolsReadTranslation')}><SpeakerWaveIcon /></button>
-              <button type="button" className="language-to-task" disabled={!translation || translating || !!followUp.streaming}
-                onClick={() => { void toTask(); }}><ArrowTopRightOnSquareIcon />{t('desktopCompanionAnswerToTask')}</button>
-            </div>
-          </> : <div className="language-source-preview"><span>{t('desktopToolsInput')}</span><p>{source}</p></div>}
+          )}
+          <SourceQuote key={input.id} text={source} lines={isTranslation ? 2 : 4} />
 
-          {speechVisible && <section className="language-player" aria-label={t('desktopToolsPlayback')}>
-            <div className="language-playback-state">
-              <span className="language-wave" data-playing={playback.status === SpeechStatus.Playing} aria-hidden="true"><i /><i /><i /><i /><i /></span>
-              <strong aria-live="polite">{t(STATUS_KEYS[playback.status])}</strong>
-              <small>{total > 0 ? t('desktopToolsSegmentProgress').replace('{current}', String(playback.index)).replace('{total}', String(total))
-                : [...(tools.speechText || source)].length.toLocaleString() + t('desktopToolsCharacters')}</small>
+          {isTranslation && (
+            <div className="lt-translation" aria-live="polite">
+              {translation
+                ? <>{translation}{translating && <span className="sel-caret" />}</>
+                : translating && <SelectionThinking label={t('desktopToolsTranslating')} />}
             </div>
-            {total > 0 && <progress className="language-progress" value={completedSegments} max={total} aria-label={t('desktopToolsSegmentLabel')} />}
-            <div className="language-player-actions">
-              <button type="button" className="language-play" onClick={tools.togglePlayback}
-                aria-label={t(playback.status === SpeechStatus.Idle ? 'desktopToolsReadAloud' : canResume ? 'desktopToolsResume' : 'desktopToolsPause')}>
+          )}
+
+          {speechVisible && (
+            <section className="lt-player" aria-label={t('desktopToolsPlayback')}>
+              <button type="button" className="lt-play" onClick={tools.togglePlayback} title={playLabel} aria-label={playLabel}>
                 {canResume ? <PlayIcon /> : <PauseIcon />}
               </button>
-              <button type="button" className="sel-icon" disabled={playback.status === SpeechStatus.Idle} onClick={tools.stopSpeech}
-                title={t('desktopToolsStop')} aria-label={t('desktopToolsStop')}><StopIcon /></button>
-              <select aria-label={t('desktopToolsSpeed')} value={tools.rate} onChange={event => tools.changeRate(Number(event.target.value))}>
-                {[0.75, 1, 1.25, 1.5, 2].map(value => <option key={value} value={value}>{value}×</option>)}
-              </select>
-              <button type="button" className="language-hide" onClick={() => { void api.hideLanguageTool(); }}
-                title={t('desktopToolsMinimize')}><MinusIcon />{t('desktopToolsBackground')}</button>
-            </div>
-          </section>}
+              <div className="lt-track">
+                <div className="lt-status">
+                  <span className="lt-wave" data-playing={playback.status === SpeechStatus.Playing} aria-hidden="true"><i /><i /><i /><i /></span>
+                  <strong aria-live="polite">{t(STATUS_KEYS[playback.status])}</strong>
+                  <small>{total > 0
+                    ? t('desktopToolsSegmentProgress').replace('{current}', String(playback.index)).replace('{total}', String(total))
+                    : [...(tools.speechText || source)].length.toLocaleString() + t('desktopToolsCharacters')}</small>
+                </div>
+                <div className="lt-progress" role="progressbar" aria-label={t('desktopToolsSegmentLabel')}
+                  aria-valuemin={0} aria-valuemax={total} aria-valuenow={completedSegments}>
+                  <i style={{ width: `${progress}%` }} />
+                </div>
+              </div>
+              <label className="lt-rate">
+                <select aria-label={t('desktopToolsSpeed')} value={tools.rate} onChange={event => tools.changeRate(Number(event.target.value))}>
+                  {RATES.map(value => <option key={value} value={value}>{value}×</option>)}
+                </select>
+              </label>
+              <button type="button" className="sel-icon" disabled={!speechActive} onClick={tools.stopSpeech}
+                title={t('desktopToolsStop')} aria-label={t('desktopToolsStop')}>
+                <StopGlyph />
+              </button>
+            </section>
+          )}
 
-          {tools.error !== null && <div className="sel-error language-error" role="alert">
-            {t(ERROR_KEYS[tools.error] ?? 'desktopToolsUpstream')}
-            {tools.error === LanguageToolCode.Unauthorized
-              ? <button type="button" onClick={() => { void window.electron.auth.login(); }}>{t('desktopToolsLogin')}</button>
-              : <button type="button" onClick={tools.retry}><ArrowPathIcon />{t('desktopCompanionAnswerRetry')}</button>}
-          </div>}
-          {isTranslation && <div className="language-conversation">
-            {followUp.turns.map((turn, index) => turn.role === 'user'
-              ? <p className="sel-question" key={index}>{turn.content}</p>
-              : <div className="sel-markdown" key={index}><CompanionMarkdown text={turn.content} /></div>)}
-            {followUp.streaming && <div className="sel-markdown" aria-live="polite">
-              <CompanionMarkdown text={followUp.streaming.text || t('desktopCompanionAnswerThinking')} /><span className="sel-caret" />
-            </div>}
-            {followUp.error && <p className="sel-error" role="alert">{followUp.error}
-              <button type="button" onClick={followUp.retry}><ArrowPathIcon />{t('desktopCompanionAnswerRetry')}</button>
-            </p>}
-            {handoffError && <p className="sel-error" role="alert">{t('desktopCompanionRequestFailed')}</p>}
-          </div>}
+          {tools.error !== null && (
+            <SelectionError
+              message={t(ERROR_KEYS[tools.error] ?? 'desktopToolsUpstream')}
+              action={tools.error === LanguageToolCode.Unauthorized
+                ? <button type="button" onClick={() => { void window.electron.auth.login(); }}>{t('desktopToolsLogin')}</button>
+                : <button type="button" onClick={tools.retry}>{t('desktopCompanionAnswerRetry')}</button>}
+            />
+          )}
+
+          {isTranslation && (
+            <div className="lt-conversation">
+              {followUp.turns.map((turn, index) => turn.role === 'user'
+                ? <p className="sel-question" key={index}>{turn.content}</p>
+                : <SelectionAnswer key={index} text={turn.content} />)}
+              {followUp.streaming && (followUp.streaming.text
+                ? <SelectionAnswer text={followUp.streaming.text} streaming />
+                : <SelectionThinking label={t('desktopCompanionAnswerThinking')} />)}
+              {followUp.error && (
+                <SelectionError
+                  message={followUp.error}
+                  action={<button type="button" onClick={followUp.retry}>{t('desktopCompanionAnswerRetry')}</button>}
+                />
+              )}
+              {handoffError && <SelectionError message={t('desktopCompanionRequestFailed')} />}
+            </div>
+          )}
         </div>
 
-        {isTranslation && <footer className="sel-footer language-follow-up">
-          <form className="sel-ask" onSubmit={event => { event.preventDefault(); followUp.submit(); }}>
-            <input value={followUp.question} onChange={event => followUp.setQuestion(event.target.value)} maxLength={4_000}
-              onKeyDown={event => { if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault(); }}
-              aria-label={t('desktopCompanionAnswerFollowUp')} placeholder={t('desktopCompanionAnswerFollowUp')}
-              disabled={!translation || translating} />
-            {followUp.streaming
-              ? <button type="button" className="sel-send" aria-label={t('desktopToolsStop')} onClick={followUp.stop}><StopIcon /></button>
-              : <button type="submit" className="sel-send" disabled={!translation || translating || !followUp.question.trim()}
-                aria-label={t('desktopCompanionSend')}><ArrowUpIcon /></button>}
-          </form>
-        </footer>}
-        <div className="language-quota" title={t('desktopToolsResetTime')}>
+        {isTranslation && (translating || (translation && !followUp.streaming)) && (
+          <div className="sel-actions">
+            {translating ? (
+              <button type="button" className="sel-action" onClick={tools.stopTranslation}>
+                <StopGlyph />{t('desktopToolsStop')}
+              </button>
+            ) : (
+              <>
+                <button type="button" className="sel-icon" data-done={copied} onClick={copy}
+                  title={t(copied ? 'desktopCompanionSelectionCopied' : 'desktopCompanionSelectionCopy')}
+                  aria-label={t(copied ? 'desktopCompanionSelectionCopied' : 'desktopCompanionSelectionCopy')}>
+                  {copied ? <CheckIcon /> : <Square2StackIcon />}
+                </button>
+                <button type="button" className="sel-icon" onClick={tools.readTranslation}
+                  title={t('desktopToolsReadTranslation')} aria-label={t('desktopToolsReadTranslation')}>
+                  <SpeakerWaveIcon />
+                </button>
+                <button type="button" className="sel-icon" onClick={() => tools.translate()}
+                  title={t('desktopToolsRetranslate')} aria-label={t('desktopToolsRetranslate')}>
+                  <ArrowPathIcon />
+                </button>
+                <button type="button" className="sel-action sel-action-end" onClick={() => { void toTask(); }}>
+                  {t('desktopCompanionAnswerToTask')}<ArrowUpRightIcon />
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {isTranslation && (
+          <SelectionComposer
+            value={followUp.question}
+            placeholder={t('desktopCompanionAnswerFollowUp')}
+            onChange={followUp.setQuestion}
+            onSubmit={followUp.submit}
+            onStop={followUp.streaming ? followUp.stop : undefined}
+            disabled={!translation || translating}
+          />
+        )}
+
+        <footer className="lt-quota" title={t('desktopToolsResetTime')}>
           {currentQuota ? <>
             <span>{t('desktopToolsRemaining').replace('{count}', String(currentQuota.remainingRequests))}</span>
-            {currentQuota.remainingCharacters !== null && <span>{t('desktopToolsRemainingCharacters').replace('{count}', currentQuota.remainingCharacters.toLocaleString())}</span>}
+            {currentQuota.remainingCharacters !== null && (
+              <span>{t('desktopToolsRemainingCharacters').replace('{count}', currentQuota.remainingCharacters.toLocaleString())}</span>
+            )}
           </> : <span>{t('desktopToolsQuotaHint')}</span>}
-        </div>
+        </footer>
       </div>
     </div>
   );

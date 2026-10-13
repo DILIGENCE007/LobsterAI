@@ -20,11 +20,13 @@ export function createLanguageToolsBridge(): LanguageToolsBridge {
     hideLanguageTool: () => ipcRenderer.invoke(LanguageToolsIpc.Hide),
     closeLanguageTool: () => ipcRenderer.invoke(LanguageToolsIpc.Close),
     pinLanguageTool: pinned => ipcRenderer.invoke(LanguageToolsIpc.Pin, pinned),
+    setLanguageToolPassThrough: passThrough => { void ipcRenderer.invoke(LanguageToolsIpc.PassThrough, passThrough); },
     setSpeechStatus: status => ipcRenderer.invoke(LanguageToolsIpc.SpeechStatus, status),
     speechCommand: command => ipcRenderer.invoke(LanguageToolsIpc.SpeechCommand, command),
     onLanguageToolInput: callback => subscribe<LanguageToolInput>(LanguageToolsIpc.Input, callback),
     onLanguageToolEvent: callback => subscribe<LanguageToolEvent>(LanguageToolsIpc.Event, callback),
     onSpeechCommand: callback => subscribe<SpeechCommand>(LanguageToolsIpc.SpeechCommand, callback),
     onLanguageToolsReset: callback => subscribe(LanguageToolsIpc.Reset, callback),
+    onLanguageToolPinned: callback => subscribe<boolean>(LanguageToolsIpc.Pinned, callback),
   };
 }

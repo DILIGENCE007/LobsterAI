@@ -24,6 +24,7 @@ import {
   DesktopCompanionDropSource,
   DesktopCompanionFileDragPhase,
   DesktopCompanionIpc,
+  DesktopCompanionPanelPlacement,
   type DesktopCompanionPreferences,
   type DesktopCompanionResult,
   type DesktopCompanionSelectionCommand,
@@ -47,11 +48,12 @@ import {
 } from '../../shared/desktopCompanion/fileKinds';
 import {
   clampCompanionBounds,
+  type CompanionComposerLayout,
   companionGaze,
   type CompanionPoint,
   companionStageOpensLeft,
   resolveCompanionBounds,
-  resolveCompanionComposerBounds,
+  resolveCompanionComposerLayout,
 } from '../../shared/desktopCompanion/geometry';
 import { companionHintCopyKeys, type CompanionHintTopic } from '../../shared/desktopCompanion/hintPolicy';
 import { isSpeechActive, SpeechCommand } from '../../shared/desktopCompanion/languageTools';
@@ -155,6 +157,9 @@ export class DesktopCompanionManager {
   private panelVisible = false;
   /** Height of the composer card plus its shadow margin, as the panel last reported it. */
   private panelCardHeight: number = DesktopCompanionSize.PanelCompactHeight;
+  private panelPlacement: DesktopCompanionPanelPlacement = DesktopCompanionPanelPlacement.Left;
+  /** The display a panel opened without the orb stays on while it is open. */
+  private panelWorkArea: Rectangle | null = null;
   private preferences: DesktopCompanionPreferences;
   private draft: DesktopCompanionDraft;
   private sessionId: string | null;
@@ -231,6 +236,7 @@ export class DesktopCompanionManager {
       publish: () => this.publish(),
       hideSelection: () => this.selection.hide(),
       abortFollowUp: id => this.quickAnswer.abortOwnedBy(id),
+      isCapturing: () => this.selection.capturing,
     }, services.languageClient);
 
     this.foreground.on('change', this.onForegroundChange);
@@ -257,6 +263,7 @@ export class DesktopCompanionManager {
       snooze: this.snooze ? { ...this.snooze } : null,
       stage: this.stage.stage,
       stageSide: this.stageSide(),
+      panelPlacement: this.panelPlacement,
       fileDragActive: this.fileDragActive,
       foreground: this.foregroundAppId && category ? { appId: this.foregroundAppId, category } : null,
       capabilities: {
@@ -509,6 +516,9 @@ export class DesktopCompanionManager {
       this.orb.setBounds(bounds);
       this.savePosition(bounds);
     }
+    if (this.panelWorkArea && this.panel && !this.panel.isDestroyed()) {
+      this.panelWorkArea = screen.getDisplayMatching(this.panel.getBounds()).workArea;
+    }
     this.stage.reposition();
     this.positionPanel();
   };
@@ -518,8 +528,12 @@ export class DesktopCompanionManager {
   private showPanel(): void {
     const stageKind = this.stage.stage.kind;
     if (stageKind === DesktopCompanionStageKind.Hint || stageKind === DesktopCompanionStageKind.Task) this.stage.clear();
+    if (!this.panelVisible) {
+      // Without the orb, the panel opens on the display in use and stays there while it is open.
+      this.panelWorkArea = this.orbBounds() ? null : screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+    }
     if (!this.panel || this.panel.isDestroyed()) {
-      const win = this.createWindow(DesktopCompanionSurface.Panel, true, this.panelBounds());
+      const win = this.createWindow(DesktopCompanionSurface.Panel, true, this.panelLayout().bounds);
       win.on('close', event => {
         if (this.disposing) return;
         event.preventDefault();
@@ -545,11 +559,16 @@ export class DesktopCompanionManager {
     this.publish();
   }
 
-  private panelBounds(): Rectangle {
-    const anchor = this.orbBounds() ?? this.defaultOrbBounds();
+  private panelLayout(): CompanionComposerLayout {
+    // Opens like the hint bubbles, beside the character. A shortcut pressed while the orb
+    // is off or hidden has nothing to point at, so the card opens a little below mid-screen.
+    const orb = this.orbBounds();
+    const workArea = orb
+      ? screen.getDisplayMatching(orb).workArea
+      : this.panelWorkArea ?? screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
     const card = { width: DesktopCompanionSize.Composer.width + DesktopCompanionSize.SurfacePad * 2, height: this.panelCardHeight };
-    // Opens like the hint bubbles, beside the character, with room above for the composer's menus.
-    return resolveCompanionComposerBounds(anchor, card, DesktopCompanionSize.ComposerMenuRoom, screen.getDisplayMatching(anchor).workArea);
+    const room = { above: DesktopCompanionSize.ComposerMenuRoom, side: DesktopCompanionSize.ComposerSideRoom };
+    return resolveCompanionComposerLayout(orb, card, room, workArea);
   }
 
   /** The panel reports its card size as the prompt grows. */
@@ -575,7 +594,12 @@ export class DesktopCompanionManager {
 
   private positionPanel(): void {
     if (!this.panel || this.panel.isDestroyed()) return;
-    this.panel.setBounds(this.panelBounds());
+    const { bounds, placement } = this.panelLayout();
+    this.panel.setBounds(bounds);
+    if (placement === this.panelPlacement) return;
+    // The card moves to the other side of its window, and its corner points the other way.
+    this.panelPlacement = placement;
+    this.publish();
   }
 
   private acceptHint(topic: CompanionHintTopic): void {
@@ -626,7 +650,7 @@ export class DesktopCompanionManager {
     if (category === CompanionAppCategory.Self) return;
     const previous = this.foregroundAppId ? categorizeCompanionApp(this.foregroundAppId) : null;
     this.foregroundAppId = appId;
-    this.selection.onForegroundChange();
+    this.selection.onForegroundChange(appId);
     if (previous !== category) this.publish();
   };
 

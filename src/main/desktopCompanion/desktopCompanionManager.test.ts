@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import {
   CompanionCapability,
+  DesktopCompanionDragPhase,
   DesktopCompanionIpc,
+  DesktopCompanionPanelPlacement,
   DesktopCompanionSize,
   DesktopCompanionSnoozeMode,
   DesktopCompanionStageCommandType,
@@ -146,12 +148,13 @@ describe('desktop companion lifecycle', () => {
   test('language cards open beside the selection, resize with content, and restore without a new request', () => {
     create();
     const anchor = vi.spyOn(CompanionSelectionController.prototype, 'selectionAnchor', 'get')
-      .mockReturnValue({ x: 400, top: 200, bottom: 220 });
+      .mockReturnValue({ left: 360, right: 440, top: 200, bottom: 220, multiline: false });
     try {
       invoke(LanguageToolsIpc.Open, { tool: LanguageTool.Translate, text: 'Selected words' });
       const window = mocks.windows[1];
-      expect(window.bounds.x).toBe(378);
-      expect(window.bounds.y).toBeGreaterThan(190);
+      // Centered under the selected words.
+      expect(window.bounds.x + window.bounds.width / 2).toBe(400);
+      expect(window.bounds.y + DesktopCompanionSize.SurfacePad).toBeGreaterThanOrEqual(220);
       expect(window.bounds.y).toBeLessThan(240);
       const firstInput = invoke(LanguageToolsIpc.GetInput, undefined, window.webContents);
       ipcMain.emit(DesktopCompanionIpc.ResizeSurface, { sender: window.webContents, senderFrame: window.webContents.mainFrame }, { width: 436, height: 260 });
@@ -219,6 +222,12 @@ describe('desktop companion lifecycle', () => {
     expect(manager.getState().panelVisible).toBe(true);
     expect(manager.getState().preferences.enabled).toBe(false);
     expect(mocks.windows).toHaveLength(2);
+    // With no orb to come out of, the card opens a little below the middle of the screen.
+    expect(manager.getState().panelPlacement).toBe(DesktopCompanionPanelPlacement.Center);
+    const panel = mocks.windows[1];
+    const cardWidth = DesktopCompanionSize.Composer.width + DesktopCompanionSize.SurfacePad * 2;
+    expect(panel.bounds.x + cardWidth / 2).toBe(640);
+    expect(panel.bounds.y + panel.bounds.height).toBeGreaterThan(450 + DesktopCompanionSize.PanelCompactHeight / 2);
     manager.hidePanel();
     expect(mocks.windows[1].visible).toBe(false);
   });
@@ -437,7 +446,8 @@ describe('stage: hints and drops', () => {
     // The composer keeps room above its card for menus, and its bottom stays put as the card grows.
     expect(panel.bounds.height).toBe(DesktopCompanionSize.PanelCompactHeight + DesktopCompanionSize.ComposerMenuRoom);
     const bottom = panel.bounds.y + panel.bounds.height;
-    ipcMain.emit(DesktopCompanionIpc.ResizeSurface, { sender: panel.webContents, senderFrame: panel.webContents.mainFrame }, { width: 644, height: 250 });
+    const cardWidth = DesktopCompanionSize.Composer.width + DesktopCompanionSize.SurfacePad * 2;
+    ipcMain.emit(DesktopCompanionIpc.ResizeSurface, { sender: panel.webContents, senderFrame: panel.webContents.mainFrame }, { width: cardWidth, height: 250 });
     expect(panel.bounds.height).toBe(250 + DesktopCompanionSize.ComposerMenuRoom);
     expect(panel.bounds.y + panel.bounds.height).toBe(bottom);
     // Only the composer can hand over a task.
@@ -451,6 +461,34 @@ describe('stage: hints and drops', () => {
     expect(openMain).toHaveBeenCalledWith('session-7');
     expect(manager.getState().sessionId).toBeNull();
     expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
+  });
+
+  test('the composer card sits beside the orb and moves to its other side when the orb crosses the screen', () => {
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows.at(-1);
+    const pad = DesktopCompanionSize.SurfacePad;
+    const cardWidth = DesktopCompanionSize.Composer.width + pad * 2;
+    // The orb starts in the lower right, so the card opens to its left, with room further left for submenus.
+    expect(manager.getState().panelPlacement).toBe(DesktopCompanionPanelPlacement.Left);
+    expect(panel.bounds.x + panel.bounds.width - pad).toBe(orb().bounds.x);
+    expect(panel.bounds.width).toBe(cardWidth + DesktopCompanionSize.ComposerSideRoom);
+    const drag = (phase: DesktopCompanionDragPhase, x: number) => {
+      vi.spyOn(screen, 'getCursorScreenPoint').mockReturnValue({ x, y: 800 });
+      ipcMain.emit(DesktopCompanionIpc.Drag, { sender: orb().webContents, senderFrame: orb().webContents.mainFrame }, phase);
+    };
+    drag(DesktopCompanionDragPhase.Start, 1200);
+    drag(DesktopCompanionDragPhase.Move, 200);
+    // Mid-drag the composer hears about the flip, since its card moves within the window.
+    expect(manager.getState().panelPlacement).toBe(DesktopCompanionPanelPlacement.Right);
+    expect(main.webContents.send).toHaveBeenLastCalledWith(
+      DesktopCompanionIpc.Changed,
+      expect.objectContaining({ panelPlacement: DesktopCompanionPanelPlacement.Right }),
+    );
+    expect(panel.bounds.x + pad).toBe(orb().bounds.x + orb().bounds.width);
+    drag(DesktopCompanionDragPhase.End, 200);
+    vi.mocked(screen.getCursorScreenPoint).mockRestore();
   });
 
   test('news about the task brings its strip back, and only the composer lets clicks through its window', () => {

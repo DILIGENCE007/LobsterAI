@@ -17,11 +17,16 @@ export const LanguageToolsIpc = {
   Open: 'desktop-tools:open', Input: 'desktop-tools:input', GetInput: 'desktop-tools:get-input',
   Start: 'desktop-tools:start', Abort: 'desktop-tools:abort', Event: 'desktop-tools:event',
   Quota: 'desktop-tools:quota', Hide: 'desktop-tools:hide', SpeechStatus: 'desktop-tools:speech-status',
-  Close: 'desktop-tools:close', Pin: 'desktop-tools:pin',
+  Close: 'desktop-tools:close', Pin: 'desktop-tools:pin', Pinned: 'desktop-tools:pinned',
+  PassThrough: 'desktop-tools:pass-through',
   SpeechCommand: 'desktop-tools:speech-command', Reset: 'desktop-tools:reset',
 } as const;
 
-export interface LanguageToolInput { tool: LanguageTool; text?: string; id?: string }
+export interface LanguageToolInput {
+  tool: LanguageTool; text?: string; id?: string;
+  /** How tall the card may grow beside the selection before it scrolls. */
+  cardMaxHeight?: number;
+}
 export interface LanguageToolRequest {
   requestId: string; tool: LanguageTool; text: string; targetLanguage?: TranslationTarget;
 }
@@ -48,12 +53,16 @@ export interface LanguageToolsBridge {
   hideLanguageTool(): Promise<void>;
   closeLanguageTool(): Promise<void>;
   pinLanguageTool(pinned: boolean): Promise<void>;
+  /** Clicks on the window's transparent margin go to the app below. */
+  setLanguageToolPassThrough(passThrough: boolean): void;
   setSpeechStatus(status: SpeechStatus): Promise<void>;
   speechCommand(command: SpeechCommand): Promise<void>;
   onLanguageToolInput(callback: (input: LanguageToolInput) => void): () => void;
   onLanguageToolEvent(callback: (event: LanguageToolEvent) => void): () => void;
   onSpeechCommand(callback: (command: SpeechCommand) => void): () => void;
   onLanguageToolsReset(callback: () => void): () => void;
+  /** The main process pinned the card because the user dragged it. */
+  onLanguageToolPinned(callback: (pinned: boolean) => void): () => void;
 }
 
 export function isSpeechActive(status?: SpeechStatus): boolean {

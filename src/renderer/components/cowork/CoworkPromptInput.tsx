@@ -16,7 +16,7 @@ import {
   normalizeBrowserAnnotationBatches,
 } from '@shared/cowork/browserAnnotations';
 import { ProviderName } from '@shared/providers';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -111,6 +111,7 @@ import {
   ACTIVE_CONTEXT_BADGE_REMOVE_ICON_CLASS,
 } from '../common/activeContextBadgeStyles';
 import Modal from '../common/Modal';
+import { PromptFoldedTool, PromptSubmenuSide, resolvePromptSubmenuSide } from '../common/promptSubmenu';
 import EditIcon from '../icons/EditIcon';
 import GoalIcon from '../icons/GoalIcon';
 import PaperClipIcon from '../icons/PaperClipIcon';
@@ -130,6 +131,7 @@ import ModelSelector, {
   ModelSelectorGroup,
 } from '../ModelSelector';
 import { ActiveSkillBadge, SkillsPopover } from '../skills';
+import ActiveMediaBadge from './ActiveMediaBadge';
 import {
   resolveAgentModelSelection,
   resolveAgentStartModel,
@@ -447,6 +449,12 @@ interface CoworkPromptInputProps {
   /** When true, hides attachment/skill buttons but keeps the input box visible (disabled) */
   remoteManaged?: boolean;
   showNewUserWelcomeLoginOverlay?: boolean;
+  /**
+   * A narrow card such as the desktop companion's quick panel: the kit and
+   * media pickers move from the toolbar into the add menu, and the prompt
+   * starts a few lines taller.
+   */
+  narrow?: boolean;
 }
 
 const EMPTY_ATTACHMENTS: CoworkAttachment[] = [];
@@ -484,6 +492,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       canSteer = false,
       remoteManaged = false,
       showNewUserWelcomeLoginOverlay = false,
+      narrow = false,
     } = props;
     const dispatch = useDispatch();
     const draftKey = sessionId || '__home__';
@@ -534,6 +543,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [textareaScrollTop, setTextareaScrollTop] = useState(0);
     const [showAddMenu, setShowAddMenu] = useState(false);
     const [showSkillsPopover, setShowSkillsPopover] = useState(false);
+    // A narrow prompt's kit and media submenus; the skills submenu keeps its own flag.
+    const [foldedTool, setFoldedTool] = useState<PromptFoldedTool | null>(null);
+    const [submenuSide, setSubmenuSide] = useState<PromptSubmenuSide>(PromptSubmenuSide.Right);
     const [goalInputActive, setGoalInputActive] = useState(false);
     const [goalInputMode, setGoalInputMode] = useState<GoalInputMode>('start');
     const [goalEditModalOpen, setGoalEditModalOpen] = useState(false);
@@ -666,16 +678,22 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const isLarge = size === 'large' || isCompact;
   const useHomeContextLayout = isLarge && showAgentSelector;
   const useCompactSendButton = isLarge && (useHomeContextLayout || showReadOnlyContext || isCompact);
-  const hasActiveContext = hasActiveSkills || hasActiveKits || isPlanMode || goalInputActive || steerInputActive;
+  // A narrow toolbar has no media button, so a chosen media model shows as a badge instead.
+  const hasFoldedMediaSelection = narrow && !!queuedMediaSelection && queuedMediaSelection.mode !== 'none';
+  const hasActiveContext = hasActiveSkills || hasActiveKits || isPlanMode || goalInputActive || steerInputActive
+    || hasFoldedMediaSelection;
   const hasAttachments = attachments.length > 0;
-  const minHeight = isCompact
-    ? hasAttachments ? 30 : hasActiveContext ? 30 : 28
-    : isLarge
-      ? useHomeContextLayout
-        ? hasAttachments ? 34 : hasActiveContext ? 36 : 52
-        : hasAttachments ? 38 : hasActiveContext ? 44 : 60
-      : 24;
-  const maxHeight = isCompact ? 96 : 200;
+  // A narrow card grows upward rather than sideways, so its prompt starts five lines tall.
+  const minHeight = narrow
+    ? hasAttachments ? 92 : 140
+    : isCompact
+      ? hasAttachments ? 30 : hasActiveContext ? 30 : 28
+      : isLarge
+        ? useHomeContextLayout
+          ? hasAttachments ? 34 : hasActiveContext ? 36 : 52
+          : hasAttachments ? 38 : hasActiveContext ? 44 : 60
+        : 24;
+  const maxHeight = isCompact ? 96 : narrow ? 240 : 200;
 
   const effectiveSelectedModel = resolveEffectiveModel({
     sessionId,
@@ -1116,6 +1134,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        // Escape closes this menu only, not the view or window around it.
+        event.preventDefault();
         setShowAddMenu(false);
         setShowSkillsPopover(false);
       }
@@ -1132,11 +1152,20 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   useEffect(() => {
     if (!showAddMenu) {
       setShowSkillsPopover(false);
+      setFoldedTool(null);
       if (skillSubmenuCloseTimerRef.current) {
         clearTimeout(skillSubmenuCloseTimerRef.current);
         skillSubmenuCloseTimerRef.current = null;
       }
     }
+  }, [showAddMenu]);
+
+  // Submenus open on the side of the add menu with room for them: in a narrow
+  // card beside the screen edge, that is toward the middle of the screen.
+  useLayoutEffect(() => {
+    if (!showAddMenu) return;
+    const rect = addMenuRef.current?.getBoundingClientRect();
+    if (rect) setSubmenuSide(resolvePromptSubmenuSide(rect, window.innerWidth));
   }, [showAddMenu]);
 
   useEffect(() => {
@@ -2564,6 +2593,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }
     setShowAddMenu(true);
     setShowSkillsPopover(true);
+    setFoldedTool(null);
   }, [activeSkillIds.length, reportPromptControl, showSkillsPopover]);
 
   const cancelCloseSkillsPopover = useCallback(() => {
@@ -2573,12 +2603,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }
   }, []);
 
+  // Closes whichever submenu of the add menu is open.
   const handleCloseSkillsPopover = useCallback(() => {
     if (skillSubmenuCloseTimerRef.current) {
       clearTimeout(skillSubmenuCloseTimerRef.current);
       skillSubmenuCloseTimerRef.current = null;
     }
     setShowSkillsPopover(false);
+    setFoldedTool(null);
   }, []);
 
   const scheduleCloseSkillsPopover = useCallback(() => {
@@ -2593,9 +2625,30 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         return;
       }
       setShowSkillsPopover(false);
+      setFoldedTool(null);
       skillSubmenuCloseTimerRef.current = null;
     }, 120);
   }, []);
+
+  /** Opens or closes the kit or media submenu of a narrow prompt's add menu. */
+  const handleFoldedToolChange = useCallback((tool: PromptFoldedTool, open: boolean) => {
+    cancelCloseSkillsPopover();
+    if (!open) {
+      setFoldedTool(current => (current === tool ? null : current));
+      return;
+    }
+    if (tool === PromptFoldedTool.Kits && foldedTool !== tool) {
+      reportPromptControl('kit_menu_open', { activeKitCount: activeKitIds.length });
+    }
+    setShowSkillsPopover(false);
+    setFoldedTool(tool);
+  }, [activeKitIds.length, cancelCloseSkillsPopover, foldedTool, reportPromptControl]);
+  const handleKitsMenuItemChange = useCallback((open: boolean) => {
+    handleFoldedToolChange(PromptFoldedTool.Kits, open);
+  }, [handleFoldedToolChange]);
+  const handleMediaMenuItemChange = useCallback((open: boolean) => {
+    handleFoldedToolChange(PromptFoldedTool.Media, open);
+  }, [handleFoldedToolChange]);
 
   const handleTogglePlanMode = useCallback(() => {
     const nextMode = isPlanMode ? CoworkCollaborationMode.Default : CoworkCollaborationMode.Plan;
@@ -2871,7 +2924,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const useLargeToolbarCompactLayout = isLargeToolbarCompact && !useHomeContextLayout;
   const largeToolbarGapClass = useLargeToolbarCompactLayout ? 'gap-1.5' : 'gap-3';
   const largeToolbarControlGapClass = useLargeToolbarCompactLayout ? 'gap-1' : 'gap-2';
-  const largeModelTriggerMaxWidthClassName = useLargeToolbarCompactLayout ? 'max-w-[150px]' : undefined;
+  const largeModelTriggerMaxWidthClassName = useLargeToolbarCompactLayout
+    ? 'max-w-[150px]'
+    : narrow ? 'max-w-[200px]' : undefined;
 
   // Sync when config is updated elsewhere (e.g. Settings panel)
   useEffect(() => {
@@ -3014,9 +3069,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         <PromptAddIcon className="h-5 w-5" />
       </button>
 
-      {showAddMenu && (
+      {/* A narrow prompt keeps the menu mounted: its media picker restores the saved models. */}
+      {(showAddMenu || narrow) && (
         <div
           ref={addMenuRef}
+          hidden={!showAddMenu}
           className="absolute bottom-full left-0 z-50 mb-2 w-48 rounded-xl border border-border bg-surface py-1 shadow-popover"
           role="menu"
           onMouseEnter={cancelCloseSkillsPopover}
@@ -3051,6 +3108,21 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             <span className="min-w-0 flex-1 truncate">{i18nService.t('useSkill')}</span>
             <ChevronRightIcon className="h-4 w-4 shrink-0 text-secondary" />
           </button>
+          {narrow && (
+            <>
+              <KitsButton
+                onSelectKit={handleSelectKit}
+                onManageKits={handleManageKits}
+                menuItem={{ open: foldedTool === PromptFoldedTool.Kits, side: submenuSide, onOpenChange: handleKitsMenuItemChange }}
+              />
+              <MediaModelPicker
+                draftKey={draftKey}
+                disabled={disabled || voiceInputLocksEditing}
+                menuItem={{ open: foldedTool === PromptFoldedTool.Media, side: submenuSide, onOpenChange: handleMediaMenuItemChange }}
+              />
+              <div className="mx-3 my-1 h-px bg-border" role="separator" />
+            </>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -3097,6 +3169,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             onManageSkills={handleManageSkills}
             anchorRef={skillMenuItemRef as React.RefObject<HTMLElement>}
             asSubmenu
+            side={submenuSide}
             autoFocusSearch={false}
             onMouseEnter={cancelCloseSkillsPopover}
             onMouseLeave={scheduleCloseSkillsPopover}
@@ -3109,15 +3182,17 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const largeInputActions = !remoteManaged ? (
     <div className="flex items-center gap-0.5">
       {addMenuAction}
-      <KitsButton
-        onSelectKit={handleSelectKit}
-        onManageKits={handleManageKits}
-        onOpenChange={(open) => {
-          reportPromptControl(open ? 'kit_menu_open' : 'kit_menu_close', {
-            activeKitCount: activeKitIds.length,
-          });
-        }}
-      />
+      {!narrow && (
+        <KitsButton
+          onSelectKit={handleSelectKit}
+          onManageKits={handleManageKits}
+          onOpenChange={(open) => {
+            reportPromptControl(open ? 'kit_menu_open' : 'kit_menu_close', {
+              activeKitCount: activeKitIds.length,
+            });
+          }}
+        />
+      )}
     </div>
   ) : null;
 
@@ -3143,7 +3218,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const largeInputToolActions = (
     <div className={`flex items-center ${useLargeToolbarCompactLayout ? 'gap-0' : 'gap-0.5'}`}>
       {largeInputActions}
-      <MediaModelPicker draftKey={draftKey} disabled={disabled || voiceInputLocksEditing} />
+      {!narrow && <MediaModelPicker draftKey={draftKey} disabled={disabled || voiceInputLocksEditing} />}
     </div>
   );
   const largeSendButtonSizeClass = useCompactSendButton ? 'h-7 w-7' : 'h-8 w-8';
@@ -3524,6 +3599,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     >
       <ActiveSkillBadge />
       <ActiveKitBadge />
+      {hasFoldedMediaSelection && <ActiveMediaBadge draftKey={draftKey} />}
       {goalModeBadge}
       {planModeBadge}
       {steerModeBadge}
@@ -3834,7 +3910,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   </div>
                 </div>
               </div>
-              <div className="-mt-6 flex min-h-10 items-center gap-1 rounded-b-3xl bg-black/[0.035] px-4 pb-2 pt-[30px] dark:bg-white/[0.05]">
+              <div
+                data-prompt-context-tray
+                className="-mt-6 flex min-h-10 items-center gap-1 rounded-b-3xl bg-black/[0.035] px-4 pb-2 pt-[30px] dark:bg-white/[0.05]"
+              >
                 {showFolderSelector && (
                   <div className="relative min-w-0 shrink">
                     <button
