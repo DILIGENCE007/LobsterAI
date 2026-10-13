@@ -37,7 +37,7 @@ const ExpertFeaturedScenarios: React.FC<{ presets: PresetAgent[]; scenarios: Exp
         <button type="button" aria-label={t('expertNextScenarios')} disabled={!canNext} onClick={() => railRef.current?.scrollBy({ left: railRef.current.clientWidth, behavior: 'smooth' })} className="rounded-full border border-border p-1.5 text-secondary hover:bg-surface-raised disabled:opacity-30"><ArrowRightIcon className="h-4 w-4" /></button>
       </div>
     </div>
-    <div ref={railRef} tabIndex={0} aria-label={t('expertFeatured')} className="grid snap-x snap-mandatory auto-cols-[minmax(250px,calc((100%_-_2rem)/3))] grid-flow-col gap-4 overflow-x-auto overscroll-x-contain pb-2 outline-none focus-visible:ring-2 focus-visible:ring-primary/30">
+    <div ref={railRef} tabIndex={0} aria-label={t('expertFeatured')} className="scrollbar-hidden grid snap-x snap-mandatory auto-cols-[minmax(250px,calc((100%_-_2rem)/3))] grid-flow-col gap-4 overflow-x-auto overscroll-x-contain pb-2 outline-none focus-visible:ring-2 focus-visible:ring-primary/30">
       {scenarios.map(scenario => <div key={scenario.id} className={`snap-start rounded-2xl border border-border bg-gradient-to-br p-5 ${EXPERT_SCENARIO_STYLES[scenario.accent]}`}>
         <h3 className="font-semibold text-foreground">{expertText(scenario.title, language)}</h3>
         <p className="mb-4 mt-1 min-h-8 text-xs leading-4 text-secondary">{expertText(scenario.description, language)}</p>
