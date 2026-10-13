@@ -2,14 +2,14 @@ import { ipcMain } from 'electron';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import { AgentIpcChannel } from '../../../shared/agent/constants';
-import { PresetAgentId } from '../../../shared/agent/presets';
+import { ExpertFixtureId } from '../../../shared/agent/expertCatalogFixture';
 import { type AgentHandlerDeps,registerAgentHandlers } from './handlers';
 
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));
 
 beforeEach(() => vi.clearAllMocks());
 
-function setup(syncOpenClawConfig: AgentHandlerDeps['syncOpenClawConfig'], agent: unknown = { id: PresetAgentId.Data }) {
+function setup(syncOpenClawConfig: AgentHandlerDeps['syncOpenClawConfig'], agent: unknown = { id: ExpertFixtureId.Data }) {
   const addPresetAgent = vi.fn().mockReturnValue(agent);
   registerAgentHandlers({
     getAgentManager: () => ({ addPresetAgent }),
@@ -17,7 +17,7 @@ function setup(syncOpenClawConfig: AgentHandlerDeps['syncOpenClawConfig'], agent
     syncOpenClawConfig,
   } as unknown as AgentHandlerDeps);
   const handler = vi.mocked(ipcMain.handle).mock.calls.find(([channel]) => channel === AgentIpcChannel.AddPreset)![1];
-  return { invoke: () => handler({} as Electron.IpcMainInvokeEvent, PresetAgentId.Data), addPresetAgent };
+  return { invoke: () => handler({} as Electron.IpcMainInvokeEvent, ExpertFixtureId.Data), addPresetAgent };
 }
 
 test('summon waits for OpenClaw synchronization before reporting success', async () => {
@@ -29,7 +29,7 @@ test('summon waits for OpenClaw synchronization before reporting success', async
   await Promise.resolve();
   expect(settled).toBe(false);
   resolveSync({ success: true, changed: true });
-  expect(await result).toEqual({ success: true, agent: { id: PresetAgentId.Data } });
+  expect(await result).toEqual({ success: true, agent: { id: ExpertFixtureId.Data } });
 });
 
 test('sync failure is reported and a retry can finish preparation', async () => {
@@ -47,4 +47,16 @@ test('unknown presets do not trigger synchronization or claim success', async ()
   const { invoke } = setup(sync, null);
   expect(await invoke()).toMatchObject({ success: false });
   expect(sync).not.toHaveBeenCalled();
+});
+
+test.each([
+  [AgentIpcChannel.Presets, 'getPresetAgents'],
+  [AgentIpcChannel.PresetTemplates, 'getAllPresetAgents'],
+  [AgentIpcChannel.ExpertCatalog, 'getExpertCatalog'],
+])('%s reports asynchronous catalog failures through IPC', async (channel, method) => {
+  registerAgentHandlers({
+    getAgentManager: () => ({ [method]: vi.fn().mockRejectedValue(new Error('Catalog unavailable')) }),
+  } as unknown as AgentHandlerDeps);
+  const handler = vi.mocked(ipcMain.handle).mock.calls.find(([name]) => name === channel)![1];
+  expect(await handler({} as Electron.IpcMainInvokeEvent)).toEqual({ success: false, error: 'Catalog unavailable' });
 });

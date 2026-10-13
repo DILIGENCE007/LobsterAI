@@ -2,8 +2,9 @@ import {
   AgentAvatarSvg,
   DefaultAgentAvatar,
   parseAgentAvatarIcon,
+  parseAgentAvatarImageUrl,
 } from '@shared/agent/avatar';
-import React from 'react';
+import React, { useState } from 'react';
 
 import artboardIconUrl from '../../assets/agent-avatars/artboard.svg';
 import booksIconUrl from '../../assets/agent-avatars/books.svg';
@@ -124,7 +125,8 @@ const AgentAvatarIcon: React.FC<AgentAvatarIconProps> = ({
   iconClassName = 'h-5 w-5',
   inheritColor = false,
 }) => {
-  // Stored icons are normalized to SVG avatars, so anything else falls back to the default.
+  const [failedImage, setFailedImage] = useState<string | null>(null);
+  const imageUrl = parseAgentAvatarImageUrl(value);
   const avatar = parseAgentAvatarIcon(value) ?? DefaultAgentAvatar;
   const iconUrl = getAgentAvatarSvgUrl(avatar.svg);
   const maskStyle: React.CSSProperties = {
@@ -138,6 +140,11 @@ const AgentAvatarIcon: React.FC<AgentAvatarIconProps> = ({
     maskRepeat: 'no-repeat',
     maskSize: 'contain',
   };
+
+  if (imageUrl && failedImage !== imageUrl) {
+    return <img src={imageUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer"
+      onError={() => setFailedImage(imageUrl)} className={`inline-block shrink-0 rounded-full object-cover ${className}`} />;
+  }
 
   return (
     <span className={`inline-flex shrink-0 items-center justify-center rounded-full ${inheritColor ? '' : 'text-foreground'} ${className}`}>

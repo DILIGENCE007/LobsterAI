@@ -1,5 +1,5 @@
 import { ArrowRightIcon, MagnifyingGlassIcon, SparklesIcon, XMarkIcon } from '@heroicons/react/24/outline';
-import type { ExpertCategory, PresetAgent } from '@shared/agent/presets';
+import type { ExpertCatalog, PresetAgent } from '@shared/agent/presets';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { agentService } from '../../services/agent';
@@ -10,7 +10,7 @@ import { MANAGEMENT_PAGE_TITLE_TEXT } from '../common/managementTypography';
 import Modal from '../common/Modal';
 import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
-import { EXPERT_CATEGORY_LABELS, expertText, filterExperts } from './catalog';
+import { expertText, filterExperts } from './catalog';
 import ExpertFeaturedScenarios from './ExpertFeaturedScenarios';
 
 interface ExpertPlazaViewProps {
@@ -22,11 +22,12 @@ interface ExpertPlazaViewProps {
 }
 
 const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCollapsed, onToggleSidebar, onNewChat, updateBadge }) => {
-  const [presets, setPresets] = useState<PresetAgent[]>([]);
+  const [catalog, setCatalog] = useState<ExpertCatalog | null>(null);
+  const presets = useMemo(() => catalog?.experts ?? [], [catalog]);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [query, setQuery] = useState('');
-  const [category, setCategory] = useState<ExpertCategory | null>(null);
+  const [category, setCategory] = useState<string | null>(null);
   const [tag, setTag] = useState<string | null>(null);
   const [detail, setDetail] = useState<PresetAgent | null>(null);
   const [summoning, setSummoning] = useState<string | null>(null);
@@ -35,6 +36,10 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
   const summoningRef = useRef(false);
   const t = (key: string) => i18nService.t(key);
   const language = i18nService.getLanguage();
+  const categoryName = (id: string) => {
+    const definition = catalog?.categories.find(category => category.id === id);
+    return definition ? expertText(definition.label, language) : '';
+  };
   const name = (preset: PresetAgent) => language === 'en' ? preset.nameEn : preset.name;
   const description = (preset: PresetAgent) => language === 'en' ? preset.descriptionEn : preset.description;
   const filtered = useMemo(() => filterExperts(presets, query, category, tag), [presets, query, category, tag]);
@@ -44,8 +49,8 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
     setLoading(true);
     setLoadFailed(false);
     try {
-      const catalog = await window.electron.agents.presetTemplates();
-      if (mountedRef.current) setPresets(catalog);
+      const result = await window.electron.agents.expertCatalog();
+      if (mountedRef.current) setCatalog(result);
     } catch (error) {
       console.error('[ExpertPlaza] Failed to load experts:', error);
       if (mountedRef.current) setLoadFailed(true);
@@ -121,15 +126,15 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
             <div role="alert" className="space-y-4 py-16 text-center"><p className="text-sm text-secondary">{t('expertLoadFailed')}</p><button type="button" onClick={() => void load()} className="rounded-lg border border-border px-4 py-2 text-sm hover:bg-surface-raised">{t('retry')}</button></div>
           ) : <>
             {!query.trim() && !category && !tag && presets.length > 0 && (
-              <ExpertFeaturedScenarios presets={presets} onSelect={setDetail} />
+              <ExpertFeaturedScenarios presets={presets} scenarios={catalog?.scenarios ?? []} onSelect={setDetail} />
             )}
             <section aria-labelledby="expert-list-title" className="space-y-4">
               <div className="flex items-center justify-between"><h2 id="expert-list-title" className="text-base font-semibold text-foreground">{t('expertAll')}</h2><span className="text-xs text-muted" role="status">{t('expertCount').replace('{count}', String(filtered.length))}</span></div>
               <div className="flex flex-wrap gap-2" aria-label={t('expertCategories')}>
-                {[null, ...Object.keys(EXPERT_CATEGORY_LABELS) as ExpertCategory[]].map(item => (
+                {[null, ...(catalog?.categories.map(category => category.id) ?? [])].map(item => (
                   <button key={item ?? 'all'} type="button" aria-pressed={category === item} onClick={() => { setCategory(item); setTag(null); }}
                     className={`rounded-full px-3.5 py-1.5 text-xs transition-colors ${category === item ? 'bg-primary text-white' : 'bg-surface-raised text-secondary hover:text-foreground'}`}>
-                    {item ? t(EXPERT_CATEGORY_LABELS[item]) : t('expertCategoryAll')}
+                    {item ? categoryName(item) : t('expertCategoryAll')}
                   </button>
                 ))}
                 {selectedTag && <button type="button" onClick={() => setTag(null)} className="flex items-center gap-1 rounded-full border border-primary/30 px-3 py-1 text-xs text-primary">{expertText(selectedTag, language)}<XMarkIcon className="h-3 w-3" /><span className="sr-only">{t('expertClearFilters')}</span></button>}
@@ -142,7 +147,7 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
                   <article key={preset.id} className="group flex flex-col rounded-2xl border border-border bg-surface p-5 transition-all hover:border-primary/30 hover:shadow-sm">
                     <button type="button" onClick={() => setDetail(preset)} className="flex items-center gap-3 text-left">
                       <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-surface-raised"><AgentAvatarIcon value={preset.icon} className="h-7 w-7" /></span>
-                      <span className="min-w-0"><span className="block text-sm font-semibold text-foreground group-hover:text-primary">{name(preset)}</span><span className="mt-1 block text-xs text-muted">{t(EXPERT_CATEGORY_LABELS[preset.category])}</span></span>
+                      <span className="min-w-0"><span className="block text-sm font-semibold text-foreground group-hover:text-primary">{name(preset)}</span><span className="mt-1 block text-xs text-muted">{categoryName(preset.category)}</span></span>
                     </button>
                     <p className="mb-4 mt-4 min-h-[3.75rem] text-sm leading-5 text-secondary">{description(preset)}</p>
                     <div className="mb-5 flex flex-wrap gap-1.5">{preset.tags.map(item => <button key={item.zh} type="button" onClick={() => { setTag(item.zh); setCategory(null); }} className="rounded-md bg-surface-raised px-2 py-1 text-[11px] text-secondary hover:text-primary">{expertText(item, language)}</button>)}</div>
@@ -156,7 +161,7 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
       </div>
       {detail && <Modal onClose={closeDetail} onEscape={closeDetail} className="mx-5 flex max-h-[85vh] w-full max-w-[600px] flex-col rounded-2xl border border-border bg-surface shadow-xl">
         <div role="dialog" aria-modal="true" aria-labelledby="expert-detail-title" className="overflow-y-auto p-7">
-          <div className="flex items-start gap-4"><span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-surface-raised"><AgentAvatarIcon value={detail.icon} className="h-9 w-9" /></span><div className="flex-1"><h2 id="expert-detail-title" className="text-xl font-semibold text-foreground">{name(detail)}</h2><p className="mt-1.5 text-xs text-muted">{t(EXPERT_CATEGORY_LABELS[detail.category])}</p></div><button type="button" autoFocus aria-label={t('close')} onClick={closeDetail} className="rounded-lg p-1 text-secondary hover:bg-surface-raised"><XMarkIcon className="h-5 w-5" /></button></div>
+          <div className="flex items-start gap-4"><span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-surface-raised"><AgentAvatarIcon value={detail.icon} className="h-9 w-9" /></span><div className="flex-1"><h2 id="expert-detail-title" className="text-xl font-semibold text-foreground">{name(detail)}</h2><p className="mt-1.5 text-xs text-muted">{categoryName(detail.category)}</p></div><button type="button" autoFocus aria-label={t('close')} onClick={closeDetail} className="rounded-lg p-1 text-secondary hover:bg-surface-raised"><XMarkIcon className="h-5 w-5" /></button></div>
           <p className="my-5 text-sm leading-6 text-secondary">{description(detail)}</p>
           <div className="mb-7 flex flex-wrap gap-2">{detail.tags.map(item => <span key={item.zh} className="rounded-md bg-surface-raised px-2.5 py-1 text-xs text-secondary">{expertText(item, language)}</span>)}</div>
           <h3 className="mb-3 text-sm font-semibold text-foreground">{t('expertExampleHeading')}</h3>

@@ -1,28 +1,14 @@
-import { ExpertCategory, PresetAgentId } from '@shared/agent/presets';
+import { createExpertCatalogFixture, ExpertFixtureCategory, ExpertFixtureId } from '@shared/agent/expertCatalogFixture';
 import { expect, test } from 'vitest';
 
-import { EXPERT_SCENARIOS, filterExperts } from '../renderer/components/experts/catalog';
-import { PRESET_AGENTS } from './presetAgents';
+import { expertText, filterExperts } from '../renderer/components/experts/catalog';
 
-test('searches localized names, descriptions and tags together with category filters', () => {
-  expect(filterExperts(PRESET_AGENTS, '  MINI app ', null, null).map(expert => expert.id)).toContain(PresetAgentId.MiniApp);
-  expect(filterExperts(PRESET_AGENTS, '表格', ExpertCategory.Research, null).map(expert => expert.id)).toContain(PresetAgentId.Data);
-  expect(filterExperts(PRESET_AGENTS, '表格', ExpertCategory.Life, null)).toHaveLength(0);
-  expect(filterExperts(PRESET_AGENTS, '', null, '内容策划').length).toBeGreaterThan(1);
-  expect(filterExperts(PRESET_AGENTS, 'no-matching-expert', null, null)).toEqual([]);
-});
-
-test('every featured expert is discoverable and has an example question', () => {
-  for (const scenario of EXPERT_SCENARIOS) {
-    for (const id of scenario.ids) {
-      expect(PRESET_AGENTS.find(expert => expert.id === id)?.starterPrompts.length).toBeGreaterThan(0);
-    }
-  }
-});
-
-test('platform and campus searches lead to the relevant specialist', () => {
-  expect(filterExperts(PRESET_AGENTS, '抖音', ExpertCategory.Content, null).map(expert => expert.id)).toContain(PresetAgentId.Douyin);
-  expect(filterExperts(PRESET_AGENTS, '抖音', ExpertCategory.Games, null).map(expert => expert.id)).toContain(PresetAgentId.DouyinGame);
-  expect(filterExperts(PRESET_AGENTS, '活动', ExpertCategory.Campus, null).map(expert => expert.id)).toContain(PresetAgentId.CampusEvent);
-  expect(filterExperts(PRESET_AGENTS, 'PowerPoint', ExpertCategory.Office, null).map(expert => expert.id)).toContain(PresetAgentId.Slides);
+test('searches remotely configured names, descriptions and tags with arbitrary category IDs', () => {
+  const { experts } = createExpertCatalogFixture();
+  expect(filterExperts(experts, '  MINI app ', null, null).map(expert => expert.id)).toEqual([ExpertFixtureId.App]);
+  expect(filterExperts(experts, '表格', ExpertFixtureCategory.Research, null).map(expert => expert.id)).toEqual([ExpertFixtureId.Data]);
+  expect(filterExperts(experts, '表格', ExpertFixtureCategory.Development, null)).toHaveLength(0);
+  expect(filterExperts(experts, '', null, '原型开发').map(expert => expert.id)).toEqual([ExpertFixtureId.App]);
+  expect(filterExperts(experts, 'no-matching-expert', null, null)).toEqual([]);
+  expect(expertText({ zh: '远程分类', en: 'Remote category' }, 'en')).toBe('Remote category');
 });

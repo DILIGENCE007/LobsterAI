@@ -8,6 +8,7 @@ import type {
   ActivityResult,
   ActivitySlotResponse,
 } from '../../shared/activity/constants';
+import type { ExpertCatalog } from '../../shared/agent/presets';
 import type { AppUpdateActiveWorkloads, AppUpdateCheckResult, AppUpdateRuntimeState } from '../../shared/appUpdate/constants';
 import type { MarkdownFileBridge } from '../../shared/artifactPreview/markdownEditing';
 import type { ReviewScopeRequest } from '../../shared/artifactPreview/reviewScopes';
@@ -854,6 +855,7 @@ interface IElectronAPI {
     delete: (id: string) => Promise<boolean>;
     presets: () => Promise<PresetAgent[]>;
     presetTemplates: () => Promise<PresetAgent[]>;
+    expertCatalog: () => Promise<ExpertCatalog>;
     addPreset: (presetId: string) => Promise<Agent>;
   };
   api: {

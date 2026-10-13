@@ -1,5 +1,5 @@
 import { AgentSource } from '@shared/agent/constants';
-import { PresetAgentId } from '@shared/agent/presets';
+import { ExpertFixtureId } from '@shared/agent/expertCatalogFixture';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { store } from '../store';
@@ -27,7 +27,7 @@ const expert: Agent = {
   id: 'expert-1', name: 'My edited expert', description: '', systemPrompt: 'My prompt', identity: '',
   model: 'provider/model', thinkingLevel: '', workingDirectory: '', icon: '', skillIds: ['docx'],
   subagentAllowAgentIds: [], enabled: true, pinned: false, isDefault: false, source: AgentSource.Preset,
-  presetId: PresetAgentId.Writer, createdAt: 1, updatedAt: 1,
+  presetId: ExpertFixtureId.Data, createdAt: 1, updatedAt: 1,
 };
 
 beforeEach(() => {

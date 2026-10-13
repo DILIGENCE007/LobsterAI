@@ -1,17 +1,17 @@
 import { ArrowLeftIcon, ArrowRightIcon, SparklesIcon } from '@heroicons/react/24/outline';
-import type { PresetAgent } from '@shared/agent/presets';
+import type { ExpertScenario, PresetAgent } from '@shared/agent/presets';
 import React, { useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
 import AgentAvatarIcon from '../agent/AgentAvatarIcon';
-import { EXPERT_SCENARIOS } from './catalog';
+import { EXPERT_SCENARIO_STYLES, expertText } from './catalog';
 
-const ExpertFeaturedScenarios: React.FC<{ presets: PresetAgent[]; onSelect: (preset: PresetAgent) => void }> = ({ presets, onSelect }) => {
+const ExpertFeaturedScenarios: React.FC<{ presets: PresetAgent[]; scenarios: ExpertScenario[]; onSelect: (preset: PresetAgent) => void }> = ({ presets, scenarios, onSelect }) => {
   const railRef = useRef<HTMLDivElement>(null);
   const [canBack, setCanBack] = useState(false);
   const [canNext, setCanNext] = useState(false);
   const t = (key: string) => i18nService.t(key);
-  const isEn = i18nService.getLanguage() === 'en';
+  const language = i18nService.getLanguage();
 
   useEffect(() => {
     const rail = railRef.current;
@@ -25,7 +25,9 @@ const ExpertFeaturedScenarios: React.FC<{ presets: PresetAgent[]; onSelect: (pre
     const observer = new ResizeObserver(update);
     observer.observe(rail);
     return () => { rail.removeEventListener('scroll', update); observer.disconnect(); };
-  }, []);
+  }, [scenarios]);
+
+  if (!scenarios.length) return null;
 
   return <section aria-labelledby="expert-featured-title">
     <div className="mb-4 flex items-center justify-between gap-3">
@@ -36,13 +38,13 @@ const ExpertFeaturedScenarios: React.FC<{ presets: PresetAgent[]; onSelect: (pre
       </div>
     </div>
     <div ref={railRef} tabIndex={0} aria-label={t('expertFeatured')} className="grid snap-x snap-mandatory auto-cols-[minmax(250px,calc((100%_-_2rem)/3))] grid-flow-col gap-4 overflow-x-auto overscroll-x-contain pb-2 outline-none focus-visible:ring-2 focus-visible:ring-primary/30">
-      {EXPERT_SCENARIOS.map(scenario => <div key={scenario.titleKey} className={`snap-start rounded-2xl border border-border bg-gradient-to-br p-5 ${scenario.className}`}>
-        <h3 className="font-semibold text-foreground">{t(scenario.titleKey)}</h3>
-        <p className="mb-4 mt-1 min-h-8 text-xs leading-4 text-secondary">{t(scenario.descriptionKey)}</p>
-        <div className="space-y-1">{scenario.ids.map(id => presets.find(preset => preset.id === id)).filter((preset): preset is PresetAgent => Boolean(preset)).map(preset => (
+      {scenarios.map(scenario => <div key={scenario.id} className={`snap-start rounded-2xl border border-border bg-gradient-to-br p-5 ${EXPERT_SCENARIO_STYLES[scenario.accent]}`}>
+        <h3 className="font-semibold text-foreground">{expertText(scenario.title, language)}</h3>
+        <p className="mb-4 mt-1 min-h-8 text-xs leading-4 text-secondary">{expertText(scenario.description, language)}</p>
+        <div className="space-y-1">{scenario.expertIds.map(id => presets.find(preset => preset.id === id)).filter((preset): preset is PresetAgent => Boolean(preset)).map(preset => (
           <button key={preset.id} type="button" onClick={() => onSelect(preset)} className="group flex w-full items-center gap-3 rounded-lg py-2 text-left hover:bg-surface/70">
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-surface/80"><AgentAvatarIcon value={preset.icon} className="h-5 w-5" /></span>
-            <span className="min-w-0 flex-1 truncate text-sm text-foreground">{isEn ? preset.nameEn : preset.name}</span><ArrowRightIcon className="mr-1 h-3.5 w-3.5 shrink-0 text-muted" />
+            <span className="min-w-0 flex-1 truncate text-sm text-foreground">{language === 'en' ? preset.nameEn : preset.name}</span><ArrowRightIcon className="mr-1 h-3.5 w-3.5 shrink-0 text-muted" />
           </button>
         ))}</div>
       </div>)}

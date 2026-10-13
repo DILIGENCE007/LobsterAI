@@ -383,6 +383,7 @@ import {
 } from './libs/dataMigration/dataMigrationService';
 import { DesktopNotificationManager } from './libs/desktopNotificationManager';
 import {
+  getExpertStoreUrl,
   getHtmlSharePublicBaseUrl,
   getKitStoreUrl,
   getPortalTasksUrl,
@@ -395,6 +396,7 @@ import {
   resolveEnterpriseConfigPath,
   syncEnterpriseConfig,
 } from './libs/enterpriseConfigSync';
+import { ExpertStore } from './libs/expertStore';
 import {
   createOfficePreviewSession,
   createPreviewSession,
@@ -2560,7 +2562,11 @@ const getCoworkStore = () => {
 let agentManager: AgentManager | null = null;
 const getAgentManager = () => {
   if (!agentManager) {
-    agentManager = new AgentManager(getCoworkStore());
+    const expertStore = new ExpertStore({
+      getEndpoint: getExpertStoreUrl,
+      cacheDirectory: path.join(app.getPath('userData'), 'expert-store'),
+    });
+    agentManager = new AgentManager(getCoworkStore(), () => expertStore.getCatalog());
   }
   return agentManager;
 };

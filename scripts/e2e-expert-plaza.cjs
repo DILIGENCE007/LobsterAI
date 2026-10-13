@@ -1,6 +1,7 @@
 'use strict';
 
-// npm run build first. Requires Playwright (or PLAYWRIGHT_MODULE_PATH pointing
+// npm run build first, or use EXPERT_E2E_DEV_SERVER with a running Vite server.
+// Requires Playwright (or PLAYWRIGHT_MODULE_PATH pointing
 // at an existing installation). Uses a fresh profile, a local model fixture,
 // and hidden Electron windows. No OS keyboard/mouse input or real model calls.
 const assert = require('node:assert/strict');
@@ -10,6 +11,7 @@ const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { setTimeout: delay } = require('node:timers/promises');
 const { _electron } = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright');
+const { CoworkUiEvent } = require('../src/renderer/components/cowork/constants.ts');
 
 const root = path.resolve(__dirname, '..');
 const output = path.resolve(process.env.EXPERT_E2E_OUTPUT || path.join(root, 'artifacts', `expert-plaza-e2e-${Date.now()}`));
@@ -100,6 +102,7 @@ async function run() {
   const set = (key, value) => database.prepare('INSERT INTO kv VALUES(?,?,?)').run(key, JSON.stringify(value), Date.now());
   set('privacy_agreed', true);
   set('app_config', {
+    app: { testMode: true },
     language: 'zh', theme: 'light', usageAnalyticsEnabled: false, useSystemProxy: false,
     api: { key: 'local-fixture', baseUrl },
     model: { defaultModel: model.id, defaultModelProvider: 'custom_0', availableModels: [model] },
@@ -112,6 +115,7 @@ async function run() {
     "const electron = require('electron');",
     'const { app, BrowserWindow } = electron;',
     `app.setAppPath(${JSON.stringify(root)});`,
+    `app.setVersion(${JSON.stringify(require('../package.json').version)});`,
     "for (const method of ['show', 'showInactive', 'focus', 'moveTop']) BrowserWindow.prototype[method] = function () {};",
     'app.focus = () => {};',
     "app.on('browser-window-created', (_event, window) => window.setSkipTaskbar(true));",
@@ -121,7 +125,9 @@ async function run() {
   application = await _electron.launch({
     executablePath: require('electron'),
     args: [bootstrap, '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'], cwd: root,
-    env: { ...process.env, NODE_ENV: 'production', LOBSTERAI_DEV_USER_DATA_DIR: profile }, timeout: 120000,
+    env: { ...process.env, NODE_ENV: process.env.EXPERT_E2E_DEV_SERVER ? 'development' : 'production',
+      ...(process.env.EXPERT_E2E_DEV_SERVER ? { ELECTRON_START_URL: process.env.EXPERT_E2E_DEV_SERVER } : {}),
+      LOBSTERAI_DEV_USER_DATA_DIR: profile }, timeout: 120000,
   });
   const log = fs.createWriteStream(path.join(output, 'electron.log'));
   application.process().stdout?.pipe(log, { end: false });
@@ -142,6 +148,21 @@ async function run() {
   const catalog = await page.evaluate(() => window.electron.agents.presetTemplates());
   assert(catalog.length >= 60, 'Expanded catalog must cover the requested scenarios');
   await waitFor(async () => await page.locator('article').count() === catalog.length, 'all expert cards');
+  const remoteCatalog = await page.evaluate(() => window.electron.agents.expertCatalog());
+  assert(remoteCatalog.version && remoteCatalog.schemaVersion === 1);
+  assert(fs.readdirSync(path.join(profile, 'expert-store')).some(file => file.endsWith('.json')), 'Remote catalog must persist to this test profile');
+  const remoteAvatar = catalog.find(expert => expert.icon.startsWith('https:'));
+  assert(remoteAvatar, 'Test catalog must include a CDN avatar sample');
+  await searchForAvatar(remoteAvatar);
+  async function searchForAvatar(expert) {
+    const search = page.getByRole('textbox', { name: '搜索专家、场景或标签' });
+    await search.fill(expert.name);
+    const avatar = page.locator('article img').first();
+    await avatar.waitFor();
+    await waitFor(() => avatar.evaluate(img => img.complete && img.naturalWidth === 256), '256px CDN avatar decoded');
+    await search.fill('');
+  }
+  passed(`remote catalog ${remoteCatalog.version}, persistent cache and decoded CDN avatar`);
   assert.equal(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible())), false, 'Test windows must remain hidden');
   await screenshot('01-plaza-light');
   const featured = page.getByRole('region', { name: '精选场景', exact: true });
@@ -229,7 +250,13 @@ async function run() {
 
   await page.evaluate(() => window.electron.agents.create({ name: 'E2E 自定义助手', systemPrompt: 'CUSTOM-AGENT-CHECK', model: 'custom_0/expert-e2e', skillIds: ['docx'] }));
   await page.reload();
+  // New-task navigation clears/focuses the composer on its next timer tick.
+  // Wait for that UI transition before injecting text at automation speed.
+  await page.evaluate(eventName => {
+    window.__expertNewChatReady = new Promise(resolve => window.addEventListener(eventName, () => resolve(), { once: true }));
+  }, CoworkUiEvent.FocusInput);
   await page.locator('[data-onboarding-target="new-task"]').click();
+  await page.evaluate(() => window.__expertNewChatReady);
   const carriedDraft = '请保留这段尚未发送的内容，帮我整理下周的活动安排。';
   await page.locator('textarea').first().fill(carriedDraft);
   const sessionCount = (await page.evaluate(() => window.electron.cowork.listSessions())).sessions.length;
@@ -242,6 +269,7 @@ async function run() {
   await page.getByRole('menuitemradio', { name: '我的小程序顾问', exact: true }).waitFor();
   await page.getByRole('menuitemradio', { name: 'E2E 自定义助手', exact: true }).waitFor();
   await screenshot('09-installed-expert-picker', { keepPointer: true });
+  assert.equal(await page.locator('textarea').first().inputValue(), carriedDraft, 'Draft exists before switching experts');
   await page.getByRole('textbox', { name: '搜索已有专家' }).fill('自定义');
   assert.equal(await page.getByRole('menuitemradio').count(), 1);
   await page.getByRole('menuitemradio', { name: 'E2E 自定义助手', exact: true }).click();
@@ -293,6 +321,12 @@ async function run() {
   assert.equal(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(window => window.isVisible())), false);
   assert.deepEqual(errors, [], 'No uncaught renderer exceptions');
   passed('narrow layout, English, dark theme and no uncaught renderer errors');
+
+  const avatarAgent = await page.evaluate(id => window.electron.agents.addPreset(id), remoteAvatar.id);
+  assert.equal(avatarAgent.icon, remoteAvatar.icon, 'Image URL must survive Agent storage normalization');
+  const persistedAvatar = (await page.evaluate(() => window.electron.agents.list())).find(agent => agent.id === avatarAgent.id);
+  assert.equal(persistedAvatar.icon, remoteAvatar.icon);
+  passed('a remote avatar survives creating and reading a normal OpenClaw Agent');
 }
 
 run().then(() => {

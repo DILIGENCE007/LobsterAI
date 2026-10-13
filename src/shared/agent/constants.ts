@@ -21,6 +21,7 @@ export const AgentIpcChannel = {
   CleanupLegacyIdentityBlock: 'agents:cleanupLegacyIdentityBlock',
   Presets: 'agents:presets',
   PresetTemplates: 'agents:presetTemplates',
+  ExpertCatalog: 'agents:expertCatalog',
   AddPreset: 'agents:addPreset',
 } as const;
 
