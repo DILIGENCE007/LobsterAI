@@ -86,7 +86,7 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
   const summonButton = (preset: PresetAgent, large = false) => (
     <button type="button" disabled={summoning !== null} onClick={() => void summon(preset)}
       aria-label={`${t('expertSummon')} ${name(preset)}`}
-      className={`inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary text-white font-medium transition-colors hover:bg-primary-hover disabled:opacity-50 ${large ? 'px-5 py-2.5 text-sm' : 'px-3 py-1.5 text-xs'}`}>
+      className={`pointer-events-auto relative z-10 inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary text-white font-medium transition-colors hover:bg-primary-hover disabled:opacity-50 ${large ? 'px-5 py-2.5 text-sm' : 'px-3 py-1.5 text-xs'}`}>
       <SparklesIcon className="h-3.5 w-3.5" />
       {summoning === preset.id ? t('expertSummoning') : t('expertSummon')}
     </button>
@@ -144,14 +144,15 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
                 <div className="rounded-2xl border border-dashed border-border py-16 text-center"><MagnifyingGlassIcon className="mx-auto mb-3 h-6 w-6 text-muted" /><p className="text-sm text-secondary">{t('expertEmpty')}</p><button type="button" onClick={() => { setQuery(''); setCategory(null); setTag(null); }} className="mt-3 text-sm text-primary hover:underline">{t('expertClearFilters')}</button></div>
               ) : <div className="grid grid-cols-1 gap-4 min-[900px]:grid-cols-2 min-[1280px]:grid-cols-3">
                 {filtered.map(preset => (
-                  <article key={preset.id} className="group flex flex-col rounded-2xl border border-border bg-surface p-5 transition-all hover:border-primary/30 hover:shadow-sm">
-                    <button type="button" onClick={() => setDetail(preset)} className="flex items-center gap-3 text-left">
-                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-surface-raised"><AgentAvatarIcon value={preset.icon} className="h-7 w-7" /></span>
+                  <article key={preset.id} className="group relative flex flex-col rounded-2xl border border-border bg-surface p-5 transition-all hover:border-primary/30 hover:shadow-sm">
+                    <button type="button" onClick={() => setDetail(preset)} aria-label={`${name(preset)} · ${t('expertViewExamples')}`} className="absolute inset-0 cursor-pointer rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background" />
+                    <div className="pointer-events-none flex items-center gap-3 text-left">
+                      <AgentAvatarIcon value={preset.icon} expertFallback className="h-12 w-12" iconClassName="h-7 w-7" />
                       <span className="min-w-0"><span className="block text-sm font-semibold text-foreground group-hover:text-primary">{name(preset)}</span><span className="mt-1 block text-xs text-muted">{categoryName(preset.category)}</span></span>
-                    </button>
-                    <p className="mb-4 mt-4 min-h-[3.75rem] text-sm leading-5 text-secondary">{description(preset)}</p>
-                    <div className="mb-5 flex flex-wrap gap-1.5">{preset.tags.map(item => <button key={item.zh} type="button" onClick={() => { setTag(item.zh); setCategory(null); }} className="rounded-md bg-surface-raised px-2 py-1 text-[11px] text-secondary hover:text-primary">{expertText(item, language)}</button>)}</div>
-                    <div className="mt-auto flex items-center justify-between gap-3 border-t border-border/60 pt-3"><button type="button" onClick={() => setDetail(preset)} className="text-xs text-secondary hover:text-foreground">{t('expertViewExamples')}</button>{summonButton(preset)}</div>
+                    </div>
+                    <p className="pointer-events-none mb-4 mt-4 min-h-[3.75rem] text-sm leading-5 text-secondary">{description(preset)}</p>
+                    <div className="pointer-events-none mb-5 flex flex-wrap gap-1.5">{preset.tags.map(item => <span key={item.zh} className="rounded-md bg-surface-raised px-2 py-1 text-[11px] text-secondary">{expertText(item, language)}</span>)}</div>
+                    <div className="pointer-events-none mt-auto flex items-center justify-between gap-3 border-t border-border/60 pt-3"><span className="text-xs text-secondary group-hover:text-foreground">{t('expertViewExamples')}</span>{summonButton(preset)}</div>
                   </article>
                 ))}
               </div>}
@@ -161,9 +162,9 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
       </div>
       {detail && <Modal onClose={closeDetail} onEscape={closeDetail} className="mx-5 flex max-h-[85vh] w-full max-w-[600px] flex-col rounded-2xl border border-border bg-surface shadow-xl">
         <div role="dialog" aria-modal="true" aria-labelledby="expert-detail-title" className="overflow-y-auto p-7">
-          <div className="flex items-start gap-4"><span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-surface-raised"><AgentAvatarIcon value={detail.icon} className="h-9 w-9" /></span><div className="flex-1"><h2 id="expert-detail-title" className="text-xl font-semibold text-foreground">{name(detail)}</h2><p className="mt-1.5 text-xs text-muted">{categoryName(detail.category)}</p></div><button type="button" autoFocus aria-label={t('close')} onClick={closeDetail} className="rounded-lg p-1 text-secondary hover:bg-surface-raised"><XMarkIcon className="h-5 w-5" /></button></div>
+          <div className="flex items-start gap-4"><AgentAvatarIcon value={detail.icon} expertFallback className="h-16 w-16" iconClassName="h-9 w-9" /><div className="flex-1"><h2 id="expert-detail-title" className="text-xl font-semibold text-foreground">{name(detail)}</h2><p className="mt-1.5 text-xs text-muted">{categoryName(detail.category)}</p></div><button type="button" autoFocus aria-label={t('close')} onClick={closeDetail} className="rounded-lg p-1 text-secondary hover:bg-surface-raised"><XMarkIcon className="h-5 w-5" /></button></div>
           <p className="my-5 text-sm leading-6 text-secondary">{description(detail)}</p>
-          <div className="mb-7 flex flex-wrap gap-2">{detail.tags.map(item => <span key={item.zh} className="rounded-md bg-surface-raised px-2.5 py-1 text-xs text-secondary">{expertText(item, language)}</span>)}</div>
+          <div className="mb-7 flex flex-wrap gap-2">{detail.tags.map(item => <button type="button" key={item.zh} title={t('expertFilterByTag').replace('{tag}', expertText(item, language))} onClick={() => { setTag(item.zh); setCategory(null); closeDetail(); }} className="rounded-md bg-surface-raised px-2.5 py-1 text-xs text-secondary hover:text-primary">{expertText(item, language)}</button>)}</div>
           <h3 className="mb-3 text-sm font-semibold text-foreground">{t('expertExampleHeading')}</h3>
           <div className="space-y-3">{detail.starterPrompts.map(prompt => <button type="button" key={prompt.zh} disabled={summoning !== null} onClick={() => void summon(detail, expertText(prompt, language))} className="flex w-full items-center gap-4 rounded-xl border border-border p-4 text-left text-sm leading-6 text-secondary transition-colors hover:border-primary/40 hover:bg-primary/5 disabled:opacity-50"><span className="flex-1">{expertText(prompt, language)}</span><ArrowRightIcon className="h-4 w-4 shrink-0 text-muted" /></button>)}</div>
           <div className="mt-5">{errorNotice}</div>

@@ -1,4 +1,4 @@
-import { AgentId, DefaultAgentProfile, LegacyAgentName } from '@shared/agent';
+import { AgentId, AgentSource, DefaultAgentProfile, LegacyAgentName } from '@shared/agent';
 
 import { i18nService } from '../services/i18n';
 
@@ -10,6 +10,10 @@ interface AgentDisplaySource {
 
 export const isDefaultAgentId = (agentId?: string | null): boolean => {
   return agentId?.trim() === AgentId.Main;
+};
+
+export const isPresetExpert = (agent?: { id: string; source?: AgentSource } | null): boolean => {
+  return Boolean(agent && !isDefaultAgentId(agent.id) && agent.source === AgentSource.Preset);
 };
 
 export const isDefaultAgentProfileName = (agent: Pick<AgentDisplaySource, 'id' | 'name'>): boolean => {

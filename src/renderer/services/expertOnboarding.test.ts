@@ -3,7 +3,7 @@ import { ExpertFixtureId } from '@shared/agent/expertCatalogFixture';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { store } from '../store';
-import { setAgents } from '../store/slices/agentSlice';
+import { setAgents, setCurrentAgentId, setSidebarRevealAgentId } from '../store/slices/agentSlice';
 import {
   clearCurrentSession,
   setDraftAttachments,
@@ -32,6 +32,8 @@ const expert: Agent = {
 
 beforeEach(() => {
   store.dispatch(setAgents([]));
+  store.dispatch(setCurrentAgentId('main'));
+  store.dispatch(setSidebarRevealAgentId(null));
   vi.stubGlobal('window', { electron: { agents: { addPreset: vi.fn().mockResolvedValue(expert) } } });
 });
 
@@ -51,6 +53,7 @@ test('switching an installed expert carries the latest text and preserves draft 
 
   const state = store.getState();
   expect(state.agent.currentAgentId).toBe(expert.id);
+  expect(state.agent.sidebarRevealAgentId).toBe(expert.id);
   expect(state.cowork.currentSession).toBeNull();
   expect(state.cowork.sessions).toEqual(sessions);
   expect(state.cowork.draftPrompts.__home__).toBe('Latest text, not yet persisted');
@@ -68,6 +71,20 @@ test('a removed or disabled expert cannot change the active draft', () => {
   expect(switchExpertInDraft(expert.id, 'Do not replace')).toBe(false);
   expect(switchExpertInDraft('missing-expert', 'Do not replace')).toBe(false);
   expect(store.getState()).toBe(before);
+});
+
+test('summoning the current expert again requests a new reveal after the sidebar consumed the first', () => {
+  store.dispatch(setAgents([expert]));
+  openExpertDraft(expert, 'First draft');
+  store.dispatch(setSidebarRevealAgentId(null));
+
+  openExpertDraft(expert, 'Another draft');
+  expect(store.getState().agent.sidebarRevealAgentId).toBe(expert.id);
+  expect(store.getState().cowork.draftPrompts.__home__).toBe('Another draft');
+
+  store.dispatch(setSidebarRevealAgentId(null));
+  expect(switchExpertInDraft(expert.id, 'Keep my draft')).toBe(true);
+  expect(store.getState().agent.sidebarRevealAgentId).toBe(expert.id);
 });
 
 test('repeated preparation upserts the existing agent instead of duplicating it', async () => {
@@ -93,6 +110,7 @@ test('summon opens a clean expert draft without starting or stopping tasks', asy
 
   const state = store.getState();
   expect(state.agent.currentAgentId).toBe(expert.id);
+  expect(state.agent.sidebarRevealAgentId).toBe(expert.id);
   expect(state.cowork.currentSession).toBeNull();
   expect(state.cowork.sessions).toEqual([backgroundTask]);
   expect(state.cowork.draftPrompts['running-task']).toBe('Keep this task draft');

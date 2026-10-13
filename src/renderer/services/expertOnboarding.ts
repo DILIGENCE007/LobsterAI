@@ -1,4 +1,5 @@
 import { store } from '../store';
+import { setSidebarRevealAgentId } from '../store/slices/agentSlice';
 import {
   clearDraftAttachments,
   clearDraftBrowserAnnotationBatches,
@@ -23,6 +24,7 @@ export function switchExpertInDraft(agentId: string, prompt: string): boolean {
   if (!agent) return false;
   coworkService.clearSession();
   agentService.switchAgent(agent.id);
+  store.dispatch(setSidebarRevealAgentId(agent.id));
   store.dispatch(setDraftSkillIds({ draftKey: EXPERT_HOME_DRAFT_KEY, skillIds: agent.skillIds }));
   store.dispatch(setDraftPrompt({ sessionId: EXPERT_HOME_DRAFT_KEY, draft: prompt }));
   return true;
@@ -32,6 +34,7 @@ export function switchExpertInDraft(agentId: string, prompt: string): boolean {
 export function openExpertDraft(agent: Agent, prompt: string): void {
   coworkService.clearSession(); // Invalidate any outstanding session navigation.
   agentService.switchAgent(agent.id);
+  store.dispatch(setSidebarRevealAgentId(agent.id));
   store.dispatch(clearSelection());
   store.dispatch(clearActiveKits());
   store.dispatch(clearDraftAttachments(EXPERT_HOME_DRAFT_KEY));

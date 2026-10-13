@@ -5,7 +5,7 @@ import { useSelector } from 'react-redux';
 
 import { i18nService } from '../../services/i18n';
 import type { RootState } from '../../store';
-import { getAgentDisplayName } from '../../utils/agentDisplay';
+import { getAgentDisplayName, isPresetExpert } from '../../utils/agentDisplay';
 import AgentAvatarIcon from '../agent/AgentAvatarIcon';
 import ExpertIcon from '../icons/ExpertIcon';
 
@@ -55,7 +55,7 @@ const ExpertPickerMenuItem: React.FC<ExpertPickerMenuItemProps> = ({ disabled, o
             {matching.length === 0 ? <p className="px-3 py-6 text-center text-xs text-muted">{t('expertInstalledEmpty')}</p> : matching.map(agent => (
               <button key={agent.id} type="button" role="menuitemradio" aria-checked={agent.id === currentAgentId} onClick={() => onSelect(agent.id)}
                 className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm text-foreground hover:bg-surface-raised focus:bg-surface-raised">
-                <AgentAvatarIcon value={agent.icon} className="h-7 w-7 shrink-0" iconClassName="h-5 w-5" />
+                <AgentAvatarIcon value={agent.icon} expertFallback={isPresetExpert(agent)} className="h-7 w-7 shrink-0" iconClassName="h-5 w-5" />
                 <span className="min-w-0 flex-1 truncate">{getAgentDisplayName(agent)}</span>
                 {agent.id === currentAgentId && <CheckIcon className="h-4 w-4 shrink-0 text-primary" />}
               </button>

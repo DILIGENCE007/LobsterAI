@@ -43,7 +43,7 @@ const ExpertFeaturedScenarios: React.FC<{ presets: PresetAgent[]; scenarios: Exp
         <p className="mb-4 mt-1 min-h-8 text-xs leading-4 text-secondary">{expertText(scenario.description, language)}</p>
         <div className="space-y-1">{scenario.expertIds.map(id => presets.find(preset => preset.id === id)).filter((preset): preset is PresetAgent => Boolean(preset)).map(preset => (
           <button key={preset.id} type="button" onClick={() => onSelect(preset)} className="group flex w-full items-center gap-3 rounded-lg py-2 text-left hover:bg-surface/70">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-surface/80"><AgentAvatarIcon value={preset.icon} className="h-5 w-5" /></span>
+            <AgentAvatarIcon value={preset.icon} expertFallback className="h-8 w-8" iconClassName="h-5 w-5" />
             <span className="min-w-0 flex-1 truncate text-sm text-foreground">{language === 'en' ? preset.nameEn : preset.name}</span><ArrowRightIcon className="mr-1 h-3.5 w-3.5 shrink-0 text-muted" />
           </button>
         ))}</div>

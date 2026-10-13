@@ -12,6 +12,18 @@ const profile = path.resolve('fixtures', 'expert profile');
 const entryPoint = path.resolve('fixtures', 'LobsterAI');
 
 describe('development protocol launch context', () => {
+  test('ordinary source launches retain their existing environment and defaults without protocol arguments', () => {
+    expect(resolveDevelopmentLaunchContext({ isPackaged: false, environment: {} })).toEqual({
+      userDataDir: undefined,
+      isDev: false,
+      serverUrl: 'http://localhost:5175',
+    });
+    expect(resolveDevelopmentLaunchContext({
+      isPackaged: false,
+      environment: { NODE_ENV: 'development', ELECTRON_START_URL: 'http://localhost:5190' },
+    })).toEqual({ userDataDir: undefined, isDev: true, serverUrl: 'http://localhost:5190' });
+  });
+
   test('preserves the profile and Vite server when the OS drops the parent environment', () => {
     const original = resolveDevelopmentLaunchContext({
       isPackaged: false,

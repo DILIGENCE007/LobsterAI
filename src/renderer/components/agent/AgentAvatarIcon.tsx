@@ -17,6 +17,7 @@ import diagnosisIconUrl from '../../assets/agent-avatars/diagnosis.svg';
 import documentIconUrl from '../../assets/agent-avatars/document.svg';
 import entertainmentIconUrl from '../../assets/agent-avatars/entertainment.svg';
 import experimentIconUrl from '../../assets/agent-avatars/experiment.svg';
+import expertDefaultAvatarUrl from '../../assets/agent-avatars/expert-default.webp';
 import fitnessIconUrl from '../../assets/agent-avatars/fitness.svg';
 import folderIconUrl from '../../assets/agent-avatars/folder.svg';
 import graduationCapIconUrl from '../../assets/agent-avatars/graduation-cap.svg';
@@ -117,6 +118,8 @@ interface AgentAvatarIconProps {
   iconClassName?: string;
   /** Tint the SVG avatar with the parent's text color instead of the foreground color. */
   inheritColor?: boolean;
+  /** Opt in for preset experts only; existing custom and main avatars stay unchanged. */
+  expertFallback?: boolean;
 }
 
 const AgentAvatarIcon: React.FC<AgentAvatarIconProps> = ({
@@ -124,6 +127,7 @@ const AgentAvatarIcon: React.FC<AgentAvatarIconProps> = ({
   className = 'h-10 w-10',
   iconClassName = 'h-5 w-5',
   inheritColor = false,
+  expertFallback = false,
 }) => {
   const [failedImage, setFailedImage] = useState<string | null>(null);
   const imageUrl = parseAgentAvatarImageUrl(value);
@@ -144,6 +148,11 @@ const AgentAvatarIcon: React.FC<AgentAvatarIconProps> = ({
   if (imageUrl && failedImage !== imageUrl) {
     return <img src={imageUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer"
       onError={() => setFailedImage(imageUrl)} className={`inline-block shrink-0 rounded-full object-cover ${className}`} />;
+  }
+
+  if (expertFallback && (imageUrl || avatar.svg === AgentAvatarSvg.Lobster)) {
+    return <img src={expertDefaultAvatarUrl} alt="" decoding="async"
+      className={`inline-block shrink-0 rounded-full object-cover ${className}`} />;
   }
 
   return (
