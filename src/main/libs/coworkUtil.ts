@@ -3,7 +3,6 @@ import { app } from 'electron';
 import { chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync, writeFileSync } from 'fs';
 import { delimiter, dirname, join } from 'path';
 
-import { buildSessionTitleFromInput } from '../../common/sessionTitle';
 import { COWORK_TEMP_DIR_NAME } from '../../shared/cowork/constants';
 import { buildEnvForConfig, getCurrentApiConfig, resolveCurrentApiConfig, resolveRawApiConfig } from './claudeSettings';
 import { coworkLog } from './coworkLogger';
@@ -1418,7 +1417,6 @@ export function ensureCoworkTempDir(cwd: string): string {
   return tempDir;
 }
 
-const SESSION_TITLE_FALLBACK = 'New Chat';
 const COWORK_MODEL_PROBE_TIMEOUT_MS = 20000;
 
 type SessionTitleApiConfig =
@@ -1544,11 +1542,4 @@ export async function probeCoworkModelReadiness(
   } finally {
     clearTimeout(timeoutId);
   }
-}
-
-export async function generateSessionTitle(
-  userIntent: string | null,
-  defaultTitle = SESSION_TITLE_FALLBACK
-): Promise<string> {
-  return buildSessionTitleFromInput(userIntent, defaultTitle);
 }

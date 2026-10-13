@@ -2490,11 +2490,21 @@ class CoworkService {
     }
   }
 
-  async generateSessionTitle(prompt: string | null): Promise<string | null> {
-    if (!window.electron?.generateSessionTitle) {
-      return null;
+  async generateSessionTitle(sessionId: string, text: string, expectedTitle: string): Promise<void> {
+    if (!text || !window.electron?.generateSessionTitle) return;
+    const accountGeneration = store.getState().auth.accountGeneration;
+    try {
+      const title = await window.electron.generateSessionTitle({ sessionId, text, expectedTitle });
+      const state = store.getState();
+      const session = state.cowork.currentSession?.id === sessionId
+        ? state.cowork.currentSession
+        : state.cowork.sessions.find(item => item.id === sessionId);
+      if (title && state.auth.accountGeneration === accountGeneration && session?.title === expectedTitle) {
+        store.dispatch(updateSessionTitle({ sessionId, title }));
+      }
+    } catch {
+      // Optional helper: never surface errors or retry a failed title request.
     }
-    return window.electron.generateSessionTitle(prompt);
   }
 
   async getRecentCwds(limit?: number): Promise<string[]> {

@@ -20,6 +20,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
+import { buildSessionTitleInput } from '../../../common/sessionTitle';
 import {
   CoworkBtwCommandValidationError,
   createCoworkBtwRunId,
@@ -427,6 +428,7 @@ interface CoworkPromptInputProps {
     selectedTextSnippets?: CoworkSelectedTextSnippet[],
     browserAnnotations?: CoworkBrowserAnnotationMessageBatch[],
     collaborationMode?: CoworkCollaborationMode,
+    titleInput?: string,
   ) => boolean | void | Promise<boolean | void>;
   onStop?: () => void | Promise<void>;
   isStreaming?: boolean;
@@ -1913,6 +1915,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       promptPayload.selectedTextSnippets,
       preparedBrowserAnnotations,
       effectiveCollaborationMode,
+      buildSessionTitleInput(goalCommandPrompt, attachments),
     );
     if (result === false) {
       reportPromptControl('submit_blocked', {
