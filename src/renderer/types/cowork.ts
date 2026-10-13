@@ -21,9 +21,11 @@ import type {
   ResolvedKitCapabilities,
 } from '../../shared/kit/constants';
 import type {
+  OpenClawConfigApplyPendingReason,
   OpenClawEngineErrorCode,
   OpenClawEnginePhase as SharedOpenClawEnginePhase,
   OpenClawGatewayRepairErrorCode,
+  OpenClawLoopbackRepairOutcome,
 } from '../../shared/openclawEngine/constants';
 import type { OpenClawDreamingRecoverySummary } from '../../shared/openclawEngine/dreamingRecovery';
 import type { OpenClawRepairStage } from '../../shared/openclawEngine/repair';
@@ -290,6 +292,27 @@ export interface OpenClawEngineStatus {
   gatewayPort?: number | null;
   gatewayHttpUrl?: string | null;
   canRetry: boolean;
+  /**
+   * Set on a task-admission reply while a config change is still unapplied.
+   * The gateway process keeps running, so this is not an engine lifecycle state.
+   */
+  configApplyPending?: boolean;
+  /** Why that admission reply refused the task. */
+  configApplyPendingReason?: OpenClawConfigApplyPendingReason;
+  /**
+   * Set while automatic recovery has given up on applying the latest config.
+   * Tasks keep running on the config the gateway already applied; Quick Repair
+   * can clear what blocked the change.
+   */
+  configApplyStalled?: { detail: string };
+}
+
+export interface OpenClawLoopbackRepairResult {
+  outcome: OpenClawLoopbackRepairOutcome;
+  status?: OpenClawEngineStatus;
+  detail?: string;
+  /** For an administrator to run when the app could not add the rule. */
+  manualCommand?: string;
 }
 
 export interface OpenClawGatewayRepairResult {

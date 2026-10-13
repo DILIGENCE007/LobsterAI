@@ -417,6 +417,7 @@ contextBridge.exposeInMainWorld('electron', {
       retryInstall: () => ipcRenderer.invoke(OpenClawEngineIpc.RetryInstall),
       restartGateway: () => ipcRenderer.invoke(OpenClawEngineIpc.RestartGateway),
       repairGatewayState: () => ipcRenderer.invoke(OpenClawEngineIpc.RepairGatewayState),
+      repairLoopbackFirewall: () => ipcRenderer.invoke(OpenClawEngineIpc.RepairLoopbackFirewall),
       onProgress: (callback: (status: any) => void) => {
         const handler = (_event: any, status: any) => callback(status);
         ipcRenderer.on(OpenClawEngineIpc.OnProgress, handler);
@@ -686,15 +687,6 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CoworkIpcChannel.GetSessionSearchMessages, options),
     getSessionMessageRailIndex: (sessionId: string) =>
       ipcRenderer.invoke(CoworkIpcChannel.GetSessionMessageRailIndex, sessionId),
-    getProgressCard: (sessionId: string) =>
-      ipcRenderer.invoke(CoworkIpcChannel.GetProgressCard, sessionId),
-    dismissProgressCard: (sessionId: string, revision: number) =>
-      ipcRenderer.invoke(CoworkIpcChannel.DismissProgressCard, sessionId, revision),
-    onProgressCardChanged: (callback: (event: { sessionId: string }) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: { sessionId: string }) => callback(data);
-      ipcRenderer.on(CoworkIpcChannel.ProgressCardChanged, handler);
-      return () => ipcRenderer.removeListener(CoworkIpcChannel.ProgressCardChanged, handler);
-    },
     getContextUsage: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:contextUsage', sessionId),
     compactContext: (sessionId: string) =>
@@ -1127,14 +1119,14 @@ contextBridge.exposeInMainWorld('electron', {
       save: (request: SaveMarkdownFileRequest) => ipcRenderer.invoke(MarkdownFileIpc.Save, request),
       setHasUnsafeEdits: (hasUnsafeEdits: boolean) => ipcRenderer.send(MarkdownFileIpc.SetUnsafeEdits, hasUnsafeEdits),
     },
-    watchFile: (filePath: string) => ipcRenderer.invoke('artifact:watchFile', filePath),
-    unwatchFile: (filePath: string) => ipcRenderer.invoke('artifact:unwatchFile', filePath),
+    watchFile: (filePath: string) => ipcRenderer.invoke(ArtifactPreviewIpc.WatchFile, filePath),
+    unwatchFile: (filePath: string) => ipcRenderer.invoke(ArtifactPreviewIpc.UnwatchFile, filePath),
     onFileChanged: (callback: (data: { filePath: string }) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: { filePath: string }) =>
         callback(data);
-      ipcRenderer.on('artifact:file:changed', handler);
+      ipcRenderer.on(ArtifactPreviewIpc.FileChanged, handler);
       return () => {
-        ipcRenderer.removeListener('artifact:file:changed', handler);
+        ipcRenderer.removeListener(ArtifactPreviewIpc.FileChanged, handler);
       };
     },
     createPreviewSession: (filePath: string) =>

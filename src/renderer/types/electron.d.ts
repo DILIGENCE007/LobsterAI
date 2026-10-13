@@ -65,7 +65,6 @@ import type {
 } from '../../shared/cowork/constants';
 import type { CoworkGoal } from '../../shared/cowork/goal';
 import type { CoworkTurnUsage, CoworkTurnUsageAnchor } from '../../shared/cowork/llmTurnUsage';
-import type { ProgressCardResponse } from '../../shared/cowork/progressCard';
 import type { CoworkMessageRailIndexItem } from '../../shared/cowork/rail';
 import type {
   CoworkSearchMessage,
@@ -138,6 +137,7 @@ import type {
   OpenClawEngineErrorCode,
   OpenClawEnginePhase as SharedOpenClawEnginePhase,
   OpenClawGatewayRepairErrorCode,
+  OpenClawLoopbackRepairOutcome,
 } from '../../shared/openclawEngine/constants';
 import type { OpenClawRepairStage } from '../../shared/openclawEngine/repair';
 import type {
@@ -407,6 +407,13 @@ interface OpenClawGatewayRepairResult {
   recoverable?: boolean;
   failedStage?: OpenClawRepairStage;
   failurePath?: string;
+}
+
+interface OpenClawLoopbackRepairResult {
+  outcome: OpenClawLoopbackRepairOutcome;
+  status?: OpenClawEngineStatus;
+  detail?: string;
+  manualCommand?: string;
 }
 
 interface OpenClawSessionPolicyConfig {
@@ -914,6 +921,7 @@ interface IElectronAPI {
         error?: string;
       }>;
       repairGatewayState: () => Promise<OpenClawGatewayRepairResult>;
+      repairLoopbackFirewall: () => Promise<OpenClawLoopbackRepairResult>;
       onProgress: (callback: (status: OpenClawEngineStatus) => void) => () => void;
     };
     sessionPolicy: {
@@ -1097,9 +1105,6 @@ interface IElectronAPI {
       hasMore?: boolean;
       error?: string;
     }>;
-    getProgressCard: (sessionId: string) => Promise<ProgressCardResponse>;
-    dismissProgressCard: (sessionId: string, revision: number) => Promise<ProgressCardResponse>;
-    onProgressCardChanged: (callback: (event: { sessionId: string }) => void) => () => void;
     getContextUsage: (
       sessionId: string,
     ) => Promise<{

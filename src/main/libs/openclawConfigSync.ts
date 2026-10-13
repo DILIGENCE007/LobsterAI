@@ -24,7 +24,11 @@ import { DECISION_MODEL_PLUGIN_ID } from '../../shared/decisionModel/constants';
 import { WeixinPlugin } from '../../shared/im/weixin';
 import { normalizeMcpServerUrlInput } from '../../shared/mcp/url';
 import { OFFICE_EDITORS } from '../../shared/office/editors';
-import { OPENCLAW_PLUGIN_INDEX_MANAGED_KEYS, OpenClawSkillReviewMode } from '../../shared/openclawEngine/constants';
+import {
+  OPENCLAW_MODEL_COMPAT_PLUGIN_ID,
+  OPENCLAW_PLUGIN_INDEX_MANAGED_KEYS,
+  OpenClawSkillReviewMode,
+} from '../../shared/openclawEngine/constants';
 import { OpenClawTranscriptSafetyLimit } from '../../shared/openclawTranscript/constants';
 import type {
   ModelRuntimeProfile as ModelRuntimeProfileType,
@@ -80,7 +84,11 @@ import { OpenClawConfigImpact } from './openclawConfigImpact';
 import { createOpenClawConfigTarget, type OpenClawConfigTarget, readOpenClawConfigRaw } from './openclawConfigTarget';
 import type { OpenClawEngineManager } from './openclawEngineManager';
 import { repairHeartbeatFile, stripProactiveHeartbeatSection } from './openclawHeartbeatRepair';
-import { withManagedOpenClawModelPolicy, withoutOpenClawWriteMetadata } from './openclawManagedModelPolicy';
+import {
+  withManagedOpenClawModelPolicy,
+  withoutOpenClawWriteMetadata,
+  withoutRetiredOpenClawWriteMetadata,
+} from './openclawManagedModelPolicy';
 import { getMainAgentWorkspacePath } from './openclawMemoryFile';
 import { resolveOpenClawCatalogModelMaxTokens } from './openclawModelCatalog';
 
@@ -150,7 +158,6 @@ export const OPENCLAW_HEARTBEAT_EVERY_ENABLED = '1h';
 export const OPENCLAW_HEARTBEAT_EVERY_DISABLED = '0m';
 const DINGTALK_OPENCLAW_CHANNEL = 'dingtalk-connector';
 export const OPENCLAW_MEMORY_CORE_PLUGIN_ID = 'memory-core';
-const OPENCLAW_MODEL_COMPAT_PLUGIN_ID = 'lobsterai-model-compat';
 
 const asConfigRecord = (value: unknown): Record<string, unknown> | undefined => (
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -325,7 +332,15 @@ const MANAGED_OWNER_ALLOW_FROM = [
   'gateway-client',
 ];
 
-const MANAGED_TOOL_DENY = ['web_search'] as const;
+const MANAGED_TOOL_DENY = [
+  'web_search',
+  // These drive paired OpenClaw nodes (the OpenClaw app, `openclaw node run`).
+  // LobsterAI never pairs one, so they always fail, and `computer` competes
+  // with the Computer Use kit's MCP tools for desktop requests.
+  'computer',
+  'nodes',
+  'mobile_ui',
+] as const;
 // OpenClaw 2026.8.1 owns detector selection and thresholds. Only the public
 // enable flag remains configurable; emitting the retired tuning keys makes
 // the complete config invalid and prevents gateway hot reloads.
@@ -2011,12 +2026,11 @@ export class OpenClawConfigSync {
     } catch {
       // Engine manager may not be fully initialised (e.g. in tests).
     }
-    const meta = { ...asConfigRecord(config.meta) };
-    delete meta.lastTouchedAt; // OpenClaw v2026.8.1 stores this in machine state.
+    const stamped = withoutRetiredOpenClawWriteMetadata(config);
     return {
-      ...config,
+      ...stamped,
       meta: {
-        ...meta,
+        ...asConfigRecord(stamped.meta),
         ...(version ? { lastTouchedVersion: version } : {}),
       },
     };

@@ -1038,12 +1038,27 @@ registerTool('wait_for_text', 'Wait until text appears in (or, with gone: true, 
   return successText(result);
 });
 
-process.once('SIGINT', () => {
+let shuttingDown = false;
+function shutdown() {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
   void client.close().finally(() => process.exit(0));
-});
-process.once('SIGTERM', () => {
-  void client.close().finally(() => process.exit(0));
-});
+}
 
-await server.connect(new StdioServerTransport());
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);
+// OpenClaw stops a stdio MCP server by closing its stdin, and the OS closes stdin
+// when the gateway dies without doing that (crash, SIGKILL). No signal follows then,
+// so without this the running helper would keep an orphaned bridge alive.
+process.stdin.once('end', shutdown);
+process.stdin.once('close', shutdown);
+// Writing a reply after the gateway is gone fails with EPIPE; unhandled, that would
+// crash the bridge before the helper is closed.
+process.stdout.on('error', shutdown);
+
+const transport = new StdioServerTransport();
+transport.onclose = shutdown;
+await server.connect(transport);
 `;

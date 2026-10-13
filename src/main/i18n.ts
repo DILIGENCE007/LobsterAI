@@ -33,6 +33,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     openClawRepairCommandFailed: '修复命令 {command} 未完成。诊断记录：{path}',
     openClawDreamingStateRepairing: '正在备份并处理旧版记忆状态…',
     openClawRuntimeFilesMissing: 'AI 引擎运行文件缺失或无法读取，已停止启动。请退出应用，使用包含修复的最新安装包覆盖安装后重试。',
+    openClawLoopbackBlocked: '本机连接自检失败（{code}），已暂停启动 AI 引擎。',
     // DeepSeek Harness (experimental)
     dshWorkbenchTitle: 'DeepSeek Harness 工作台（实验）',
     dshPlanProviderName: '套餐',
@@ -146,8 +147,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkErrorServiceRestart: 'AI 引擎正在重启，请稍后重试。',
     coworkErrorGatewayDraining: 'AI 引擎正在重启中，请稍等片刻后重试。',
     openClawConfigApplyPending: 'OpenClaw 正在应用配置，请稍后重试。',
+    openClawConfigApplyPendingForModel:
+      '所选模型的最新设置还没生效，会在正在运行的任务结束后应用。可以先停止正在运行的任务，或稍后重新发送。',
     openClawConfigApplyOverdue:
       'OpenClaw 正在等待活动任务结束后应用配置。请完成或停止活动任务，然后重试。',
+    openClawConfigApplyStalled: '最新配置在重启网关后仍无法应用到 OpenClaw（{detail}）。',
     coworkErrorModelResponseTimeout: '模型响应超时，请稍后重试。',
     coworkErrorNetworkError: '网络连接失败，请检查网络设置。',
     coworkErrorNetworkErrorViaSystemProxy:
@@ -432,6 +436,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     openClawStartupCompatibilityRepairing: 'Backing up and repairing legacy gateway state…',
     openClawDreamingStateRepairing: 'Backing up and handling legacy memory state…',
     openClawRuntimeFilesMissing: 'AI engine runtime files are missing or unreadable. Startup has stopped. Quit the app and reinstall using the latest installer containing the fix, then try again.',
+    openClawLoopbackBlocked: 'Local connection self-test failed ({code}). AI engine startup is paused.',
     // DeepSeek Harness (experimental)
     dshWorkbenchTitle: 'DeepSeek Harness Workbench (Experimental)',
     dshPlanProviderName: 'Plan',
@@ -556,8 +561,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkErrorServiceRestart: 'AI engine is restarting. Please try again later.',
     coworkErrorGatewayDraining: 'AI engine is restarting. Please wait a moment and try again.',
     openClawConfigApplyPending: 'OpenClaw is applying configuration. Please try again shortly.',
+    openClawConfigApplyPendingForModel:
+      "The latest settings for the selected model haven't taken effect yet; they apply once the running tasks finish. Stop the running tasks, or send again later.",
     openClawConfigApplyOverdue:
       'OpenClaw is waiting for active tasks to finish before applying configuration. Complete or stop the active tasks, then try again.',
+    openClawConfigApplyStalled: 'The latest configuration still could not be applied to OpenClaw after restarting the gateway ({detail}).',
     coworkErrorModelResponseTimeout: 'The model response timed out. Please try again.',
     coworkErrorNetworkError: 'Network connection failed. Please check your network settings.',
     coworkErrorNetworkErrorViaSystemProxy:

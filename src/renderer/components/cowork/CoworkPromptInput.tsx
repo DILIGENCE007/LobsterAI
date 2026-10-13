@@ -7,7 +7,7 @@ import {
   PauseCircleIcon,
   PlayCircleIcon,
 } from '@heroicons/react/24/outline';
-import { ArrowUpIcon, FolderIcon } from '@heroicons/react/24/solid';
+import { ArrowUpIcon } from '@heroicons/react/24/solid';
 import { AuthSubscriptionStatus } from '@shared/auth/constants';
 import {
   BrowserAnnotationScreenshotStatus,
@@ -99,7 +99,7 @@ import { setActiveSkillIds, setSkills, toggleActiveSkill } from '../../store/sli
 import { CoworkCollaborationMode, CoworkImageAttachment } from '../../types/cowork';
 import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { Skill } from '../../types/skill';
-import { getAgentDisplayName, shouldUseDefaultAgentIcon } from '../../utils/agentDisplay';
+import { getAgentDisplayName } from '../../utils/agentDisplay';
 import { applyOptimisticGoalCommand } from '../../utils/goalCommand';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import { getCompactFolderName } from '../../utils/path';
@@ -111,7 +111,6 @@ import {
   ACTIVE_CONTEXT_BADGE_REMOVE_ICON_CLASS,
 } from '../common/activeContextBadgeStyles';
 import Modal from '../common/Modal';
-import DefaultAgentIcon from '../icons/DefaultAgentIcon';
 import EditIcon from '../icons/EditIcon';
 import GoalIcon from '../icons/GoalIcon';
 import PaperClipIcon from '../icons/PaperClipIcon';
@@ -120,6 +119,7 @@ import PromptAddIcon from '../icons/PromptAddIcon';
 import SkillIcon from '../icons/SkillIcon';
 import TaskPauseIcon from '../icons/TaskPauseIcon';
 import TrashIcon from '../icons/TrashIcon';
+import WorkingDirectoryIcon from '../icons/WorkingDirectoryIcon';
 import XMarkIcon from '../icons/XMarkIcon';
 import { ActiveKitBadge, KitsButton } from '../kits';
 import ModelSelector, {
@@ -387,17 +387,12 @@ interface AgentSelectorOption {
 }
 
 const AgentContextAvatar: React.FC<{ agent: AgentSelectorOption; className?: string }> = ({ agent, className = 'h-4 w-4' }) => {
-  if (shouldUseDefaultAgentIcon(agent)) {
-    return <DefaultAgentIcon className={className} />;
-  }
-
   return (
     <AgentAvatarIcon
       value={agent.icon}
       className={className}
       iconClassName={className}
-      legacyClassName="text-[13px]"
-      fallbackText={getAgentDisplayName(agent).trim().slice(0, 1).toUpperCase() || 'A'}
+      inheritColor
     />
   );
 };
@@ -3620,7 +3615,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           title={workingDirectory || i18nService.t('noFolderSelected')}
           aria-label={i18nService.t('coworkOpenFolder')}
         >
-          <FolderIcon className="h-4 w-4 shrink-0" />
+          <WorkingDirectoryIcon className="h-4 w-4 shrink-0" />
           {!isReadOnlyContextCompact && (
             <span className="min-w-0 truncate">
               {truncatePath(workingDirectory, ContextLabelMaxLength.Folder)}
@@ -3859,7 +3854,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                           }`
                       }`}
                     >
-                      <FolderIcon className="h-4 w-4 shrink-0" />
+                      <WorkingDirectoryIcon className="h-4 w-4 shrink-0" />
                       <span className="min-w-0 truncate">
                         {truncatePath(workingDirectory, ContextLabelMaxLength.Folder)}
                       </span>
@@ -3971,7 +3966,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                               : 'text-secondary hover:bg-surface-raised hover:text-foreground'
                           }`}
                         >
-                          <FolderIcon className="h-4 w-4 flex-shrink-0" />
+                          <WorkingDirectoryIcon className="h-4 w-4 flex-shrink-0" />
                           <span className="max-w-[150px] truncate text-xs">
                             {truncatePath(workingDirectory)}
                           </span>

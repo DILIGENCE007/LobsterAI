@@ -25,7 +25,7 @@ import {
   normalizeCoworkBtwQuestion,
   resolveCoworkBtwSelectedTextSnippets,
 } from '../../../shared/cowork/btw';
-import { CoworkOnboardingMessageKind } from '../../../shared/cowork/constants';
+import { COWORK_TEMP_SESSION_ID_PREFIX, CoworkOnboardingMessageKind } from '../../../shared/cowork/constants';
 import { CoworkGoalStatus } from '../../../shared/cowork/goal';
 import type { CoworkImageAttachmentPreview } from '../../../shared/cowork/imageAttachments';
 import {
@@ -58,6 +58,7 @@ import {
   normalizeLocalServiceOrigin,
   normalizeProjectDirectoryForDedup,
   parseMediaTokensFromText,
+  resolveArtifactIdForDisplay,
 } from '../../services/artifactParser';
 import { configService, ConfigServiceEvent } from '../../services/config';
 import { coworkService } from '../../services/cowork';
@@ -201,7 +202,6 @@ import {
   MEDIA_TOKEN_DISPLAY_RE,
   type ToolGroupItem,
 } from './messageDisplayUtils';
-import OpenClawProgressCard from './OpenClawProgressCard';
 import { parseProposedPlanBlock } from './proposedPlanParser';
 import { buildSelectedKitContextPrompt } from './selectedKitContextPrompt';
 import { buildSelectedSkillRoutingPrompt } from './selectedSkillRoutingPrompt';
@@ -2170,6 +2170,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       : subagentWaitPhase === SubagentWaitPhase.Summary
         ? i18nService.t('coworkActivityWaitSubagentSummary')
         : null;
+  // The optimistic session exists only until its start request returns.
+  const isAwaitingRunStart = currentSession?.id.startsWith(COWORK_TEMP_SESSION_ID_PREFIX) ?? false;
   const [subagentsLoading, setSubagentsLoading] = useState(false);
   const [selectedSubagent, setSelectedSubagent] = useState<SubagentSessionSummary | null>(null);
   const [contentRowWidth, setContentRowWidth] = useState(0);
@@ -2226,6 +2228,18 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       .map(tab => ({ tab, artifact: artifactsById.get(tab.artifactId) }))
       .filter((item): item is { tab: typeof artifactPreviewTabs[number]; artifact: Artifact } => Boolean(item.artifact));
   }, [artifactPreviewTabs, sessionArtifacts]);
+  // A later reply that rewrites the HTML file replaces its artifact in the
+  // display list; follow it so the browser tab keeps watching the file and
+  // offers HTML sharing instead of deploying the internal preview server.
+  const browserHtmlPreviewDisplayArtifactId = useMemo(() => (
+    browserHtmlPreviewArtifactId
+      ? resolveArtifactIdForDisplay(
+          rawSessionArtifacts,
+          browserHtmlPreviewArtifactId,
+          { defaultProjectDirectory: currentSession?.cwd },
+        )
+      : null
+  ), [browserHtmlPreviewArtifactId, currentSession?.cwd, rawSessionArtifacts]);
   const shouldPinArtifactAddTab = artifactTabsIsOverflowing || artifactTabsCanScrollLeft || artifactTabsCanScrollRight;
   const browserPreviewTabTitle = browserPreviewTitle.trim() || i18nService.t('artifactBrowserTab');
   const fetchSubagents = useCallback(async (targetSessionId: string, options: { showLoading?: boolean } = {}) => {
@@ -6076,6 +6090,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 activityStatusOverride={
                   activityStatusOverride
                 }
+                awaitingRunStart={isAwaitingRunStart}
                 showCopyButtons={!isStreaming || !isLastTurn}
                 hiddenSystemMessageId={enterpriseQuotaPromptMessageId}
                 completedGoal={
@@ -6900,14 +6915,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               })}
             />
           )}
-          {currentSession && (
-            <OpenClawProgressCard
-              key={currentSession.id}
-              sessionId={currentSession.id}
-              sessionStatus={currentSession.status}
-              compact={isArtifactPanelExpanded}
-            />
-          )}
           {showExternalGoalStatusBar && (
             <div className={`relative z-10 ${showExternalSteerPreview ? 'mb-1.5' : '-mb-px'}`}>
               <div ref={setGoalStatusBarPortalTarget} />
@@ -7032,7 +7039,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               browserUrl={browserPreviewUrl}
               browserLocalServiceContext={browserLocalServiceContext}
               localServiceDeploymentRequest={localServiceDeploymentRequest}
-              browserHtmlArtifactId={browserHtmlPreviewArtifactId}
+              browserHtmlArtifactId={browserHtmlPreviewDisplayArtifactId}
               onBrowserAddressChange={handleBrowserPreviewAddressChange}
               onBrowserUrlChange={handleBrowserPreviewUrlChange}
               onBrowserTitleChange={handleBrowserPreviewTitleChange}

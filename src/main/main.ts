@@ -121,7 +121,6 @@ import {
 } from '../shared/cowork/imageAttachments';
 import { OpenClawQuestion } from '../shared/cowork/openclawQuestion';
 import { containsPlanModePrompt } from '../shared/cowork/planMode';
-import { ProgressCardEvent } from '../shared/cowork/progressCard';
 import type { CoworkSearchMessageCursor } from '../shared/cowork/search';
 import {
   type CoworkSelectedTextSnippet,
@@ -185,9 +184,11 @@ import {
   WaitingNotificationKind,
 } from '../shared/notifications/constants';
 import {
+  OpenClawConfigApplyPendingReason,
   OpenClawEngineIpc,
   OpenClawEnginePhase,
   OpenClawGatewayRepairErrorCode,
+  OpenClawLoopbackRepairOutcome,
 } from '../shared/openclawEngine/constants';
 import { OpenClawRepairPhase, OpenClawRepairStage } from '../shared/openclawEngine/repair';
 import { PlatformRegistry } from '../shared/platform';
@@ -314,6 +315,7 @@ import {
 import { hideAppWindowsForQuit } from './libs/appQuitWindows';
 import { AppUpdateCoordinator, INSTALLATION_UUID_KEY } from './libs/appUpdateCoordinator';
 import { AppUpdateGrayClient, type AppUpdateGraySession } from './libs/appUpdateGrayClient';
+import { ArtifactFileWatcher } from './libs/artifactFileWatcher';
 import { AuthCallbackRouter } from './libs/authCallbackRouter';
 import {
   appendCallbackReturnTo,
@@ -461,14 +463,17 @@ import {
   OpenClawChannelSessionSync,
 } from './libs/openclawChannelSessionSync';
 import { createOpenClawRepairBackupDirectory, OpenClawRepairFailure, runOpenClawCompatibilityRepair, runOpenClawDoctorRepair } from './libs/openclawCompatibilityRepair';
+import { OpenClawModelRuntimeChange, resolveOpenClawModelRuntimeChange } from './libs/openclawConfigAdmission';
 import { createOpenClawConfigAutoRestoreHandler } from './libs/openclawConfigAutoRestore';
 import {
   CONFIG_DELIVERY_FALLBACK_REASON_PREFIX,
   DEFERRED_SYNC_REASON_PREFIX,
   deliverOpenClawConfigToGateway,
   isConfigDeliveryFallbackReason,
+  isPersistentConfigDeliveryFailure,
   mergeDeferredGatewayRestartReason,
   OpenClawConfigDeliveryMode,
+  type OpenClawConfigDeliveryResult,
 } from './libs/openclawConfigDelivery';
 import {
   classifyAppConfigChange,
@@ -489,7 +494,13 @@ import {
 } from './libs/openclawConfigObservation';
 import { isDeferredRestartSatisfied, OpenClawConfigRecovery } from './libs/openclawConfigRecovery';
 import { buildProviderSelection, OpenClawConfigSync } from './libs/openclawConfigSync';
-import { persistOpenClawConfigTarget, readOpenClawConfigRaw, rebaseOpenClawConfigTarget, sameOpenClawConfigContent } from './libs/openclawConfigTarget';
+import {
+  type OpenClawConfigTarget,
+  persistOpenClawConfigTarget,
+  readOpenClawConfigRaw,
+  rebaseOpenClawConfigTarget,
+  sameOpenClawConfigContent,
+} from './libs/openclawConfigTarget';
 import { getRecentOpenClawDailyLogEntries } from './libs/openclawDailyLogs';
 import { OpenClawEngineManager, type OpenClawEngineStatus } from './libs/openclawEngineManager';
 import {
@@ -568,6 +579,7 @@ import {
   restoreOriginalProxyEnv,
   setSystemProxyEnabled,
 } from './libs/systemProxy';
+import { type LoopbackFirewallRepairResult, repairWindowsLoopbackFirewall } from './libs/windowsLoopbackFirewall';
 import { getLogFilePath, getRecentMainLogEntries, initLogger } from './logger';
 import { type AskUserResponse, McpRuntime } from './mcp/mcpRuntime';
 import {
@@ -608,7 +620,7 @@ import {
   loadOpenClawSessionPolicyConfig,
   saveOpenClawSessionPolicyConfig,
 } from './openclawSessionPolicy/store';
-import { registerVoiceInputPermissionHandler } from './permissions/voiceInputPermission';
+import { registerRendererPermissionHandler } from './permissions/rendererPermission';
 import { patchEnabledNspClawguard } from './plugins/nspClawguardCompatibility';
 import { isHiddenUserPluginId } from './plugins/pluginManager';
 import type { SkillChangeBatch } from './skills/skillChangeDiagnostics';
@@ -2474,10 +2486,24 @@ const settleCoworkTurnUsage = (sessionId: string): void => {
   });
 };
 
-const ensureOpenClawRunningForCowork = async () => {
-  const configApplyStatus = await waitForOpenClawConfigApply('cowork engine startup');
-  if (configApplyStatus) {
-    return configApplyStatus;
+/** What a cowork request depends on while a config change is still unapplied. */
+type CoworkEngineAdmission = {
+  /** Model the task pins before its turn; only changes to that model hold it back. */
+  taskModelRef?: string;
+  /** Steer input joins a turn that already runs, so pending config cannot change it. */
+  joinsActiveTurn?: boolean;
+};
+
+const ensureOpenClawRunningForCowork = async (admission: CoworkEngineAdmission = {}) => {
+  if (!admission.joinsActiveTurn) {
+    const configApplyStatus = await waitForOpenClawConfigApply(
+      'cowork engine startup',
+      true,
+      admission.taskModelRef,
+    );
+    if (configApplyStatus) {
+      return configApplyStatus;
+    }
   }
 
   const manager = getOpenClawEngineManager();
@@ -2514,7 +2540,12 @@ const ensureOpenClawRunningForCowork = async () => {
   const started = await manager.startGateway('ensure-running-for-cowork');
   if (started.phase !== OpenClawEnginePhase.Running) return started;
   await syncOpenClawConfig({ reason: 'ensureRunning:config-confirm' });
-  return await waitForOpenClawConfigApply('cowork startup confirmation') ?? manager.getStatus();
+  if (admission.joinsActiveTurn) return manager.getStatus();
+  return await waitForOpenClawConfigApply(
+    'cowork startup confirmation',
+    true,
+    admission.taskModelRef,
+  ) ?? manager.getStatus();
 };
 
 const getCoworkStore = () => {
@@ -2845,13 +2876,18 @@ const imConfigRestartTracker = new OpenClawImConfigRestartTracker({
   getGatewayGeneration: () => getOpenClawEngineManager().getGatewayConnectionInfo().generation,
 });
 
-const buildConfigApplyPendingStatus = (message: string): OpenClawEngineStatus => {
+const buildConfigApplyPendingStatus = (
+  message: string,
+  reason: OpenClawConfigApplyPendingReason = OpenClawConfigApplyPendingReason.Applying,
+): OpenClawEngineStatus => {
   const current = getOpenClawEngineManager().getStatus();
   return {
     phase: 'starting',
     version: current.version,
     message,
     canRetry: false,
+    configApplyPending: true,
+    configApplyPendingReason: reason,
   };
 };
 
@@ -2862,7 +2898,69 @@ const buildConfigApplyErrorStatus = (message: string): OpenClawEngineStatus => (
   canRetry: false,
 });
 
-const waitForOpenClawConfigApply = async (context: string, waitForRecovery = true): Promise<OpenClawEngineStatus | null> => {
+/** A target the gateway rejected as invalid: an engine error until a corrected config replaces it. */
+const buildConfigRejectedStatus = (): OpenClawEngineStatus => buildConfigApplyErrorStatus(
+  openClawConfigRecovery.error ?? t('openClawConfigApplyPending'),
+);
+
+/**
+ * Stop automatic recovery once a restarted gateway still cannot apply the
+ * target: further restarts would only repeat the failure, and every forced
+ * stop risks leaving another orphaned lock. Returns true when stalled.
+ */
+const stallConfigRecoveryIfExhausted = (
+  target: OpenClawConfigTarget,
+  delivery: OpenClawConfigDeliveryResult,
+): boolean => {
+  if (!openClawConfigRecovery.stalled) {
+    if (!isPersistentConfigDeliveryFailure(delivery)
+      || !openClawConfigRecovery.failedAfterRespawn(target, t('openClawConfigApplyStalled', { detail: delivery.detail }))) {
+      return false;
+    }
+    console.warn(`${gwDiagTs()} config recovery stalled: a restarted gateway still cannot apply the target (${delivery.detail})`);
+    getOpenClawEngineManager().setConfigApplyStall(openClawConfigRecovery.error);
+  }
+  if (deferredRestartReason && isConfigDeliveryFallbackReason(deferredRestartReason)) {
+    clearDeferredRestart();
+    deferredRestartReason = null;
+    deferredRestartRequestedAt = null;
+  }
+  return true;
+};
+
+/**
+ * How a pending change affects a task that pins `modelRef` before its turn,
+ * judged against what the running gateway generation confirmed applying, or
+ * the config it spawned with until it confirms one.
+ */
+const resolvePendingConfigImpact = (modelRef: string): OpenClawModelRuntimeChange => {
+  const manager = getOpenClawEngineManager();
+  // Both baselines describe the live process; a stopped gateway has nothing applied.
+  const appliedSecretEnv = manager.getGatewayProcessSecretEnvVars();
+  return resolveOpenClawModelRuntimeChange({
+    modelRef,
+    // After a cold start or restart the confirmation can lag behind a busy
+    // gateway; the file it loaded at spawn is what its tasks already run on.
+    appliedRaw: appliedSecretEnv
+      ? openClawConfigRecovery.appliedRawFor(manager.getGatewayProcessGeneration())
+        ?? manager.getGatewayProcessConfigRaw()
+      : null,
+    pendingRaw: openClawConfigRecovery.pendingTarget?.raw ?? null,
+    appliedSecretEnv,
+    pendingSecretEnv: manager.getSecretEnvVars(),
+  });
+};
+
+/**
+ * Hold a request until config application settles. A task (`taskModelRef`
+ * given) waits only while its own model runs on unapplied settings; other
+ * pending changes keep waiting for idle without refusing it.
+ */
+const waitForOpenClawConfigApply = async (
+  context: string,
+  waitForRecovery = true,
+  taskModelRef?: string,
+): Promise<OpenClawEngineStatus | null> => {
   let pendingApply = openClawConfigApplyState;
   while (pendingApply) {
     console.log(
@@ -2874,28 +2972,60 @@ const waitForOpenClawConfigApply = async (context: string, waitForRecovery = tru
     try {
       await pendingApply.promise;
     } catch (error) {
-      const message = error instanceof Error
-        ? error.message
-        : 'OpenClaw config sync failed.';
-      return buildConfigApplyPendingStatus(message);
+      if (waitForRecovery && openClawConfigRecovery.rejected) return buildConfigRejectedStatus();
+      // A stalled target cannot converge by waiting, so a failed attempt at it
+      // must not hold back tasks or the Quick Repair that clears it.
+      if (!openClawConfigRecovery.stalled) {
+        const message = error instanceof Error
+          ? error.message
+          : 'OpenClaw config sync failed.';
+        return buildConfigApplyPendingStatus(message);
+      }
     }
     // A newer queued target must not escape an older operation's barrier.
     pendingApply = openClawConfigApplyState === pendingApply ? null : openClawConfigApplyState;
   }
 
   if (!waitForRecovery) return null;
-  if (openClawConfigRecovery.error) return buildConfigApplyErrorStatus(openClawConfigRecovery.error);
+  if (openClawConfigRecovery.rejected) return buildConfigRejectedStatus();
   const phase = getOpenClawEngineManager().getStatus().phase;
-  if (deferredRestartReason || (openClawConfigRecovery.pending
+  // Tasks run on the config the gateway already applied while a stall lasts.
+  const recoveryPending = openClawConfigRecovery.pending && !openClawConfigRecovery.stalled;
+  if (!deferredRestartReason && !(recoveryPending
     && (phase === OpenClawEnginePhase.Running || phase === OpenClawEnginePhase.Starting))) {
-    return buildConfigApplyPendingStatus(
-      deferredRestartOverdue
-        ? t('openClawConfigApplyOverdue')
-        : t('openClawConfigApplyPending'),
-    );
+    return null;
   }
 
-  return null;
+  const pendingReason = deferredRestartReason ?? 'confirmation';
+  const impact = taskModelRef === undefined ? null : resolvePendingConfigImpact(taskModelRef);
+  if (impact === OpenClawModelRuntimeChange.None) {
+    console.log(
+      '[OpenClawConfigApply] admitted a task while config is pending; its model is unaffected.',
+      `Context ${context}.`,
+      `Model ${taskModelRef}.`,
+      `Pending ${pendingReason}.`,
+    );
+    return null;
+  }
+  console.warn(
+    '[OpenClawConfigApply] refused a request while config is pending.',
+    `Context ${context}.`,
+    `Model ${taskModelRef || 'none'}.`,
+    `Impact ${impact ?? 'not task-scoped'}.`,
+    `Pending ${pendingReason}.`,
+    `Overdue ${deferredRestartOverdue}.`,
+  );
+  if (impact !== null && impact !== OpenClawModelRuntimeChange.Unknown) {
+    return buildConfigApplyPendingStatus(
+      t('openClawConfigApplyPendingForModel'),
+      OpenClawConfigApplyPendingReason.ModelSettings,
+    );
+  }
+  return buildConfigApplyPendingStatus(
+    deferredRestartOverdue
+      ? t('openClawConfigApplyOverdue')
+      : t('openClawConfigApplyPending'),
+  );
 };
 
 const executeDeferredGatewayRestart = async (reason: string) => {
@@ -2938,7 +3068,14 @@ const scheduleDeferredGatewayRestart = (reason: string, requestedAt = Date.now()
   );
   deferredRestartOverdue = false;
   deferredRestartTimer = setInterval(() => {
-    if (isConfigDeliveryFallbackReason(deferredRestartReason ?? reason) && !openClawConfigRecovery.canRetry()) return;
+    const fallbackRecovery = isConfigDeliveryFallbackReason(deferredRestartReason ?? reason);
+    if (fallbackRecovery && openClawConfigRecovery.stalled) {
+      clearDeferredRestart();
+      deferredRestartReason = null;
+      deferredRestartRequestedAt = null;
+      return;
+    }
+    if (fallbackRecovery && !openClawConfigRecovery.canRetry()) return;
     if (!hasActiveConfigRestartWorkloads(deferredRestartReason ?? reason)) {
       void executeDeferredGatewayRestart(deferredRestartReason ?? reason);
     }
@@ -3157,6 +3294,7 @@ const _syncOpenClawConfigImpl = async (
       gatewayPhase: manager.getStatus().phase,
       readConfigFile: () => rebaseOpenClawConfigTarget(target, readOpenClawConfigRaw(manager.getConfigPath())),
       configPath: manager.getConfigPath(),
+      recoverConfigLock: () => manager.reclaimStaleConfigLock(`config-delivery:${options.reason}`),
       ensureRpcClient: async () => openClawRuntimeAdapter?.ensureGatewayRpcClient() ?? null,
       onDiagnostic: event => {
         if (event.payloadDigest) payloadDigest = event.payloadDigest;
@@ -3207,11 +3345,28 @@ const _syncOpenClawConfigImpl = async (
     if (delivery.mode === OpenClawConfigDeliveryMode.Applied && !openClawConfigRecovery.pending) {
       return { success: true, changed: effectiveConfigChanged, status: manager.getStatus() };
     }
+    // A gateway that spawned from this target would only reload the same file
+    // after a respawn, e.g. while a plugin keeps it busy right after startup.
+    const loadedAtSpawn = openClawConfigRecovery.loadedAtSpawn(
+      target,
+      manager.getGatewayProcessConfigRaw(),
+      manager.getGatewayProcessGeneration(),
+    );
+    if (stallConfigRecoveryIfExhausted(target, delivery)) {
+      return {
+        success: false,
+        changed: effectiveConfigChanged,
+        status: manager.getStatus(),
+        error: openClawConfigRecovery.error ?? delivery.detail,
+      };
+    }
     // An ordinary write does not immediately respawn on an ambiguous outcome.
     // Re-read and reapply at the idle recovery boundary before escalating.
-    if (!retryDeferredDelivery || delivery.retryAfterMs !== undefined || !openClawConfigRecovery.canRestart()) {
+    if (!retryDeferredDelivery || delivery.retryAfterMs !== undefined || !openClawConfigRecovery.canRestart()
+      || loadedAtSpawn) {
+      // A loaded target only awaits confirmation: give a busy gateway time before the attempt that may stall it.
       openClawConfigRecovery.retryAfter(Math.max(delivery.retryAfterMs ?? 0,
-        retryDeferredDelivery ? 30_000 : DEFERRED_RESTART_POLL_MS));
+        retryDeferredDelivery || loadedAtSpawn ? 30_000 : DEFERRED_RESTART_POLL_MS));
       scheduleDeferredGatewayRestart(fallbackRecovery ? options.reason
         : `${CONFIG_DELIVERY_FALLBACK_REASON_PREFIX}${options.reason}`);
       return { success: true, changed: effectiveConfigChanged, status: buildConfigApplyPendingStatus(t('openClawConfigApplyPending')) };
@@ -3281,6 +3436,21 @@ const _syncOpenClawConfigImpl = async (
   const confirmed = await deliver();
   if (confirmed.mode !== OpenClawConfigDeliveryMode.Applied || openClawConfigRecovery.pending) {
     if (confirmed.mode !== OpenClawConfigDeliveryMode.Rejected) {
+      // The new process spawned from the persisted target, so its failed
+      // confirmations count toward the stall rather than another respawn.
+      openClawConfigRecovery.loadedAtSpawn(
+        target,
+        manager.getGatewayProcessConfigRaw(),
+        manager.getGatewayProcessGeneration(),
+      );
+      if (stallConfigRecoveryIfExhausted(target, confirmed)) {
+        return {
+          success: false,
+          changed: true,
+          status: manager.getStatus(),
+          error: openClawConfigRecovery.error ?? confirmed.detail,
+        };
+      }
       openClawConfigRecovery.retryAfter(30_000);
       scheduleDeferredGatewayRestart(`${CONFIG_DELIVERY_FALLBACK_REASON_PREFIX}${options.reason}`);
     }
@@ -3356,6 +3526,13 @@ const syncOpenClawConfig = async (
       error: error instanceof Error ? error.message : 'OpenClaw config sync failed.',
     };
   } finally {
+    if (!isQuitting && !isDataMigrationRestoreInProgress) {
+      // Engine status carries the stall, so it must follow every settled sync:
+      // a successful delivery is what ends it.
+      getOpenClawEngineManager().setConfigApplyStall(
+        openClawConfigRecovery.stalled ? openClawConfigRecovery.error : null,
+      );
+    }
     if (generation === openClawConfigApplyGeneration) {
       openClawConfigApplyState = null;
       // Task admission can publish a temporary starting state to the renderer.
@@ -3363,9 +3540,9 @@ const syncOpenClawConfig = async (
       // phase transition to clear that UI state. Only the latest queue item may
       // announce convergence; rejected config must not leave a startup spinner.
       if (!isQuitting && !isDataMigrationRestoreInProgress) {
-        if (openClawConfigRecovery.error) {
-          forwardOpenClawStatus(buildConfigApplyErrorStatus(openClawConfigRecovery.error));
-        } else if (!openClawConfigRecovery.pending && !deferredRestartReason) {
+        if (openClawConfigRecovery.rejected) {
+          forwardOpenClawStatus(buildConfigRejectedStatus());
+        } else if (openClawConfigRecovery.stalled || (!openClawConfigRecovery.pending && !deferredRestartReason)) {
           forwardOpenClawStatus(getOpenClawEngineManager().getStatus());
         }
       }
@@ -3661,15 +3838,6 @@ const bindCoworkRuntimeForwarder = (): void => {
         console.error('[CoworkBtw] failed to forward side-question result:', error);
       }
     });
-  });
-
-  runtime.on(ProgressCardEvent.Changed, (sessionId: string) => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    try {
-      mainWindow.webContents.send(CoworkIpcChannel.ProgressCardChanged, { sessionId });
-    } catch (error) {
-      console.error('[CoworkRuntime] failed to forward progress card change:', error);
-    }
   });
 
   runtime.on('contextUsageUpdate', (sessionId: string, usage: unknown) => {
@@ -5965,6 +6133,23 @@ if (!gotTheLock) {
       || getAgentManager().getAgent(agentId)?.model?.trim()
       || resolveDefaultAgentModelRef();
     return rawModelRef?.trim() || '';
+  };
+
+  // Mirrors the runtime's per-turn pin: the session's own model, else the agent
+  // model. With neither, the gateway falls back to defaults this cannot inspect.
+  const resolveCoworkTurnModelRef = (options: {
+    sessionId?: string;
+    modelOverride?: string;
+    agentId?: string;
+  }): string => {
+    const session = options.sessionId
+      ? getCoworkStore().getSession(options.sessionId, 0)
+      : null;
+    const modelOverride = options.modelOverride?.trim() || session?.modelOverride?.trim();
+    if (modelOverride) return modelOverride;
+    const agentId = options.agentId?.trim() || session?.agentId || 'main';
+    const agentModel = getAgentManager().getAgent(agentId)?.model?.trim();
+    return agentModel ? normalizeOpenClawModelRef(agentModel) : '';
   };
 
   const getServerModelRunGateError = (reason: ServerModelRunGateReason): string => {
@@ -8991,6 +9176,32 @@ if (!gotTheLock) {
     }
   });
 
+  let repairLoopbackFirewallPromise: Promise<LoopbackFirewallRepairResult & { status: OpenClawEngineStatus }> | null = null;
+  ipcMain.handle(OpenClawEngineIpc.RepairLoopbackFirewall, () => {
+    repairLoopbackFirewallPromise ??= (async () => {
+      const manager = getOpenClawEngineManager();
+      try {
+        // On Windows the gateway runs as this same executable.
+        const repair = await repairWindowsLoopbackFirewall({ programPath: process.execPath });
+        if (repair.outcome !== OpenClawLoopbackRepairOutcome.Repaired) {
+          return { ...repair, status: manager.getStatus() };
+        }
+        const status = await manager.restartGateway('loopback-firewall-repair', { retryBlocked: true });
+        return { ...repair, status };
+      } catch (error) {
+        console.error('[OpenClaw] loopback firewall repair failed:', error);
+        return {
+          outcome: OpenClawLoopbackRepairOutcome.Failed,
+          detail: error instanceof Error ? error.message : String(error),
+          status: manager.getStatus(),
+        };
+      }
+    })().finally(() => {
+      repairLoopbackFirewallPromise = null;
+    });
+    return repairLoopbackFirewallPromise;
+  });
+
   ipcMain.handle(DataMigrationIpc.Backup, async event => {
     const ownerWindow = BrowserWindow.fromWebContents(event.sender);
     try {
@@ -9577,7 +9788,12 @@ if (!gotTheLock) {
         if (modelRunGate.allowed === false) {
           return { success: false, error: modelRunGate.error };
         }
-        const engineStatus = await ensureOpenClawRunningForCowork();
+        const engineStatus = await ensureOpenClawRunningForCowork({
+          taskModelRef: resolveCoworkTurnModelRef({
+            modelOverride: options.modelOverride,
+            agentId: options.agentId,
+          }),
+        });
         if (engineStatus.phase !== 'running') {
           return getEngineNotReadyResponse(engineStatus);
         }
@@ -9712,11 +9928,14 @@ if (!gotTheLock) {
           browserAnnotations,
           imageAttachmentPreviews,
         });
+        // Date the prompt by when it was submitted, not by when the engine
+        // became ready: the renderer times the optimistic turn from the click,
+        // and the turn timer must not restart when this session replaces it.
         coworkStoreInstance.addMessage(session.id, {
           type: 'user',
           content: prompt,
           metadata: messageMetadata,
-        });
+        }, ipcStartedAtMs);
 
         coworkStoreInstance.updateSession(session.id, { status: 'running' });
 
@@ -9822,7 +10041,9 @@ if (!gotTheLock) {
         if (modelRunGate.allowed === false) {
           return { success: false, error: modelRunGate.error };
         }
-        const engineStatus = await ensureOpenClawRunningForCowork();
+        const engineStatus = await ensureOpenClawRunningForCowork({
+          taskModelRef: resolveCoworkTurnModelRef({ sessionId: options.sessionId }),
+        });
         if (engineStatus.phase !== 'running') {
           return getEngineNotReadyResponse(engineStatus);
         }
@@ -10005,7 +10226,10 @@ if (!gotTheLock) {
         `Run ${runId}.`,
         `Question chars ${question.length}.`,
       );
-      const engineStatus = await ensureOpenClawRunningForCowork();
+      // A side question runs on the session's model like a turn of its own.
+      const engineStatus = await ensureOpenClawRunningForCowork({
+        taskModelRef: resolveCoworkTurnModelRef({ sessionId }),
+      });
       if (engineStatus.phase !== 'running') {
         return {
           ...getEngineNotReadyResponse(engineStatus),
@@ -10142,7 +10366,7 @@ if (!gotTheLock) {
         `Chars ${text.length}.`,
       );
 
-      const engineStatus = await ensureOpenClawRunningForCowork();
+      const engineStatus = await ensureOpenClawRunningForCowork({ joinsActiveTurn: true });
       if (engineStatus.phase !== 'running') {
         return {
           ...getEngineNotReadyResponse(engineStatus),
@@ -10219,10 +10443,6 @@ if (!gotTheLock) {
     options: { sessionId: string; command: string },
   ) => {
     try {
-      const engineStatus = await ensureOpenClawRunningForCowork();
-      if (engineStatus.phase !== 'running') {
-        return getEngineNotReadyResponse(engineStatus);
-      }
       const sessionId = typeof options?.sessionId === 'string' ? options.sessionId.trim() : '';
       const command = typeof options?.command === 'string' ? options.command.trim() : '';
       if (!sessionId || !command) {
@@ -10230,6 +10450,13 @@ if (!gotTheLock) {
           success: false,
           error: 'Session id and goal command are required.',
         };
+      }
+      // Starting or resuming a goal continues the session on its model.
+      const engineStatus = await ensureOpenClawRunningForCowork({
+        taskModelRef: resolveCoworkTurnModelRef({ sessionId }),
+      });
+      if (engineStatus.phase !== 'running') {
+        return getEngineNotReadyResponse(engineStatus);
       }
       const runtime = getCoworkEngineRouter();
       if (!runtime.runGoalCommand) {
@@ -10749,45 +10976,6 @@ if (!gotTheLock) {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to get session message rail index',
       };
-    }
-  });
-
-  // Progress cards are served only to the main window's own frame, and only
-  // for sessions this store knows.
-  const isProgressCardRequestAllowed = (
-    event: Electron.IpcMainInvokeEvent,
-    sessionId: unknown,
-  ): sessionId is string => Boolean(
-    mainWindow
-    && !mainWindow.isDestroyed()
-    && event.sender === mainWindow.webContents
-    && event.senderFrame === mainWindow.webContents.mainFrame
-    && typeof sessionId === 'string'
-    && getCoworkStore().getSession(sessionId),
-  );
-
-  ipcMain.handle(CoworkIpcChannel.GetProgressCard, async (event, sessionId: unknown) => {
-    if (!isProgressCardRequestAllowed(event, sessionId)) {
-      return { success: false, error: 'Progress card request rejected' };
-    }
-    try {
-      return { success: true, card: await getCoworkEngineRouter().getProgressCard(sessionId) };
-    } catch (error) {
-      // Expected while the gateway is still connecting; the window retries on the next change.
-      console.debug('[CoworkIPC] progress card read failed:', error);
-      return { success: false, error: 'Progress card unavailable' };
-    }
-  });
-
-  ipcMain.handle(CoworkIpcChannel.DismissProgressCard, async (event, sessionId: unknown, revision: unknown) => {
-    if (!isProgressCardRequestAllowed(event, sessionId) || typeof revision !== 'number') {
-      return { success: false, error: 'Progress card request rejected' };
-    }
-    try {
-      return { success: true, card: await getCoworkEngineRouter().dismissProgressCard(sessionId, revision) };
-    } catch (error) {
-      console.warn('[CoworkIPC] failed to dismiss progress card:', error);
-      return { success: false, error: 'Progress card unavailable' };
     }
   });
 
@@ -13605,50 +13793,31 @@ if (!gotTheLock) {
   officeEditing.register(() => mainWindow);
 
   // ---- artifact file watching ----
-  const fileWatchers = new Map<
-    string,
-    { watcher: fs.FSWatcher; debounceTimer: ReturnType<typeof setTimeout> | null }
-  >();
+  const artifactFileWatcher = new ArtifactFileWatcher<WebContents>({
+    onChange: (filePath, owners) => {
+      for (const owner of owners) {
+        if (!owner.isDestroyed()) owner.send(ArtifactPreviewIpc.FileChanged, { filePath });
+      }
+    },
+  });
+  const artifactFileWatchOwners = new WeakSet<WebContents>();
 
-  ipcMain.handle('artifact:watchFile', (_event, filePath: string) => {
-    if (fileWatchers.has(filePath)) return;
-    try {
-      const watcher = fs.watch(filePath, eventType => {
-        if (eventType !== 'change') return;
-        const entry = fileWatchers.get(filePath);
-        if (!entry) return;
-        if (entry.debounceTimer) clearTimeout(entry.debounceTimer);
-        entry.debounceTimer = setTimeout(() => {
-          entry.debounceTimer = null;
-          const windows = BrowserWindow.getAllWindows();
-          windows.forEach(win => {
-            if (!win.isDestroyed()) {
-              try {
-                win.webContents.send('artifact:file:changed', { filePath });
-              } catch {
-                /* */
-              }
-            }
-          });
-        }, 300);
-      });
-      watcher.on('error', () => {
-        fileWatchers.delete(filePath);
-        watcher.close();
-      });
-      fileWatchers.set(filePath, { watcher, debounceTimer: null });
-    } catch {
-      /* file can't be watched */
+  ipcMain.handle(ArtifactPreviewIpc.WatchFile, (event, filePath: unknown) => {
+    if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) return;
+    const owner = event.sender;
+    if (!artifactFileWatchOwners.has(owner)) {
+      artifactFileWatchOwners.add(owner);
+      // A reloaded or crashed renderer never unsubscribes.
+      const release = () => artifactFileWatcher.releaseOwner(owner);
+      owner.once('destroyed', release);
+      owner.on('render-process-gone', release);
+      owner.on('did-navigate', release);
     }
+    artifactFileWatcher.watch(filePath, owner);
   });
 
-  ipcMain.handle('artifact:unwatchFile', (_event, filePath: string) => {
-    const entry = fileWatchers.get(filePath);
-    if (entry) {
-      if (entry.debounceTimer) clearTimeout(entry.debounceTimer);
-      entry.watcher.close();
-      fileWatchers.delete(filePath);
-    }
+  ipcMain.handle(ArtifactPreviewIpc.UnwatchFile, (event, filePath: unknown) => {
+    if (typeof filePath === 'string') artifactFileWatcher.unwatch(filePath, event.sender);
   });
 
   ipcMain.handle(ArtifactPreviewIpc.CreateSession, async (_event, filePath: string) => {
@@ -15291,7 +15460,7 @@ if (!gotTheLock) {
     // sees the loading UI within ~1-2 s instead of waiting for the full
     // skill bootstrap (~6-8 s previously).
     setContentSecurityPolicy();
-    registerVoiceInputPermissionHandler({
+    registerRendererPermissionHandler({
       session: session.defaultSession,
       getMainWindow: () => mainWindow,
       isDev,
