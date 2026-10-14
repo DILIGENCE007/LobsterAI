@@ -30,6 +30,7 @@ import type { Model } from '../store/slices/modelSlice';
 import { getModelIdentityKey, isSameModelIdentity, setSelectedModel } from '../store/slices/modelSlice';
 import Modal from './common/Modal';
 import { resolvePopoverPlacement } from './cowork/popoverPlacement';
+import { CustomProviderIcon } from './icons/providers';
 import ModelThinkingMenu, {
   getModelThinkingLevelLabel,
 } from './modelSelector/ModelThinkingMenu';
@@ -476,6 +477,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
   const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
   const selectedModel = controlled ? value ?? null : globalSelectedModel;
+  const isCustomModelSelected = Boolean(selectedModel?.providerKey
+    && !selectedModel.isServerModel
+    && selectedModel.providerKey !== ProviderName.LobsteraiServer);
   const selectedModelKey = selectedModel ? getModelIdentityKey(selectedModel) : '';
   const availableModels = useSelector((state: RootState) => state.model.availableModels);
   const serverModels = availableModels.filter(m => m.isServerModel);
@@ -525,7 +529,8 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     ? `${selectedModel.providerKey ?? ''}:${selectedModel.id}`
     : '';
   const selectedModelUnavailableFallbackLogKeyRef = React.useRef('');
-  const triggerMaxWidthClass = triggerMaxWidthClassName ?? (compact ? 'max-w-[220px]' : 'max-w-[280px]');
+  const triggerMaxWidthClass = triggerMaxWidthClassName
+    ?? (compact ? (isCustomModelSelected ? 'max-w-[260px]' : 'max-w-[220px]') : 'max-w-[280px]');
   const triggerClassName = compact
     ? `space-x-1.5 px-2 py-1 rounded-lg ${triggerMaxWidthClass}`
     : `space-x-2 px-3 py-1.5 rounded-xl ${triggerMaxWidthClass}`;
@@ -1352,6 +1357,17 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         {selectedModel?.isServerModel && (
           <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-secondary">
             {renderProviderIcon(selectedModel)}
+          </span>
+        )}
+        {isCustomModelSelected && (
+          <span
+            className="inline-flex h-5 shrink-0 items-center gap-1 rounded-md bg-emerald-600/[0.07] px-1.5 text-[11px] font-medium leading-none text-emerald-800 ring-1 ring-inset ring-emerald-700/[0.08] dark:bg-emerald-400/[0.08] dark:text-emerald-200 dark:ring-emerald-300/[0.12]"
+            title={i18nService.t('modelGroupUser')}
+          >
+            <span className="flex shrink-0 items-center" aria-hidden="true">
+              <CustomProviderIcon className="h-3 w-3" />
+            </span>
+            <span>{i18nService.t('modelSourceCustom')}</span>
           </span>
         )}
         <span className={`${triggerTextClassName} min-w-0 truncate`}>{selectedModel?.name ?? defaultLabel ?? ''}</span>
