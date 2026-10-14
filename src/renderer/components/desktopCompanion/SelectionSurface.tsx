@@ -5,8 +5,8 @@ import {
   BookOpenIcon,
   ChatBubbleLeftEllipsisIcon,
   CheckIcon,
-  ChevronDownIcon,
   Cog6ToothIcon,
+  EllipsisHorizontalIcon,
   LanguageIcon,
   NoSymbolIcon,
   PencilSquareIcon,
@@ -249,15 +249,14 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
     });
     const tools: MenuItem[] = [
       actionItem(CompanionSelectionAction.Translate),
-      actionItem(CompanionSelectionAction.Explain),
-      actionItem(CompanionSelectionAction.Summarize),
+      { key: 'copy', icon: copied ? CheckIcon : Square2StackIcon, label: '', run: copySelection },
       {
         key: 'read',
         icon: SpeakerWaveIcon,
         label: t('desktopToolsReadAloud'),
         run: () => { void api.openLanguageTool({ tool: LanguageTool.Tts, text: selection.text }); },
       },
-      { key: 'copy', icon: copied ? CheckIcon : Square2StackIcon, label: '', run: copySelection },
+      actionItem(CompanionSelectionAction.Summarize),
     ];
     const menu: MenuItem[] = [
       actionItem(CompanionSelectionAction.Explain),
@@ -267,9 +266,9 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
     ];
     const menuOpen = selection.menuOpen;
     return (
-      <div className="sel-surface" data-menu={menuOpen ? (selection.menuUp ? 'up' : 'down') : undefined}>
-        <div className="sel-stack" ref={rootRef}>
-          <div className="sel-toolbar" role="toolbar" aria-label={t('desktopCompanionSelection')}>
+      <div className="sel-surface" data-menu={selection.menuUp ? 'up' : 'down'}>
+        <div className="sel-stack">
+          <div className="sel-toolbar" ref={rootRef} role="toolbar" aria-label={t('desktopCompanionSelection')}>
             {tools.map(({ key, icon: ToolIcon, label, run: onClick }) => (
               <button key={key} type="button" className="sel-tool" data-done={key === 'copy' && copied} onClick={onClick}>
                 <ToolIcon />
@@ -289,7 +288,7 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
               aria-expanded={menuOpen}
               onClick={() => command({ type: DesktopCompanionSelectionCommandType.More, open: !menuOpen })}
             >
-              <ChevronDownIcon />
+              <EllipsisHorizontalIcon />
             </button>
           </div>
           {menuOpen && (

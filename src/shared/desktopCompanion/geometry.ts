@@ -177,18 +177,16 @@ export function resolveCompanionCardBounds(
 }
 
 /**
- * The toolbar's menu opens away from the selection when it can: above a
- * toolbar that sits over the selection, below one under it.
+ * Prefer a dropdown below the toolbar; use the space above only at the screen's bottom edge.
  */
 export function companionMenuOpensUp(
   toolbar: CompanionRect,
   menuHeight: number,
   workArea: CompanionRect,
-  toolbarAboveSelection: boolean,
 ): boolean {
   const fitsBelow = toolbar.y + toolbar.height + menuHeight <= workArea.y + workArea.height;
   const fitsAbove = toolbar.y - menuHeight >= workArea.y;
-  return toolbarAboveSelection ? fitsAbove || !fitsBelow : !fitsBelow && fitsAbove;
+  return !fitsBelow && fitsAbove;
 }
 
 /** Grows the toolbar window to hold its menu without moving the toolbar itself. */

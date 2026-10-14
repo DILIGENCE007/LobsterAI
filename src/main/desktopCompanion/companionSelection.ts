@@ -161,10 +161,10 @@ export class CompanionSelectionController {
   private selection: DesktopCompanionSelection | null = null;
   private anchor: CompanionSelectionAnchor | null = null;
   private size: CompanionSize = { ...DesktopCompanionSize.Toolbar };
-  /** Where the bare toolbar sits; its menu grows the window from here. */
+  /** Where the bare toolbar sits inside the window, excluding its reserved menu space. */
   private toolbarBounds: CompanionRect | null = null;
-  /** The toolbar sits above the selection, its usual place. */
-  private toolbarAbove = true;
+  /** The renderer hit-tests menu items so unused menu space still belongs to the app below. */
+  private passThrough = true;
   /** The window height an answer card may grow to beside the selection. */
   private cardHeight: number = DesktopCompanionSize.Answer.height;
   /** A screenshot is in progress until then (ms since epoch). */
@@ -323,7 +323,7 @@ export class CompanionSelectionController {
       case DesktopCompanionSelectionCommandType.More: {
         if (selection?.mode !== DesktopCompanionSelectionMode.Toolbar) return;
         const open = command.open === true;
-        this.selection = { ...selection, menuOpen: open, menuUp: open && this.menuOpensUp() };
+        this.selection = { ...selection, menuOpen: open };
         this.sendSelection();
         return;
       }
@@ -332,7 +332,8 @@ export class CompanionSelectionController {
         this.host.openSettings();
         return;
       case DesktopCompanionSelectionCommandType.PassThrough:
-        if (this.window && !this.window.isDestroyed()) this.window.setIgnoreMouseEvents(command.passThrough === true, { forward: true });
+        this.passThrough = command.passThrough === true;
+        if (this.window && !this.window.isDestroyed()) this.window.setIgnoreMouseEvents(this.passThrough, { forward: true });
         return;
       case DesktopCompanionSelectionCommandType.Dismiss:
         this.hide();
@@ -341,15 +342,17 @@ export class CompanionSelectionController {
     }
   }
 
-  /** The renderer reports its measured content so the window hugs the toolbar or card. */
+  /** The renderer measures the bare toolbar or card; toolbar placement also reserves menu space. */
   setContentSize(size: CompanionSize): void {
     if (!this.selection) return;
+    const previousMenuUp = this.selection.menuUp;
     const max = this.maxSize(this.selection);
     this.size = {
       width: Math.max(120, Math.min(Math.ceil(size.width), max.width)),
       height: Math.max(40, Math.min(Math.ceil(size.height), max.height)),
     };
     this.place();
+    if (this.selection.menuUp !== previousMenuUp) this.sendSelection();
     if (this.pendingShow) this.reveal();
   }
 
@@ -380,13 +383,7 @@ export class CompanionSelectionController {
 
   private maxSize(selection: DesktopCompanionSelection): CompanionSize {
     if (selection.mode === DesktopCompanionSelectionMode.Answer) return { width: DesktopCompanionSize.Answer.width, height: this.cardHeight };
-    const { width, height } = DesktopCompanionSize.Toolbar;
-    return { width, height: height + (selection.menuOpen ? DesktopCompanionSize.ToolbarMenu : 0) };
-  }
-
-  private menuOpensUp(): boolean {
-    if (!this.toolbarBounds || !this.anchor) return false;
-    return companionMenuOpensUp(this.toolbarBounds, DesktopCompanionSize.ToolbarMenu, this.workArea(this.anchor), this.toolbarAbove);
+    return DesktopCompanionSize.Toolbar;
   }
 
   private startCapture(onRelease: boolean): void {
@@ -486,6 +483,7 @@ export class CompanionSelectionController {
       menuUp: false,
     };
     this.toolbarBounds = null;
+    this.passThrough = true;
     this.moved = false;
     this.endCapture();
     const win = this.ensureWindow();
@@ -514,7 +512,11 @@ export class CompanionSelectionController {
       return;
     }
     if (!this.selection || !this.window || this.window.isDestroyed() || !this.window.isVisible()) return;
-    if (rectContains(visibleArea(this.window.getBounds()), toDip(data))) return;
+    const point = toDip(data);
+    if (this.selection.mode === DesktopCompanionSelectionMode.Toolbar) {
+      if (this.toolbarBounds && rectContains(visibleArea(this.toolbarBounds), point)) return;
+      if (this.selection.menuOpen && !this.passThrough && rectContains(visibleArea(this.window.getBounds()), point)) return;
+    } else if (rectContains(visibleArea(this.window.getBounds()), point)) return;
     if (this.selection.mode === DesktopCompanionSelectionMode.Toolbar || !this.selection.pinned) this.hide();
   };
 
@@ -617,14 +619,14 @@ export class CompanionSelectionController {
     const workArea = this.workArea(this.anchor);
     const selection = this.selection;
     if (selection?.mode === DesktopCompanionSelectionMode.Toolbar) {
-      if (selection.menuOpen && this.toolbarBounds) {
-        this.window.setBounds(resolveCompanionToolbarMenuBounds(this.toolbarBounds, this.size, selection.menuUp, workArea));
-        return;
-      }
       const placement = resolveCompanionToolbarBounds(this.anchor, this.size, workArea);
       this.toolbarBounds = placement.bounds;
-      this.toolbarAbove = placement.above;
-      this.window.setBounds(placement.bounds);
+      const menuUp = companionMenuOpensUp(placement.bounds, DesktopCompanionSize.ToolbarMenu, workArea);
+      this.selection = { ...selection, menuUp };
+      // Reserve the menu before revealing the window. Toggling it only changes content,
+      // avoiding a native resize/move racing the renderer's next frame.
+      const expandedSize = { ...this.size, height: this.size.height + DesktopCompanionSize.ToolbarMenu };
+      this.window.setBounds(resolveCompanionToolbarMenuBounds(placement.bounds, expandedSize, menuUp, workArea));
     } else if (this.moved) {
       // A card the user moved keeps its spot as the answer grows.
       const { x, y } = this.window.getBounds();

@@ -207,7 +207,7 @@ export interface DesktopCompanionSelection {
   pinned: boolean;
   /** The toolbar's "more" menu is open inside the same window. */
   menuOpen: boolean;
-  /** The menu opens above the toolbar, so the window grows upward. */
+  /** Menu space is reserved above the toolbar when there is not enough room below. */
   menuUp: boolean;
   /** How tall the answer card may grow beside the selection before it scrolls. */
   cardMaxHeight?: number;
@@ -329,7 +329,7 @@ export const DesktopCompanionSize = {
   Task: { width: 420, height: 112 },
   Hint: { width: 320, height: 168 },
   Drop: { width: 448, height: 214 },
-  // A 42px toolbar plus the margin; its menu adds up to ToolbarMenu below or above it.
+  // A 42px toolbar plus the margin; the window always reserves ToolbarMenu space below or above it.
   Toolbar: { width: 680, height: 86 },
   ToolbarMenu: 200,
   // A card up to 400 × 600 plus the margin.

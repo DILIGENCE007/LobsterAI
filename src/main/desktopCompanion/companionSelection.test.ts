@@ -98,7 +98,8 @@ const MAC_COMMAND = 0x100000;
 const MAC_SHIFT = 0x20000;
 
 /** The bottom edge of the toolbar or card inside its window. */
-const visibleBottom = () => win.bounds.y + win.bounds.height - PAD;
+const visibleBottom = () => win.bounds.y + win.bounds.height - PAD
+  - (sentSelection()?.mode === DesktopCompanionSelectionMode.Toolbar && !sentSelection()?.menuUp ? DesktopCompanionSize.ToolbarMenu : 0);
 
 function sentSelection() {
   const calls = win.webContents.send.mock.calls.filter(([channel]) => channel === DesktopCompanionIpc.Selection);
@@ -132,41 +133,62 @@ beforeEach(() => {
 });
 
 describe('selection toolbar', () => {
-  test('the more menu opens inside the toolbar window, growing it without moving the toolbar', () => {
+  test('reserves menu space before showing the toolbar and keeps the window still when toggling more', () => {
     const controller = create();
-    select();
+    select('ambient co-worker', 'com.microsoft.Word', 450);
     controller.setContentSize({ width: 450, height: 80 });
     vi.advanceTimersByTime(200);
     const toolbar = { ...win.bounds };
+    expect(toolbar.height).toBe(80 + DesktopCompanionSize.ToolbarMenu);
+    const setBounds = vi.spyOn(win, 'setBounds');
+    for (let toggle = 0; toggle < 4; toggle += 1) {
+      controller.handleCommand({ type: DesktopCompanionSelectionCommandType.More, open: true });
+      expect(sentSelection()).toMatchObject({ mode: DesktopCompanionSelectionMode.Toolbar, menuOpen: true, menuUp: false });
+      expect(win.bounds).toEqual(toolbar);
+      controller.handleCommand({ type: DesktopCompanionSelectionCommandType.More, open: false });
+      expect(win.bounds).toEqual(toolbar);
+    }
+    expect(setBounds).not.toHaveBeenCalled();
     controller.handleCommand({ type: DesktopCompanionSelectionCommandType.More, open: true });
-    expect(sentSelection()).toMatchObject({ mode: DesktopCompanionSelectionMode.Toolbar, menuOpen: true, menuUp: false });
-    controller.setContentSize({ width: 450, height: 260 });
-    expect(win.bounds).toEqual({ ...toolbar, height: 260 });
     // A click in the menu keeps the toolbar; its actions run on the same selection.
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.PassThrough, passThrough: false });
     FakeHook.last!.emit('mouse-down', { x: toolbar.x + 300, y: toolbar.y + 200, button: 0 });
     expect(win.visible).toBe(true);
-    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Polish });
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
     expect(sentSelection()).toMatchObject({
-      text: 'ambient co-worker', mode: DesktopCompanionSelectionMode.Answer, action: CompanionSelectionAction.Polish, menuOpen: false,
+      text: 'ambient co-worker', mode: DesktopCompanionSelectionMode.Answer, action: CompanionSelectionAction.Explain, menuOpen: false,
     });
     expect(win.focusable).toBe(true);
     controller.dispose();
   });
 
-  test('with room above the toolbar, its menu opens upward and leaves the selection visible', () => {
+  test('reserves space above only near the bottom of the screen, without moving on open or close', () => {
     const controller = create();
     select('ambient co-worker', 'com.microsoft.Word', 800);
     controller.setContentSize({ width: 450, height: 80 });
     vi.advanceTimersByTime(200);
     const toolbar = { ...win.bounds };
+    expect(sentSelection()).toMatchObject({ menuOpen: false, menuUp: true });
+    expect(toolbar.height).toBe(80 + DesktopCompanionSize.ToolbarMenu);
     controller.handleCommand({ type: DesktopCompanionSelectionCommandType.More, open: true });
     expect(sentSelection()).toMatchObject({ menuOpen: true, menuUp: true });
-    controller.setContentSize({ width: 450, height: 260 });
-    expect(win.bounds.y + win.bounds.height).toBe(toolbar.y + toolbar.height);
+    expect(win.bounds).toEqual(toolbar);
     controller.handleCommand({ type: DesktopCompanionSelectionCommandType.More, open: false });
-    controller.setContentSize({ width: 450, height: 80 });
     expect(win.bounds).toEqual(toolbar);
     expect(sentSelection()).toMatchObject({ menuOpen: false });
+    controller.dispose();
+  });
+
+  test.each([false, true])('clicks in unused menu space dismiss the toolbar with menuOpen=%s', menuOpen => {
+    const controller = create();
+    select();
+    controller.setContentSize({ width: 450, height: 80 });
+    vi.advanceTimersByTime(200);
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.More, open: menuOpen });
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.PassThrough, passThrough: true });
+    // The renderer forwards the pointer over the transparent area beside/below the menu.
+    FakeHook.last!.emit('mouse-down', { x: win.bounds.x + PAD + 10, y: win.bounds.y + 120, button: 0 });
+    expect(win.visible).toBe(false);
     controller.dispose();
   });
 
@@ -260,7 +282,7 @@ describe('selection toolbar', () => {
     controller.handleCommand({ type: DesktopCompanionSelectionCommandType.PassThrough, passThrough: false });
     expect(win.setIgnoreMouseEvents).toHaveBeenLastCalledWith(false, { forward: true });
     // A click on the first selected line, inside the window but below the toolbar itself.
-    FakeHook.last!.emit('mouse-down', { x: 400, y: win.bounds.y + win.bounds.height - 4, button: 0 });
+    FakeHook.last!.emit('mouse-down', { x: 400, y: win.bounds.y + 80 - 4, button: 0 });
     expect(win.visible).toBe(false);
     controller.dispose();
   });
