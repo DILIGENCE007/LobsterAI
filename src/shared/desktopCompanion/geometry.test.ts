@@ -197,13 +197,13 @@ describe('selection toolbar placement', () => {
     expect(card).toMatchObject({ y: 25, height: 560 });
   });
 
-  test('opens the menu away from the selection, unless only the other side has room', () => {
+  test('opens the menu below the toolbar unless only the space above can fit it', () => {
     const below = { x: 300, y: 204, width: 400, height: 80 };
-    expect(companionMenuOpensUp(below, 200, area, false)).toBe(false);
-    expect(companionMenuOpensUp({ ...below, y: 760 }, 200, area, false)).toBe(true);
+    expect(companionMenuOpensUp(below, 200, area)).toBe(false);
+    expect(companionMenuOpensUp({ ...below, y: 760 }, 200, area)).toBe(true);
     const above = { x: 300, y: 600, width: 400, height: 80 };
-    expect(companionMenuOpensUp(above, 200, area, true)).toBe(true);
-    expect(companionMenuOpensUp({ ...above, y: 100 }, 200, area, true)).toBe(false);
+    expect(companionMenuOpensUp(above, 200, area)).toBe(false);
+    expect(companionMenuOpensUp({ ...above, y: 100 }, 200, area)).toBe(false);
   });
 
   test('grows the window for the menu while the toolbar stays where it was', () => {
