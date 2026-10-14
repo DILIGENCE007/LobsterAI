@@ -9,6 +9,17 @@ test('recognizes pinned OpenClaw MCP namespaces without uploading server or tool
   expect(JSON.stringify(params)).not.toContain('private');
 });
 
+test('correlates tools from the same MCP server only within an installation', () => {
+  const first = classifyCapability('private-server__query', {}, [], 'local-secret');
+  const second = classifyCapability('private-server__write', {}, [], 'local-secret');
+  const otherInstallation = classifyCapability('private-server__query', {}, [], 'other-secret');
+  expect(first.serverId).toMatch(/^[\da-f]{32}$/);
+  expect(first.serverId).toBe(second.serverId);
+  expect(first.capabilityId).not.toBe(second.capabilityId);
+  expect(first.serverId).not.toBe(otherInstallation.serverId);
+  expect(first.capabilityId).not.toBe(otherInstallation.capabilityId);
+});
+
 test('only a read of an installed SKILL.md counts as a skill load, not arbitrary reads', () => {
   const skillPath = path.resolve('private', 'SKILL.md');
   const skills = [{ id: 'docx', isBuiltIn: true, skillPath }];

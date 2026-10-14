@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'crypto';
+import { createHmac, randomUUID } from 'crypto';
 import path from 'path';
 
 import { catalogAnalyticsId, UsageAnalytics, type UsageParams } from '../../shared/analytics/usage';
@@ -48,9 +48,9 @@ export function getResourceAnalyticsSalt(store: {
   return salt;
 }
 
-/** Only salted pseudonyms leave the client for user-defined server/tool/skill identifiers. */
+/** Only pseudonyms leave the client; the random salt is an installation-local HMAC key. */
 export function resourceAnalyticsId(salt: string, kind: string, value: string): string {
-  return createHash('sha256').update(`${salt}\0${kind}\0${value}`).digest('hex').slice(0, 32);
+  return createHmac('sha256', salt).update(`${kind}\0${value}`).digest('hex').slice(0, 32);
 }
 
 export function classifyCapability(
