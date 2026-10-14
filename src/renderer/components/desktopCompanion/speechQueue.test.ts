@@ -1,10 +1,18 @@
 import { describe, expect, test, vi } from 'vitest';
 
 import { SpeechStatus } from '../../../shared/desktopCompanion/languageTools';
-import { type SpeechAudio, type SpeechPlayback,SpeechQueue } from './speechQueue';
+import { type SpeechAudio, type SpeechPlayback, SpeechQueue } from './speechQueue';
 
 function fixture() {
-  const audio: SpeechAudio = { src: '', playbackRate: 1, onended: null, onerror: null,
+  let src = '';
+  const audio: SpeechAudio = {
+    get src() { return src; },
+    set src(value) {
+      src = value;
+      // Loading a new media resource restores playbackRate from defaultPlaybackRate.
+      this.playbackRate = this.defaultPlaybackRate;
+    },
+    defaultPlaybackRate: 1, playbackRate: 1, onended: null, onerror: null,
     play: vi.fn(async () => undefined), pause: vi.fn() };
   const states: SpeechPlayback[] = [];
   const revokeUrl = vi.fn();
@@ -15,6 +23,50 @@ function fixture() {
 }
 
 describe('read-aloud playback queue', () => {
+  test.each(['audio/mpeg', 'audio/wav'])('preserves the selected rate across %s segments and cached replay', async mime => {
+    const { queue, audio } = fixture();
+    queue.setRate(2);
+    queue.begin();
+    queue.append(0, 'one', mime);
+    queue.append(1, 'two', mime);
+    queue.finish();
+    await Promise.resolve();
+    expect(audio.playbackRate).toBe(2);
+
+    queue.setRate(0.75);
+    audio.onended?.(new Event('ended'));
+    await Promise.resolve();
+    expect(audio.src).toBe('blob:two');
+    expect(audio.playbackRate).toBe(0.75);
+
+    queue.pause();
+    queue.resume();
+    expect(audio.playbackRate).toBe(0.75);
+    audio.onended?.(new Event('ended'));
+    queue.resume();
+    await Promise.resolve();
+    expect(audio.src).toBe('blob:one');
+    expect(audio.playbackRate).toBe(0.75);
+
+    queue.begin();
+    queue.append(0, 'new-request', mime);
+    await Promise.resolve();
+    expect(audio.playbackRate).toBe(0.75);
+  });
+
+  test('keeps a rate selected while waiting for the next segment', async () => {
+    const { queue, audio, status } = fixture();
+    queue.begin();
+    queue.append(0, 'one', 'audio/wav');
+    await Promise.resolve();
+    audio.onended?.(new Event('ended'));
+    expect(status()).toBe(SpeechStatus.Loading);
+    queue.setRate(1.5);
+    queue.append(1, 'two', 'audio/wav');
+    await Promise.resolve();
+    expect(audio.playbackRate).toBe(1.5);
+  });
+
   test('plays arriving segments in order and replays cached audio without another request', async () => {
     const { queue, audio, status } = fixture();
     queue.begin();
