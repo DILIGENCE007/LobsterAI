@@ -6,6 +6,7 @@ import {
   type AgentLegacyIdentityCleanupResult,
   AgentLegacyIdentityCleanupStatus,
 } from '../../../shared/agent/constants';
+import { usageFailureCode, type UsageParams } from '../../../shared/analytics/usage';
 import type { AgentManager } from '../../agentManager';
 import type { CoworkStore, CreateAgentRequest, UpdateAgentRequest } from '../../coworkStore';
 import type { IMGatewayManager } from '../../im';
@@ -22,6 +23,7 @@ type SyncOpenClawConfig = (options: {
 }>;
 
 export interface AgentHandlerDeps {
+  reportPresetPreparation?: (fields: UsageParams) => void;
   getAgentManager: () => AgentManager;
   getCoworkStore: () => CoworkStore;
   getCoworkEngineRouter: () => CoworkEngineRouter;
@@ -286,19 +288,34 @@ export function registerAgentHandlers(deps: AgentHandlerDeps): void {
   });
 
   ipcMain.handle(AgentIpcChannel.AddPreset, async (event, presetId: string) => {
+    const startedAt = Date.now();
+    let failureStage: PresetPreparationStage = PresetPreparationStage.Catalog;
+    let prepareMode: PresetPreparationMode = PresetPreparationMode.Install;
+    const report = (outcome: string, failureCode?: string) => {
+      try {
+        deps.reportPresetPreparation?.({ presetId, outcome, prepareMode, durationMs: Date.now() - startedAt,
+          ...(failureCode ? { failureStage, failureCode } : {}) });
+      } catch { /* Reporting must not affect expert preparation. */ }
+    };
     try {
+      const existing = getAgentManager().listAgents().find(agent => agent.source === 'preset' && agent.presetId === presetId);
+      prepareMode = existing ? existing.enabled ? PresetPreparationMode.Reuse : PresetPreparationMode.Reenable : PresetPreparationMode.Install;
       const agent = await getAgentManager().addPresetAgent(presetId, resolveDefaultAgentModelRef());
-      if (!agent) return { success: false, error: 'Preset agent not found' };
+      if (!agent) { report('failed', 'preset_not_found'); return { success: false, error: 'Preset agent not found' }; }
       // The composer must not become ready before OpenClaw knows this agent.
       // If sync fails, a retry reuses the saved instance instead of duplicating it.
+      failureStage = PresetPreparationStage.ConfigSync;
       const syncResult = await syncOpenClawConfig({ reason: 'agent-preset-added' });
       if (!syncResult.success) {
+        report('failed', usageFailureCode(syncResult.error));
         console.error('[OpenClaw] config sync after agent-preset-added failed:', syncResult.error);
         return { success: false, error: syncResult.error || 'Failed to sync preset agent' };
       }
       notifyAgentsChanged(event.sender);
+      report('succeeded');
       return { success: true, agent };
     } catch (error) {
+      report('failed', usageFailureCode(error));
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to add preset agent',
@@ -306,3 +323,8 @@ export function registerAgentHandlers(deps: AgentHandlerDeps): void {
     }
   });
 }
+
+const PresetPreparationStage = { Catalog: 'catalog', ConfigSync: 'config_sync' } as const;
+type PresetPreparationStage = typeof PresetPreparationStage[keyof typeof PresetPreparationStage];
+const PresetPreparationMode = { Install: 'install', Reuse: 'reuse', Reenable: 'reenable' } as const;
+type PresetPreparationMode = typeof PresetPreparationMode[keyof typeof PresetPreparationMode];

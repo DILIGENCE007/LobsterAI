@@ -1,3 +1,5 @@
+import { UsageEntry } from '@shared/analytics/usage';
+
 import { store } from '../store';
 import { setSidebarRevealAgentId } from '../store/slices/agentSlice';
 import {
@@ -15,6 +17,7 @@ import type { Agent } from '../types/agent';
 import { CoworkCollaborationMode } from '../types/cowork';
 import { agentService } from './agent';
 import { coworkService } from './cowork';
+import { prepareExpertAnalytics } from './usageAnalytics';
 
 const EXPERT_HOME_DRAFT_KEY = '__home__';
 
@@ -27,6 +30,7 @@ export function switchExpertInDraft(agentId: string, prompt: string): boolean {
   store.dispatch(setSidebarRevealAgentId(agent.id));
   store.dispatch(setDraftSkillIds({ draftKey: EXPERT_HOME_DRAFT_KEY, skillIds: agent.skillIds }));
   store.dispatch(setDraftPrompt({ sessionId: EXPERT_HOME_DRAFT_KEY, draft: prompt }));
+  prepareExpertAnalytics(agent.id, agent.presetId, { entry: UsageEntry.Picker });
   return true;
 }
 

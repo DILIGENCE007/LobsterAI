@@ -1,4 +1,5 @@
 import { CheckIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { catalogAnalyticsId, UsageAnalytics, UsageStage } from '@shared/analytics/usage';
 import {
   createAccountOwnerKey,
   isEnterpriseAccountOwnerKey,
@@ -21,7 +22,9 @@ import {
 import { getProviderIcon, ProviderIconId } from '../../providers/uiRegistry';
 import { authService } from '../../services/auth';
 import { i18nService } from '../../services/i18n';
+import { LogReporterAction, reportYdAnalyzer } from '../../services/logReporter';
 import { localStore } from '../../services/store';
+import { getDraftAnalytics, getSessionUsageContext } from '../../services/usageAnalytics';
 import { type AppDispatch, RootState, store } from '../../store';
 import { setMediaModels, setMediaSelection } from '../../store/slices/coworkSlice';
 import type { MediaGenerationSelection, MediaModel } from '../../types/mediaGeneration';
@@ -773,6 +776,22 @@ const MediaModelPicker: React.FC<MediaModelPickerProps> = ({ draftKey, disabled,
     enterpriseQuotaAvailable: enterpriseContext?.quotaStatus.available,
   });
   const canUseMediaGeneration = mediaAccess.allowed;
+  const mediaExposureRef = useRef<string>();
+  const reportMedia = useCallback((stage: string, params: Record<string, string | number | boolean | undefined> = {}) => {
+    const state = store.getState();
+    void reportYdAnalyzer({ action: LogReporterAction.MediaLifecycle, schemaVersion: UsageAnalytics.SchemaVersion,
+      ...getDraftAnalytics(state.agent.currentAgentId),
+      ...(draftKey !== '__home__' ? getSessionUsageContext(draftKey) : {}),
+      stage, entry: 'model_picker', mediaType: activeTab, accessAllowed: mediaAccess.allowed,
+      blockedReason: mediaAccess.reason, ...params });
+  }, [draftKey, activeTab, mediaAccess.allowed, mediaAccess.reason]);
+  useEffect(() => {
+    if (!isOpen) { mediaExposureRef.current = undefined; return; }
+    const key = activeTab + ':' + mediaAccess.reason + ':' + mediaAccess.allowed;
+    if (mediaExposureRef.current === key) return;
+    mediaExposureRef.current = key;
+    reportMedia(UsageStage.View);
+  }, [isOpen, activeTab, mediaAccess.reason, mediaAccess.allowed, reportMedia]);
   const showsModelList = isLoggedIn && canUseMediaGeneration;
   const desiredPanelWidth = showsModelList ? MEDIA_MODEL_LIST_PANEL_WIDTH : MEDIA_PROMPT_PANEL_WIDTH;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1013,16 +1032,19 @@ const MediaModelPicker: React.FC<MediaModelPickerProps> = ({ draftKey, disabled,
   ]);
 
   const handleSelect = (mode: 'image' | 'video', model: MediaModel) => {
+    reportMedia(UsageStage.Select, { mediaType: mode, modelId: catalogAnalyticsId(model.modelId) });
     if (!ownerAccountKey) return;
     void toggleMediaModelSelection(dispatch, { draftKey, ownerAccountKey, accountGeneration }, selection, mode, model);
   };
 
   const handleLogin = async () => {
+    reportMedia(UsageStage.Login);
     setIsOpen(false);
     await authService.login();
   };
 
   const handleSubscribe = async () => {
+    reportMedia(UsageStage.Subscribe);
     setIsOpen(false);
     const { getPortalPricingUrl } = await import('../../services/endpoints');
     await window.electron.shell.openExternal(getPortalPricingUrl());

@@ -9,6 +9,7 @@ import {
   ActivityIpc,
 } from '../shared/activity/constants';
 import { AgentIpcChannel, AgentLegacyIdentityCleanupStatus } from '../shared/agent/constants';
+import type { UsageContext } from '../shared/analytics/usage';
 import { AppIpcChannel } from '../shared/app/constants';
 import { AppSettingsIpc } from '../shared/appSettings/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
@@ -603,6 +604,7 @@ contextBridge.exposeInMainWorld('electron', {
   cowork: {
     // Session management
     startSession: (options: {
+      analytics?: UsageContext;
       prompt: string;
       cwd?: string;
       systemPrompt?: string;
@@ -619,8 +621,9 @@ contextBridge.exposeInMainWorld('electron', {
       thinkingLevel?: string;
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string; sizeBytes?: number; localPath?: string; previewMimeType?: string; previewBase64Data?: string }>;
       mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string }; mediaReferences?: Array<{ token: string; mediaType: string; index: number; fileId: string; fileName: string; mimeType: string; localPath?: string; remoteUrl?: string; dataUrl?: string; role?: string }>;
-    }) => ipcRenderer.invoke('cowork:session:start', options),
+    }) => ipcRenderer.invoke(CoworkIpcChannel.SessionStart, options),
     continueSession: (options: {
+      analytics?: UsageContext;
       sessionId: string;
       prompt: string;
       systemPrompt?: string;
@@ -644,7 +647,7 @@ contextBridge.exposeInMainWorld('electron', {
         remoteUrl?: string;
         dataUrl?: string; role?: string;
       }>;
-    }) => ipcRenderer.invoke('cowork:session:continue', options),
+    }) => ipcRenderer.invoke(CoworkIpcChannel.SessionContinue, options),
     submitBtw: (options: CoworkBtwSubmitRequest): Promise<CoworkBtwSubmitResponse> =>
       ipcRenderer.invoke(CoworkIpcChannel.SubmitBtw, options),
     abortBtw: (options: CoworkBtwAbortRequest): Promise<CoworkBtwAbortResponse> =>

@@ -64,6 +64,8 @@ export const COWORK_TEMP_DIR_NAME = '.cowork-temp';
 export const COWORK_TEMP_ATTACHMENTS_DIR_NAME = 'attachments';
 
 export const CoworkIpcChannel = {
+  SessionStart: 'cowork:session:start',
+  SessionContinue: 'cowork:session:continue',
   GenerateSessionTitle: 'cowork:session:generateTitle',
   RenameSession: 'cowork:session:rename',
   ConfigSet: 'cowork:config:set',

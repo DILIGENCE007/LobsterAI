@@ -100,6 +100,7 @@ import { restoreNativeQuestionPermissions } from './nativeQuestionRecovery';
 import { reportOnboardingAction } from './onboardingAnalytics';
 import { isConfigApplyPendingStatus, resolveEngineNotReadyMessage } from './openclawEngineStatus';
 import { resolveOpenClawRepairHistoryWarning } from './openclawRepair';
+import { beginTaskSubmission, finishTaskSubmission, resetDraftAnalytics } from './usageAnalytics';
 
 const STREAM_ERROR_DUPLICATE_WINDOW_MS = 10_000;
 
@@ -1085,7 +1086,16 @@ class CoworkService {
 
     store.dispatch(setStreaming(true));
 
-    const result = await cowork.startSession(options);
+    const analytics = beginTaskSubmission(options.agentId);
+    let result: Awaited<ReturnType<typeof cowork.startSession>>;
+    try {
+      result = await cowork.startSession({ ...options, analytics });
+    } catch (error) {
+      finishTaskSubmission(analytics, undefined, error);
+      store.dispatch(setStreaming(false));
+      throw error;
+    }
+    finishTaskSubmission(analytics, result.success ? result.session?.id : undefined, result.code ?? result.error);
     if (result.success && result.session) {
       store.dispatch(addSession(result.session));
       if (result.session.status !== 'running') {
@@ -1130,7 +1140,9 @@ class CoworkService {
     this.setCurrentSessionStreaming(options.sessionId, true, 'continue_session_requested');
     store.dispatch(updateSessionStatus({ sessionId: options.sessionId, status: 'running' }));
 
+    const analytics = beginTaskSubmission(undefined, options.sessionId);
     const result = await cowork.continueSession({
+      analytics,
       sessionId: options.sessionId,
       prompt: options.prompt,
       systemPrompt: options.systemPrompt,
@@ -1144,7 +1156,12 @@ class CoworkService {
       mediaReferences: options.mediaReferences,
       selectedTextSnippets: options.selectedTextSnippets,
       browserAnnotations: options.browserAnnotations,
+    }).catch(error => {
+      finishTaskSubmission(analytics, undefined, error);
+      this.setCurrentSessionStreaming(options.sessionId, false, 'continue_session_failed');
+      throw error;
     });
+    finishTaskSubmission(analytics, result.success ? options.sessionId : undefined, result.code ?? result.error);
     if (!result.success) {
       this.setCurrentSessionStreaming(options.sessionId, false, 'continue_session_failed');
       if (result.engineStatus) {
@@ -2515,6 +2532,7 @@ class CoworkService {
   }
 
   clearSession(options: { restoreAgentSkills?: boolean } = {}): void {
+    resetDraftAnalytics();
     // Invalidate an in-flight load so an old history/IM session cannot replace
     // the new-task view after the user has explicitly left that session.
     this.latestLoadSessionRequestId += 1;

@@ -1,4 +1,5 @@
 import type { OpenClawSessionPatch } from '../../../common/openclawSession';
+import type { UsageContext } from '../../../shared/analytics/usage';
 import type { CoworkBrowserAnnotationMessageBatch } from '../../../shared/cowork/browserAnnotations';
 import type {
   CoworkBtwAbortResponse,
@@ -106,6 +107,7 @@ export type CoworkMediaSelection = {
 };
 
 export type CoworkStartOptions = {
+  analytics?: UsageContext;
   skipInitialUserMessage?: boolean;
   skillIds?: string[];
   messageSkillIds?: string[];
@@ -126,6 +128,7 @@ export type CoworkStartOptions = {
 };
 
 export type CoworkContinueOptions = {
+  analytics?: UsageContext;
   skipInitialUserMessage?: boolean;
   systemPrompt?: string;
   skillIds?: string[];

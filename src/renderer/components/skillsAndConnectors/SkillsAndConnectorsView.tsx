@@ -7,6 +7,7 @@ import SidebarKitsIcon from '../icons/SidebarKitsIcon';
 import SidebarMcpIcon from '../icons/SidebarMcpIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import SkillIcon from '../icons/SkillIcon';
+import { reportKitAction } from '../kits/analytics';
 import KitsManager from '../kits/KitsManager';
 import { McpManager } from '../mcp';
 import { reportMcpAction } from '../mcp/analytics';
@@ -62,8 +63,9 @@ const SkillsAndConnectorsView: React.FC<SkillsAndConnectorsViewProps> = ({
 
   const handleSectionSelect = (section: SkillsConnectorsSection) => {
     if (section === activeSection) return;
-    if (section !== SkillsConnectorsSection.Kits) {
-      const report = section === SkillsConnectorsSection.Connectors ? reportMcpAction : reportSkillAction;
+    {
+      const report = section === SkillsConnectorsSection.Kits ? reportKitAction
+        : section === SkillsConnectorsSection.Connectors ? reportMcpAction : reportSkillAction;
       report('section_change', {
         source: 'skills_connectors_view',
         fromSection: activeSection,
