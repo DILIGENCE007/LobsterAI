@@ -2,6 +2,7 @@ import Lottie from 'lottie-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
 
+import { MediaProtocol } from '../../../shared/media/constants';
 import mediaGeneratingAnimation from '../../assets/lottie/media-generating.json';
 import { i18nService } from '../../services/i18n';
 import { selectIsStreaming } from '../../store/selectors/coworkSelectors';
@@ -14,6 +15,7 @@ import {
   reportConversationBlockAction,
 } from './conversationAnalytics';
 import DiffView, { extractDiffFromToolInput } from './DiffView';
+import MediaTaskCard from './MediaTaskCard';
 import {
   type ConsolidatedItem,
   formatElapsedDuration,
@@ -338,6 +340,14 @@ const ToolCallGroup: React.FC<{
           )}
     </>
   );
+
+  const mediaDetails = {
+    ...(toolResult?.metadata?.toolResultDetails as Record<string, unknown> | undefined),
+    ...(toolUse.metadata?.mediaStatusDetails as Record<string, unknown> | undefined),
+  };
+  if (mediaDetails.protocolVersion === MediaProtocol.Durable && mediaDetails.taskId) {
+    return <MediaTaskCard details={mediaDetails} startedAt={toolUse.timestamp} />;
+  }
 
   if (variant === ActivityEntryVariant.Row) {
     const stepItem: ConsolidatedItem = { type: 'tool_group', group };

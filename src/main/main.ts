@@ -179,6 +179,7 @@ import {
   type LocalWebService,
   LocalWebServicesIpc,
 } from '../shared/localWebServices/constants';
+import { MEDIA_V2_TASKS_PATH, MediaDeliveryStatus, MediaProtocol, MediaTaskPhase, MediaTaskStatus, TERMINAL_MEDIA_TASK_STATUSES } from '../shared/media/constants';
 import { canonicalizeMediaModelId, HAPPYHORSE_1_1_MODEL_ID, mediaModelDisplayName } from '../shared/mediaModelAliases';
 import {
   normalizeNotificationSettings,
@@ -458,6 +459,8 @@ import {
   MainWindowLoadErrorCode,
 } from './libs/mainWindowLoadRecovery';
 import { inferImageMimeTypeFromDataUrl, type PersistedGeneratedImageAsset, persistGeneratedImageAssets, type PersistGeneratedImageAssetsResult, persistGeneratedVideoAssets, type RemoteGeneratedMediaAsset } from './libs/mediaAssetPersistence';
+import { MediaDownloadCoordinator } from './libs/mediaDownloadCoordinator';
+import { MediaTaskStore, type MediaTaskTracker } from './libs/mediaTaskStore';
 import { MediaUsageAnalytics } from './libs/mediaUsageAnalytics';
 import {
   migrateAgentModelRefs,
@@ -4627,18 +4630,6 @@ const resolveGeneratedMediaAssetMimeType = (mediaType: 'image' | 'video', url: s
 };
 
 // Async video task polling (FR-8)
-interface MediaTaskTracker {
-  taskId: string;
-  sessionId: string;
-  mediaType: 'image' | 'video';
-  model: string;
-  ownerAccountKey: string;
-  accountGeneration: number;
-  startedAt: number;
-  pollCount: number;
-  timeoutMs: number;
-  lastPollAt?: number;
-}
 const pendingMediaTasks = new Map<string, MediaTaskTracker>();
 const mediaTaskOwnerById = new Map<string, string>();
 const mediaStatusPollCounts = new Map<string, number>();
@@ -4653,7 +4644,13 @@ const MEDIA_POLL_FAST_COUNT = 6;
 const MEDIA_POLL_SLOW_COUNT = 18;
 const MEDIA_POLL_MEDIUM_COUNT = 10;
 const MEDIA_TASK_DEFAULT_TIMEOUT_MS = 172_800_000;
-const TERMINAL_MEDIA_TASK_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
+const getMediaTaskStore = () => new MediaTaskStore(getStore());
+const getOwnedDurableMediaTask = (taskId: string): MediaTaskTracker | undefined => {
+  const scope = resolveCurrentMediaAccountScope();
+  return scope ? getMediaTaskStore().findOwnedTask(taskId, scope.ownerAccountKey, getServerApiBaseUrl()) : undefined;
+};
+const isDurableMediaTask = (taskId: string): boolean => pendingMediaTasks.get(taskId)?.protocolVersion === MediaProtocol.Durable
+  || getOwnedDurableMediaTask(taskId)?.protocolVersion === MediaProtocol.Durable;
 
 const rememberMediaTaskOwnership = (
   ownerAccountKey: string,
@@ -4666,7 +4663,8 @@ const resolveMediaTaskOwner = (taskId: unknown): string | undefined => {
   const normalizedTaskId = String(taskId ?? '').trim();
   if (!normalizedTaskId) return undefined;
   return pendingMediaTasks.get(normalizedTaskId)?.ownerAccountKey
-    ?? mediaTaskOwnerById.get(normalizedTaskId);
+    ?? mediaTaskOwnerById.get(normalizedTaskId)
+    ?? getOwnedDurableMediaTask(normalizedTaskId)?.ownerAccountKey;
 };
 
 const normalizeOptionalMediaModelId = (modelId: string | undefined): string | undefined => {
@@ -4964,6 +4962,7 @@ const markMediaTaskHandledByStatusPolling = (
   ownerAccountKey: string,
   taskId: string,
 ): void => {
+  if (isDurableMediaTask(taskId)) return;
   mediaTasksHandledByStatusPolling.add(getMediaStatusPollKey(sessionId, ownerAccountKey, taskId));
   const tracker = pendingMediaTasks.get(taskId);
   if (tracker?.ownerAccountKey === ownerAccountKey) {
@@ -6587,7 +6586,9 @@ if (!gotTheLock) {
         const mediaType = tool === MediaGenerationTool.Image ? 'images' : 'videos';
         const statusMediaType = tool === MediaGenerationTool.Image ? 'image' : 'video';
         console.log(`[MediaGeneration] checking ${mediaType} task status for task ${taskId}.`);
-        const resp = await fetchWithAuth(`${serverBaseUrl}/api/media/${mediaType}/tasks/${taskId}`);
+        const taskPath = isDurableMediaTask(taskId) ? `${MEDIA_V2_TASKS_PATH}/${encodeURIComponent(taskId)}`
+          : `/api/media/${mediaType}/tasks/${encodeURIComponent(taskId)}`;
+        const resp = await fetchWithAuth(`${serverBaseUrl}${taskPath}`, { signal: AbortSignal.timeout(30_000) });
         console.log(`[MediaGeneration] server returned HTTP ${resp.status} for ${mediaType} task status.`);
         const body = await resp.json() as { code: number; data?: Record<string, unknown>; message?: string };
         if (!isRequestAccountCurrent()) return staleAccountResult();
@@ -6611,7 +6612,7 @@ if (!gotTheLock) {
           task.taskId,
           task.upstreamTaskId,
         );
-        const status = task.status as string;
+        let status = task.status as string;
         const resultUrls = (task.resultUrls as string[]) || [];
         mediaUsage.observe(taskId, status, resultUrls.length);
         const outputModel = mediaModelIdForOutput(task.model);
@@ -6637,11 +6638,13 @@ if (!gotTheLock) {
 
         let resultLines: string[];
         let detailsAssets: unknown[] = assets;
+        let savedCount = 0;
         if (status === 'succeeded' && statusMediaType === 'image' && sessionId) {
           const persistResult = await persistGeneratedImages(sessionId, assets);
           if (!isRequestAccountCurrent()) return staleAccountResult();
           mediaUsage.save(String(args.taskId), persistResult?.saved.length ?? 0, assets.length);
           if (persistResult && persistResult.saved.length > 0) {
+            savedCount = persistResult.saved.length;
             detailsAssets = persistResult.saved;
             resultLines = persistResult.saved.map(asset =>
               `  - [${asset.filename}](${pathToFileURL(asset.filePath).toString()})`
@@ -6654,6 +6657,7 @@ if (!gotTheLock) {
           if (!isRequestAccountCurrent()) return staleAccountResult();
           mediaUsage.save(String(args.taskId), persistResult?.saved.length ?? 0, assets.length);
           if (persistResult && persistResult.saved.length > 0) {
+            savedCount = persistResult.saved.length;
             detailsAssets = persistResult.saved;
             resultLines = persistResult.saved.map(asset =>
               `  - [${asset.filename}](${pathToFileURL(asset.filePath).toString()})`
@@ -6667,20 +6671,35 @@ if (!gotTheLock) {
             : resultUrls.map(url => `  - ${url}`);
         }
 
+        const deliveryPending = task.protocolVersion === MediaProtocol.Durable && status === MediaTaskStatus.Succeeded
+          && (assets.length === 0 || savedCount !== assets.length);
+        if (deliveryPending) status = MediaTaskStatus.Processing;
         const lines = [
-          `Task ID: ${task.upstreamTaskId || task.taskId}`,
+          `Task ID: ${task.protocolVersion === MediaProtocol.Durable ? task.taskId : task.upstreamTaskId || task.taskId}`,
           `Model: ${outputModel}`,
           ...(upstreamModel ? [`Selected model: ${upstreamModel}`] : []),
           ...(modelSelectionReason ? [`Selection reason: ${modelSelectionReason}`] : []),
           `Status: ${status}`,
+          ...(task.protocolVersion === MediaProtocol.Durable && !TERMINAL_MEDIA_TASK_STATUSES.has(status) ? ['This task continues in the background. Do not regenerate. Dependent steps must wait for a saved result.'] : []),
           ...(task.progress ? [`Progress: ${task.progress}%`] : []),
           ...(resultUrls.length > 0 ? [`Results:\n${resultLines.join('\n')}`] : []),
           ...(task.errorMessage ? [`Error: ${task.errorMessage}`] : []),
         ];
         const details = {
           taskId: String(task.taskId),
+          protocolVersion: task.protocolVersion,
+          phase: task.phase,
+          slow: task.slow,
+          canCancel: task.canCancel,
+          error: task.error,
           ...(task.upstreamTaskId ? { upstreamTaskId: String(task.upstreamTaskId) } : {}),
           status,
+          generationStatus: task.status,
+          billingStatus: task.billingStatus,
+          errorMessage: task.errorMessage,
+          ...(deliveryPending ? { phase: MediaTaskPhase.Fetching, deliveryStatus: MediaDeliveryStatus.Retrying } : {}),
+          ...(task.protocolVersion === MediaProtocol.Durable && status === MediaTaskStatus.Succeeded
+            ? { deliveryStatus: MediaDeliveryStatus.Saved } : {}),
           ...(pollCount > 1 ? { pollCount } : {}),
           model: outputModel,
           ...(upstreamModel ? { upstreamModel } : {}),
@@ -6689,6 +6708,12 @@ if (!gotTheLock) {
           ...(detailsAssets.length > 0 ? { assets: detailsAssets } : {}),
           ...(task.quotaRemaining != null ? { billing: { quotaRemaining: task.quotaRemaining } } : {}),
         };
+        if (task.protocolVersion === MediaProtocol.Durable && sessionId) {
+          const tracker = getMediaTaskStore().tasks().find(candidate => candidate.taskId === String(task.taskId)
+            && candidate.sessionId === sessionId && candidate.ownerAccountKey === requestAccountScope.ownerAccountKey
+            && candidate.serverBaseUrl === serverBaseUrl);
+          if (tracker) persistMediaTaskCard(tracker, details);
+        }
         if (sessionId) {
           emitMediaStatusPollUpdate({
             sessionId,
@@ -6715,7 +6740,9 @@ if (!gotTheLock) {
           return staleAccountResult();
         }
         console.log(`[MediaGeneration] cancelling video task ${taskId}.`);
-        const resp = await fetchWithAuth(`${serverBaseUrl}/api/media/videos/tasks/${taskId}/cancel`, { method: 'POST' });
+        const cancelPath = isDurableMediaTask(taskId) ? `${MEDIA_V2_TASKS_PATH}/${encodeURIComponent(taskId)}/cancel`
+          : `/api/media/videos/tasks/${encodeURIComponent(taskId)}/cancel`;
+        const resp = await fetchWithAuth(`${serverBaseUrl}${cancelPath}`, { method: 'POST', signal: AbortSignal.timeout(30_000) });
         console.log(`[MediaGeneration] server returned HTTP ${resp.status} for video task cancel.`);
         const body = await resp.json() as { code: number; message?: string };
         if (!isRequestAccountCurrent()) return staleAccountResult();
@@ -6737,52 +6764,13 @@ if (!gotTheLock) {
 
       // action === 'generate'
       const mediaType = tool === MediaGenerationTool.Image ? 'image' : 'video';
-      const endpoint = mediaType === 'image' ? '/api/media/images/generate' : '/api/media/videos/generate';
-
-      // Video generation confirmation: inform user about cost and duration
-      if (mediaType === 'video') {
-        const durationSec = typeof args.durationSeconds === 'number' ? args.durationSeconds : null;
-        const costPoints = durationSec ? durationSec * 100 : null;
-        const portalTasksUrl = getPortalTasksUrl();
-        const subtitle = costPoints
-          ? `本次生成大约预计消耗 **${costPoints}** 积分`
-          : '费用约为 **100** 积分/秒';
-        const questionText = [
-          '请确认当前描述无误，提交后将无法取消。',
-          '视频生成任务耗时较长，请耐心等待。',
-          '',
-          `生成后请妥善保存视频，若误删可在[「个人主页-用量详情-生成任务」](${portalTasksUrl})中下载`,
-          '~~（链接有时效性，请尽快下载）~~',
-        ].join('\n');
-        mediaUsage.confirmation(request.context.toolCallId, UsageOutcome.Requested, selectedModel);
-        const confirmResponse = await getMcpRuntime().askUserInternal(
-          [{
-            question: questionText,
-            title: '确认生成视频？',
-            subtitle,
-            options: [
-              { label: '确认生成', description: '开始视频生成任务' },
-              { label: '取消', description: '暂不生成' },
-            ],
-          }],
-          undefined,
-          { sessionKey: request.context.sessionKey },
-        );
-
-        const userCancelled = confirmResponse?.behavior === 'deny'
-          || confirmResponse?.answers?.[questionText] === '取消';
-
-        if (!isRequestAccountCurrent()) return staleAccountResult();
-        mediaUsage.confirmation(request.context.toolCallId, userCancelled ? UsageOutcome.Denied : UsageOutcome.Allowed);
-        if (userCancelled) {
-          console.log('[MediaGeneration] user cancelled video generation confirmation.');
-          return {
-            content: [{ type: 'text', text: 'Video generation cancelled by user.' }],
-            isError: true,
-            details: { status: 'cancelled', reason: 'USER_CANCELLED' },
-          };
-        }
-      }
+      const modelResponse = await fetchWithAuth(`${serverBaseUrl}/api/media/${mediaType === 'image' ? 'images' : 'videos'}/models`, { signal: AbortSignal.timeout(15_000) });
+      const modelBody = await modelResponse.json() as { code: number; data?: Array<{ modelId: string; protocolVersions?: number[]; pricingDescription?: string }> };
+      if (modelBody.code !== 0 || !isRequestAccountCurrent()) return staleAccountResult();
+      const modelCapability = modelBody.data?.find(model => canonicalizeMediaModelId(model.modelId) === canonicalizeMediaModelId(selectedModel));
+      const useDurableTasks = modelCapability?.protocolVersions?.includes(MediaProtocol.Durable) === true;
+      const endpoint = useDurableTasks ? MEDIA_V2_TASKS_PATH
+        : mediaType === 'image' ? '/api/media/images/generate' : '/api/media/videos/generate';
 
       let params: Record<string, unknown> = {};
       if (args.image) {
@@ -6851,8 +6839,18 @@ if (!gotTheLock) {
       const resolveRef = async (ref: string): Promise<string> => {
         if (!ref || ref.startsWith('http') || ref.startsWith('oss://') || ref.startsWith('data:')) return ref;
         const filePath = ref.startsWith('file://') ? fileURLToPath(ref) : path.resolve(ref);
-        const buf = await fs.promises.readFile(filePath);
         const mime = MEDIA_MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
+        if (selectedModel.toLowerCase().includes('seedance') && mime.startsWith('video/')) {
+          throw new Error(t('mediaTaskVideoUrlRequired'));
+        }
+        const stat = await fs.promises.stat(filePath);
+        if (stat.size > (mime.startsWith('image/') ? 20 : 50) * 1024 * 1024) throw new Error(t('mediaTaskInputTooLarge'));
+        const buf = await fs.promises.readFile(filePath);
+        if (mime.startsWith('image/')) {
+          const dimensions = nativeImage.createFromBuffer(buf).getSize();
+          const minimum = selectedModel.toLowerCase().includes('wan') ? 240 : 2;
+          if (dimensions.width < minimum || dimensions.height < minimum) throw new Error(t('mediaTaskImageTooSmall', { size: minimum }));
+        }
         return `data:${mime};base64,${buf.toString('base64')}`;
       };
       const resolveStringParam = async (name: string) => {
@@ -6940,6 +6938,40 @@ if (!gotTheLock) {
         params,
       };
 
+      // Video generation confirmation: inform user about cost and duration
+      if (mediaType === 'video') {
+        const subtitle = modelCapability?.pricingDescription?.trim() || t('mediaVideoConfirmCostUnknown');
+        const questionText = t('mediaVideoConfirmDescription').replace('{url}', getPortalTasksUrl());
+        mediaUsage.confirmation(request.context.toolCallId, UsageOutcome.Requested, selectedModel);
+        const confirmResponse = await getMcpRuntime().askUserInternal(
+          [{
+            question: questionText,
+            title: t('mediaVideoConfirmTitle'),
+            subtitle,
+            options: [
+              { label: t('mediaVideoConfirmAccept'), description: t('mediaVideoConfirmStart') },
+              { label: t('mediaVideoConfirmCancel'), description: t('mediaVideoConfirmLater') },
+            ],
+          }],
+          undefined,
+          { sessionKey: request.context.sessionKey },
+        );
+
+        const userCancelled = confirmResponse?.behavior === 'deny'
+          || confirmResponse?.answers?.[questionText] === t('mediaVideoConfirmCancel');
+
+        if (!isRequestAccountCurrent()) return staleAccountResult();
+        mediaUsage.confirmation(request.context.toolCallId, userCancelled ? UsageOutcome.Denied : UsageOutcome.Allowed);
+        if (userCancelled) {
+          console.log('[MediaGeneration] user cancelled video generation confirmation.');
+          return {
+            content: [{ type: 'text', text: 'Video generation cancelled by user.' }],
+            isError: true,
+            details: { status: 'cancelled', reason: 'USER_CANCELLED' },
+          };
+        }
+      }
+
       console.log('[MediaGeneration] sending generate request to server:', serializeForLog({
         endpoint,
         mediaType,
@@ -6955,17 +6987,27 @@ if (!gotTheLock) {
         params: summarizeMediaGenerationParamsForLog(params),
       }));
       if (!isRequestAccountCurrent()) return staleAccountResult();
-      const idempotencyKey = crypto.randomUUID();
+      const intent = useDurableTasks && sessionId ? getMediaTaskStore().beginIntent({
+        callKey: `${sessionId}:${request.context.toolCallId}`,
+        ownerAccountKey: requestAccountScope.ownerAccountKey,
+        serverBaseUrl, sessionId, mediaType, model: selectedModel, toolCallId: request.context.toolCallId,
+        requestBody: JSON.stringify({ ...generateReq, mediaType }),
+      }) : undefined;
+      const idempotencyKey = intent?.key ?? crypto.randomUUID();
+      if (intent) getMediaTaskStore().saveIntent({ ...intent, lastAttemptAt: Date.now() });
       const resp = await fetchWithAuth(`${serverBaseUrl}${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': idempotencyKey,
         },
-        body: JSON.stringify(generateReq),
+        body: intent?.requestBody ?? JSON.stringify({ ...generateReq, ...(useDurableTasks ? { mediaType } : {}) }),
+        signal: AbortSignal.timeout(useDurableTasks ? 30_000 : 150_000),
       });
       console.log(`[MediaGeneration] server returned HTTP ${resp.status} for ${mediaType} generate request.`);
       const body = await resp.json() as { code: number; data?: Record<string, unknown>; message?: string };
+      if (intent && body.code !== 0 && resp.status < 500) getMediaTaskStore().saveIntent({ ...intent, rejected: true });
+      if (intent && body.code === 0 && body.data?.taskId != null) getMediaTaskStore().saveIntent({ ...intent, taskId: String(body.data.taskId) });
       if (!isRequestAccountCurrent()) return staleAccountResult();
       if (handleEnterpriseAccountContextMismatch(body.code, requestAccountScope)) {
         return {
@@ -7024,7 +7066,7 @@ if (!gotTheLock) {
         return {
           content: [{ type: 'text', text: body.message || 'Media generation request failed.' }],
           isError: true,
-          details: { status: 'failed', warnings: [body.message || 'Unknown error'] },
+          details: { status: MediaTaskStatus.Failed, error: body.data?.error, warnings: [body.message || 'Unknown error'] },
         };
       }
 
@@ -7074,7 +7116,7 @@ if (!gotTheLock) {
 
       const lines = [
         `${mediaType === 'image' ? 'Image' : 'Video'} generation task created.`,
-        `Task ID: ${task.upstreamTaskId || task.taskId}`,
+        `Task ID: ${useDurableTasks ? task.taskId : task.upstreamTaskId || task.taskId}`,
         `Model: ${outputModel}`,
         ...(upstreamModel ? [`Selected model: ${upstreamModel}`] : []),
         ...(modelSelectionReason ? [`Selection reason: ${modelSelectionReason}`] : []),
@@ -7116,7 +7158,7 @@ if (!gotTheLock) {
       }
 
       // Register async media tasks for background polling if not already completed.
-      if (status !== 'succeeded' && status !== 'failed' && status !== 'cancelled') {
+      if (!TERMINAL_MEDIA_TASK_STATUSES.has(status)) {
         if (sessionId && requestAccountScope && isRequestAccountCurrent()) {
           const metadata = task.metadata as Record<string, unknown> | undefined;
           const expiresAfterSec = metadata?.execution_expires_after ?? task.execution_expires_after;
@@ -7125,6 +7167,8 @@ if (!gotTheLock) {
             : MEDIA_TASK_DEFAULT_TIMEOUT_MS;
           registerMediaTaskForPolling({
             taskId: String(task.taskId),
+            protocolVersion: useDurableTasks ? MediaProtocol.Durable : MediaProtocol.Legacy,
+            serverBaseUrl, toolCallId: request.context.toolCallId,
             sessionId,
             mediaType,
             model: upstreamModel || outputModel,
@@ -7142,6 +7186,11 @@ if (!gotTheLock) {
         content: [{ type: 'text', text: lines.join('\n') }],
         details: {
           taskId: String(task.taskId),
+          protocolVersion: task.protocolVersion,
+          phase: task.phase,
+          slow: task.slow,
+          canCancel: task.canCancel,
+          error: task.error,
           ...(task.upstreamTaskId ? { upstreamTaskId: String(task.upstreamTaskId) } : {}),
           status,
           model: outputModel,
@@ -7178,6 +7227,7 @@ if (!gotTheLock) {
   const registerMediaTaskForPolling = (tracker: MediaTaskTracker) => {
     rememberMediaTaskOwnership(tracker.ownerAccountKey, tracker.taskId);
     pendingMediaTasks.set(tracker.taskId, tracker);
+    getMediaTaskStore().save(tracker);
     ensureMediaPollTimerRunning();
   };
 
@@ -7229,6 +7279,11 @@ if (!gotTheLock) {
         accountGeneration: tracker.accountGeneration,
       };
 
+      if (getMediaTaskStore().delivered(tracker)) {
+        tasksToRemove.set(taskId, tracker);
+        continue;
+      }
+      if (tracker.deliveryRetryAt && now < tracker.deliveryRetryAt) continue;
       if (isMediaTaskHandledByStatusPolling(
         tracker.sessionId,
         tracker.ownerAccountKey,
@@ -7238,14 +7293,14 @@ if (!gotTheLock) {
         continue;
       }
 
-      if (now - tracker.startedAt > tracker.timeoutMs) {
+      if (tracker.protocolVersion !== MediaProtocol.Durable && now - tracker.startedAt > tracker.timeoutMs) {
         mediaUsage.observe(taskId, 'timeout', 0);
         tasksToRemove.set(taskId, tracker);
         emitMediaTaskMessage(tracker.sessionId, `${tracker.mediaType === 'video' ? 'Video' : 'Image'} generation timed out.\nTask ID: ${taskId}\nStatus: timeout`);
         continue;
       }
 
-      if (tracker.pollCount >= MEDIA_POLL_FAST_COUNT) {
+      if (tracker.protocolVersion !== MediaProtocol.Durable && tracker.pollCount >= MEDIA_POLL_FAST_COUNT) {
         const lastPollTime = tracker.lastPollAt ?? tracker.startedAt;
         const sinceLast = now - lastPollTime;
         const totalSlowAndMedium = MEDIA_POLL_FAST_COUNT + MEDIA_POLL_SLOW_COUNT;
@@ -7264,7 +7319,10 @@ if (!gotTheLock) {
 
       try {
         const endpoint = tracker.mediaType === 'video' ? 'videos' : 'images';
-        const resp = await fetchWithAuth(`${serverBaseUrl}/api/media/${endpoint}/tasks/${taskId}`);
+        if (tracker.serverBaseUrl && tracker.serverBaseUrl !== serverBaseUrl) continue;
+        const taskPath = tracker.protocolVersion === MediaProtocol.Durable ? `${MEDIA_V2_TASKS_PATH}/${encodeURIComponent(taskId)}`
+          : `/api/media/${endpoint}/tasks/${encodeURIComponent(taskId)}`;
+        const resp = await fetchWithAuth(`${serverBaseUrl}${taskPath}`, { signal: AbortSignal.timeout(30_000) });
         const body = await resp.json() as { code: number; data?: Record<string, unknown>; message?: string };
 
         if (!isMediaAccountScopeCurrent(trackerAccountScope, getCurrentMediaAccountScope())) {
@@ -7273,6 +7331,11 @@ if (!gotTheLock) {
         if (handleEnterpriseAccountContextMismatch(body.code, trackerAccountScope)) continue;
         if (body.code !== 0) continue;
         const task = body.data!;
+        if (tracker.protocolVersion === MediaProtocol.Durable && tracker.toolCallId) {
+          const details = { ...task, ...(task.status === MediaTaskStatus.Succeeded ? { deliveryStatus: MediaDeliveryStatus.Pending } : {}), isMediaStatusPolling: true, taskId, mediaType: tracker.mediaType, pollCount: tracker.pollCount };
+          emitMediaStatusPollUpdate({ sessionId: tracker.sessionId, toolCallId: tracker.toolCallId, details });
+          persistMediaTaskCard(tracker, details);
+        }
         rememberMediaTaskOwnership(
           tracker.ownerAccountKey,
           task.taskId,
@@ -7305,6 +7368,36 @@ if (!gotTheLock) {
             outputIndex,
             mimeType: resolveGeneratedMediaAssetMimeType(tracker.mediaType, url),
           }));
+          if (tracker.protocolVersion === MediaProtocol.Durable) {
+            const saved = status === MediaTaskStatus.Succeeded
+              ? await (tracker.mediaType === 'image' ? persistGeneratedImages : persistGeneratedVideos)(tracker.sessionId, assets)
+              : null;
+            if (!isMediaAccountScopeCurrent(trackerAccountScope, getCurrentMediaAccountScope())) continue;
+            tracker.savedAssets = saved?.saved ?? tracker.savedAssets;
+            const ready = status !== MediaTaskStatus.Succeeded || (assets.length > 0 && saved?.saved.length === assets.length);
+            const details = { ...task, taskId, mediaType: tracker.mediaType,
+              ...(status === MediaTaskStatus.Succeeded ? {
+                deliveryStatus: ready ? MediaDeliveryStatus.Saved : MediaDeliveryStatus.Retrying,
+                assets: tracker.savedAssets ?? [],
+              } : {}),
+            };
+            persistMediaTaskCard(tracker, details);
+            if (tracker.toolCallId) emitMediaStatusPollUpdate({ sessionId: tracker.sessionId, toolCallId: tracker.toolCallId, details });
+            if (!ready) {
+              tracker.deliveryRetryAt = Date.now() + 60_000;
+              getMediaTaskStore().save(tracker);
+              continue;
+            }
+            if (status === MediaTaskStatus.Succeeded) mediaUsage.save(taskId, saved?.saved.length ?? 0, assets.length);
+            const content = status === MediaTaskStatus.Succeeded
+              ? (saved?.saved ?? []).map(asset => `[${asset.filename}](${pathToFileURL(asset.filePath).toString()})`).join('\n')
+              : String(task.errorMessage || t(status === MediaTaskStatus.Timeout ? 'mediaTaskTimedOut'
+                : status === MediaTaskStatus.Cancelled ? 'mediaTaskCancelled' : 'mediaTaskFailed'));
+            emitMediaTaskMessage(tracker.sessionId, content, { toolResultDetails: details }, tracker);
+            tasksToRemove.set(taskId, tracker);
+            notifyAuthQuotaChanged();
+            continue;
+          }
           if (status === 'succeeded' && tracker.mediaType === 'image') {
             const persistResult = await persistGeneratedImages(tracker.sessionId, assets);
             if (!isMediaAccountScopeCurrent(trackerAccountScope, getCurrentMediaAccountScope())) {
@@ -7406,6 +7499,8 @@ if (!gotTheLock) {
           )) {
             continue;
           }
+          tracker.delivered = true;
+          getMediaTaskStore().save(tracker);
           tasksToRemove.set(taskId, tracker);
           notifyAuthQuotaChanged();
         }
@@ -7432,7 +7527,78 @@ if (!gotTheLock) {
     }
   };
 
-  const emitMediaTaskMessage = (sessionId: string, content: string, metadata?: Record<string, unknown>) => {
+  const persistMediaTaskCard = (tracker: MediaTaskTracker, details: Record<string, unknown>) => {
+    if (!tracker.toolCallId) return;
+    const db = getStore().getDatabase();
+    const rows = db.prepare(`SELECT id, metadata FROM cowork_messages WHERE session_id = ? AND type IN ('tool_use', 'tool_result') AND (
+      json_extract(metadata, '$.toolUseId') = ? OR CAST(json_extract(metadata, '$.toolInput.taskId') AS TEXT) = ?
+      OR CAST(json_extract(metadata, '$.toolResultDetails.taskId') AS TEXT) = ?
+      OR CAST(json_extract(metadata, '$.mediaStatusDetails.taskId') AS TEXT) = ?)`)
+      .all(tracker.sessionId, tracker.toolCallId, tracker.taskId, tracker.taskId, tracker.taskId) as Array<{ id: string; metadata: string }>;
+    for (const row of rows) {
+      const metadata = JSON.parse(row.metadata) as Record<string, unknown>;
+      getCoworkStore().updateMessage(tracker.sessionId, row.id, { metadata: { ...metadata, mediaStatusDetails: details,
+        toolResultDetails: { ...(metadata.toolResultDetails as Record<string, unknown> ?? {}), ...details } } });
+      if (typeof metadata.toolUseId === 'string' && metadata.toolUseId !== tracker.toolCallId) {
+        emitMediaStatusPollUpdate({ sessionId: tracker.sessionId, toolCallId: metadata.toolUseId, details });
+      }
+    }
+  };
+
+  const recoverMediaTasks = async () => {
+    const scope = getCurrentMediaAccountScope();
+    if (!scope) return;
+    const serverBaseUrl = getServerApiBaseUrl();
+    for (const tracker of getMediaTaskStore().tasks()) {
+      if (tracker.ownerAccountKey !== scope.ownerAccountKey || tracker.serverBaseUrl !== serverBaseUrl) continue;
+      for (const asset of tracker.savedAssets ?? []) {
+        if (fs.existsSync(asset.filePath)) (tracker.mediaType === 'image' ? persistedGeneratedImageAssetsByUrl : persistedGeneratedVideoAssetsByUrl)
+          .set(`${tracker.sessionId}:${asset.originalUrl || asset.url}`, asset);
+      }
+      if (!tracker.delivered && !pendingMediaTasks.has(tracker.taskId) && getCoworkStore().getSession(tracker.sessionId)) {
+        registerMediaTaskForPolling({ ...tracker, accountGeneration: scope.accountGeneration });
+      }
+    }
+    for (const intent of getMediaTaskStore().intents()) {
+      if (intent.rejected || intent.ownerAccountKey !== scope.ownerAccountKey || intent.serverBaseUrl !== serverBaseUrl
+        || !getCoworkStore().getSession(intent.sessionId)) continue;
+      if (intent.taskId) {
+        const exists = getMediaTaskStore().tasks().some(task => task.taskId === intent.taskId && task.serverBaseUrl === serverBaseUrl);
+        if (!exists && getCoworkStore().getSession(intent.sessionId)) registerMediaTaskForPolling({
+          taskId: intent.taskId, sessionId: intent.sessionId, mediaType: intent.mediaType, model: intent.model,
+          ownerAccountKey: intent.ownerAccountKey, accountGeneration: scope.accountGeneration,
+          startedAt: intent.createdAt, pollCount: 0, timeoutMs: MEDIA_TASK_DEFAULT_TIMEOUT_MS,
+          protocolVersion: MediaProtocol.Durable, serverBaseUrl, toolCallId: intent.toolCallId,
+        });
+        continue;
+      }
+      if (Date.now() - (intent.lastAttemptAt ?? intent.createdAt) < 30_000 || Date.now() - intent.createdAt > 86_400_000) continue;
+      getMediaTaskStore().saveIntent({ ...intent, lastAttemptAt: Date.now() });
+      try {
+        const response = await fetchWithAuth(`${serverBaseUrl}${MEDIA_V2_TASKS_PATH}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': intent.key },
+          body: intent.requestBody, signal: AbortSignal.timeout(30_000),
+        });
+        const body = await response.json() as { code: number; data?: { taskId?: string | number }; message?: string };
+        if (!isMediaAccountScopeCurrent(scope, getCurrentMediaAccountScope())) return;
+        if (body.code === 0 && body.data?.taskId != null) getMediaTaskStore().saveIntent({ ...intent, taskId: String(body.data.taskId) });
+        else if (response.status < 500) {
+          getMediaTaskStore().saveIntent({ ...intent, rejected: true });
+          emitMediaTaskMessage(intent.sessionId, body.message || t('mediaGenerationRecoveryFailed'));
+        }
+      } catch (error) { console.debug('[MediaGeneration] Intent recovery deferred:', error); }
+    }
+  };
+  let mediaRecoveryInFlight = false;
+  const mediaRecoveryTimer = setInterval(() => {
+    if (mediaRecoveryInFlight) return;
+    mediaRecoveryInFlight = true;
+    void recoverMediaTasks().catch(error => console.warn('[MediaGeneration] Recovery failed:', error))
+      .finally(() => { mediaRecoveryInFlight = false; });
+  }, 15_000);
+  app.once('before-quit', () => clearInterval(mediaRecoveryTimer));
+
+  const emitMediaTaskMessage = (sessionId: string, content: string, metadata?: Record<string, unknown>, tracker?: MediaTaskTracker) => {
     let message: CoworkMessage = {
       id: `media-task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       type: 'system' as const,
@@ -7440,8 +7606,17 @@ if (!gotTheLock) {
       timestamp: Date.now(),
       ...(metadata ? { metadata } : {}),
     };
+    if (tracker) {
+      if (getMediaTaskStore().delivered(tracker)) return;
+      message = getCoworkStore().runSessionTransaction(() => {
+        const persisted = getCoworkStore().addMessage(sessionId, { type: 'system', content, metadata });
+        getMediaTaskStore().save({ ...tracker, delivered: true });
+        return persisted;
+      });
+      tracker.delivered = true;
+    }
     try {
-      message = getCoworkStore().addMessage(sessionId, {
+      if (!tracker) message = getCoworkStore().addMessage(sessionId, {
         type: 'system',
         content,
         ...(metadata ? { metadata } : {}),
@@ -7458,7 +7633,14 @@ if (!gotTheLock) {
     });
   };
 
-  const persistGeneratedImages = async (
+  const mediaDownloads = new MediaDownloadCoordinator<PersistGeneratedImageAssetsResult | null>();
+  const persistGeneratedImages = (sessionId: string, assets: RemoteGeneratedMediaAsset[]) => mediaDownloads.run(
+    `${sessionId}:image:${JSON.stringify(assets.map(asset => asset.url))}`, () => persistGeneratedImagesImpl(sessionId, assets),
+  );
+  const persistGeneratedVideos = (sessionId: string, assets: RemoteGeneratedMediaAsset[]) => mediaDownloads.run(
+    `${sessionId}:video:${JSON.stringify(assets.map(asset => asset.url))}`, () => persistGeneratedVideosImpl(sessionId, assets),
+  );
+  const persistGeneratedImagesImpl = async (
     sessionId: string,
     assets: RemoteGeneratedMediaAsset[],
   ): Promise<PersistGeneratedImageAssetsResult | null> => {
@@ -7490,7 +7672,7 @@ if (!gotTheLock) {
       const result = await persistGeneratedImageAssets({
         cwd,
         assets: pendingAssets,
-        fetchAsset: url => session.defaultSession.fetch(url),
+        fetchAsset: url => session.defaultSession.fetch(url, { signal: AbortSignal.timeout(120_000) }),
       });
       for (const saved of result.saved) {
         persistedGeneratedImageAssetsByUrl.set(`${sessionId}:${saved.originalUrl || saved.url}`, saved);
@@ -7508,7 +7690,7 @@ if (!gotTheLock) {
     }
   };
 
-  const persistGeneratedVideos = async (
+  const persistGeneratedVideosImpl = async (
     sessionId: string,
     assets: RemoteGeneratedMediaAsset[],
   ): Promise<PersistGeneratedImageAssetsResult | null> => {
@@ -7540,7 +7722,7 @@ if (!gotTheLock) {
       const result = await persistGeneratedVideoAssets({
         cwd,
         assets: pendingAssets,
-        fetchAsset: url => session.defaultSession.fetch(url),
+        fetchAsset: url => session.defaultSession.fetch(url, { signal: AbortSignal.timeout(120_000) }),
       });
       for (const saved of result.saved) {
         persistedGeneratedVideoAssetsByUrl.set(`${sessionId}:${saved.originalUrl || saved.url}`, saved);
@@ -11296,7 +11478,9 @@ if (!gotTheLock) {
         return { success: false, message: t('mediaTaskAccountMismatch') };
       }
       const serverBaseUrl = getServerApiBaseUrl();
-      const resp = await fetchWithAuth(`${serverBaseUrl}/api/media/videos/tasks/${taskId}/cancel`, { method: 'POST' });
+      const cancelPath = isDurableMediaTask(taskId) ? `${MEDIA_V2_TASKS_PATH}/${encodeURIComponent(taskId)}/cancel`
+        : `/api/media/videos/tasks/${encodeURIComponent(taskId)}/cancel`;
+      const resp = await fetchWithAuth(`${serverBaseUrl}${cancelPath}`, { method: 'POST', signal: AbortSignal.timeout(30_000) });
       const body = await resp.json() as { code: number; message?: string };
       if (!isMediaAccountScopeCurrent(requestAccountScope, getCurrentMediaAccountScope())) {
         return { success: false, message: t('authAccountChanged') };

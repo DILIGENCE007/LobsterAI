@@ -1,4 +1,5 @@
 import { desktopCompanionTranslations } from '../../shared/desktopCompanion/copy';
+import { mediaTranslations } from '../../shared/media/copy';
 import { configService } from './config';
 
 // 支持的语言类型
@@ -8,6 +9,7 @@ export type LanguageType = 'zh' | 'en';
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
     ...desktopCompanionTranslations.zh,
+    ...mediaTranslations.zh,
     officeSaved: '已自动保存',
     officePending: '等待保存…',
     officeSaving: '正在保存…',
@@ -4511,6 +4513,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
   },
   en: {
     ...desktopCompanionTranslations.en,
+    ...mediaTranslations.en,
     officeSaved: 'All changes saved',
     officePending: 'Waiting to save…',
     officeSaving: 'Saving…',
