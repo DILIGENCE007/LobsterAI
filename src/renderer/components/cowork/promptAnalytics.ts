@@ -196,6 +196,10 @@ export interface PromptSubmitAnalyticsOptions {
   agentId: string;
   isMainAgent: boolean;
   agentSource?: string;
+  presetId?: string;
+  journeyId?: string;
+  catalogVersion?: string;
+  entry?: string;
   agentSkillCount?: number;
   sessionMessageCount?: number;
   sessionCreatedAt?: number;
@@ -216,6 +220,10 @@ export const reportPromptSubmit = (options: PromptSubmitAnalyticsOptions): void 
     agentId: options.agentId,
     isMainAgent: options.isMainAgent,
     agentSource: options.agentSource,
+    presetId: options.presetId,
+    journeyId: options.journeyId,
+    catalogVersion: options.catalogVersion,
+    entry: options.entry,
     agentSkillCount: options.agentSkillCount,
     hasSession: options.conversationState === PromptAnalyticsConversationState.ContinueSession,
     sessionMessageCountBucket: options.sessionMessageCount === undefined

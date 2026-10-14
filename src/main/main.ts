@@ -41,7 +41,9 @@ import {
   LogReporterAction,
   LogReporterSource,
   LogReporterStoreKey,
+  PromptAnalyticsConversationState,
 } from '../shared/analytics/constants';
+import { UsageAnalytics, type UsageContext, UsageOrigin, UsageStage } from '../shared/analytics/usage';
 import { AppIpcChannel, type OpenSettingsRequest, OpenSettingsTab } from '../shared/app/constants';
 import { AppSettingsAutoLaunchErrorCode, AppSettingsIpc } from '../shared/appSettings/constants';
 import { type AppUpdateActiveWorkloads, AppUpdateIpc } from '../shared/appUpdate/constants';
@@ -329,6 +331,7 @@ import {
 } from './libs/authSessionManager';
 import type { BrowserAnnotationAssetIdentity, SaveBrowserAnnotationAssetInput } from './libs/browserAnnotationAssetStore';
 import { BrowserAnnotationAssetStore } from './libs/browserAnnotationAssetStore';
+import { getResourceAnalyticsSalt } from './libs/capabilityUsage';
 import {
   clearServerModelMetadata,
   evaluateServerModelRunGate,
@@ -455,6 +458,7 @@ import {
   MainWindowLoadErrorCode,
 } from './libs/mainWindowLoadRecovery';
 import { inferImageMimeTypeFromDataUrl, type PersistedGeneratedImageAsset, persistGeneratedImageAssets, type PersistGeneratedImageAssetsResult, persistGeneratedVideoAssets, type RemoteGeneratedMediaAsset } from './libs/mediaAssetPersistence';
+import { MediaUsageAnalytics } from './libs/mediaUsageAnalytics';
 import {
   migrateAgentModelRefs,
   parsePrimaryModelRef,
@@ -587,6 +591,7 @@ import {
   restoreOriginalProxyEnv,
   setSystemProxyEnabled,
 } from './libs/systemProxy';
+import { TaskUsageAnalytics } from './libs/usageAnalytics';
 import { type LoopbackFirewallRepairResult, repairWindowsLoopbackFirewall } from './libs/windowsLoopbackFirewall';
 import { getLogFilePath, getRecentMainLogEntries, initLogger } from './logger';
 import { type AskUserResponse, McpRuntime } from './mcp/mcpRuntime';
@@ -2346,6 +2351,7 @@ const getMainLogReporter = (): MainLogReporter => {
   if (!mainLogReporter) {
     mainLogReporter = new MainLogReporter({
       appVersion: app.getVersion(),
+      environment: app.isPackaged ? 'production' : 'development',
       fetch: async (url, signal) => {
         const response = await session.defaultSession.fetch(url, { method: 'GET', signal });
         const result = { ok: response.ok, status: response.status };
@@ -2575,6 +2581,8 @@ const getAgentManager = () => {
     const expertStore = new ExpertStore({
       getEndpoint: getExpertStoreUrl,
       cacheDirectory: path.join(app.getPath('userData'), 'expert-store'),
+      onLoad: fields => { void getMainLogReporter().report({ action: LogReporterAction.ExpertJourney,
+        schemaVersion: UsageAnalytics.SchemaVersion, stage: UsageStage.CatalogRefresh, ...fields }); },
     });
     agentManager = new AgentManager(getCoworkStore(), () => expertStore.getCatalog());
   }
@@ -3990,6 +3998,24 @@ const bindCoworkRuntimeForwarder = (): void => {
   coworkRuntimeForwarderBound = true;
 };
 
+let taskUsageAnalytics: TaskUsageAnalytics | undefined;
+const getTaskUsageAnalytics = (): TaskUsageAnalytics => {
+  taskUsageAnalytics ??= new TaskUsageAnalytics({
+    report: event => { void getMainLogReporter().report(event); },
+    getOwner: () => {
+      if (getStore().get<{ usageAnalyticsEnabled?: boolean }>('app_config')?.usageAnalyticsEnabled === false) return null;
+      const user = getStore().get<{ yid?: string; userId?: string }>('auth_user');
+      return user?.yid?.trim() || user?.userId?.trim() || '';
+    },
+    getSession: id => getCoworkStore().getSession(id),
+    getSkills: () => getSkillManager().listSkills(),
+    getResourceSalt: () => getResourceAnalyticsSalt(getStore()),
+    getAgent: id => getAgentManager().getAgent(id),
+    updateMessage: (sessionId, id, metadata) => { getCoworkStore().updateMessage(sessionId, id, { metadata }); },
+  });
+  return taskUsageAnalytics;
+};
+
 const getCoworkEngineRouter = () => {
   if (!coworkEngineRouter) {
     if (!openClawRuntimeAdapter) {
@@ -3998,7 +4024,9 @@ const getCoworkEngineRouter = () => {
         getOpenClawEngineManager(),
         {
           normalizeModelRef: normalizeOpenClawModelRef,
-          onChannelPromptSubmit: event => {
+          onChannelPromptSubmit: (event, sessionId) => {
+            getTaskUsageAnalytics().begin(sessionId, {},
+              event.conversationState === PromptAnalyticsConversationState.ContinueSession, UsageOrigin.Im);
             void getMainLogReporter().report({
               action: LogReporterAction.ImPromptSubmit,
               source: LogReporterSource.OpenClawChannel,
@@ -4043,6 +4071,7 @@ const getCoworkEngineRouter = () => {
     coworkEngineRouter = new CoworkEngineRouter({
       getCurrentEngine: resolveCoworkAgentEngine,
       openclawRuntime: openClawRuntimeAdapter,
+      analytics: getTaskUsageAnalytics(),
     });
   }
   return coworkEngineRouter;
@@ -6401,6 +6430,16 @@ if (!gotTheLock) {
   /**
    * Handle media generation tool callbacks from the OpenClaw plugin.
    */
+  const mediaUsage = new MediaUsageAnalytics({
+    getOwner: () => {
+      if (getStore().get<{ usageAnalyticsEnabled?: boolean }>('app_config')?.usageAnalyticsEnabled === false) return null;
+      const scope = getCurrentMediaAccountScope();
+      return scope ? String(scope.ownerAccountKey) + ':' + scope.accountGeneration : '';
+    },
+    context: sessionId => getTaskUsageAnalytics().context(sessionId),
+    report: event => { void getMainLogReporter().report(event); },
+  });
+
   const handleMediaGenerationCallback = async (request: {
     tool: string;
     args: Record<string, unknown>;
@@ -6573,6 +6612,7 @@ if (!gotTheLock) {
         );
         const status = task.status as string;
         const resultUrls = (task.resultUrls as string[]) || [];
+        mediaUsage.observe(taskId, status, resultUrls.length);
         const outputModel = mediaModelIdForOutput(task.model);
         const upstreamModel = typeof task.upstreamModel === 'string' && task.upstreamModel.trim()
           ? task.upstreamModel.trim()
@@ -6599,6 +6639,7 @@ if (!gotTheLock) {
         if (status === 'succeeded' && statusMediaType === 'image' && sessionId) {
           const persistResult = await persistGeneratedImages(sessionId, assets);
           if (!isRequestAccountCurrent()) return staleAccountResult();
+          mediaUsage.save(String(args.taskId), persistResult?.saved.length ?? 0, assets.length);
           if (persistResult && persistResult.saved.length > 0) {
             detailsAssets = persistResult.saved;
             resultLines = persistResult.saved.map(asset =>
@@ -6610,6 +6651,7 @@ if (!gotTheLock) {
         } else if (status === 'succeeded' && statusMediaType === 'video' && sessionId) {
           const persistResult = await persistGeneratedVideos(sessionId, assets);
           if (!isRequestAccountCurrent()) return staleAccountResult();
+          mediaUsage.save(String(args.taskId), persistResult?.saved.length ?? 0, assets.length);
           if (persistResult && persistResult.saved.length > 0) {
             detailsAssets = persistResult.saved;
             resultLines = persistResult.saved.map(asset =>
@@ -6991,6 +7033,7 @@ if (!gotTheLock) {
       );
       const status = task.status as string;
       const resultUrls = (task.resultUrls as string[]) || [];
+      mediaUsage.accept(request.context.toolCallId, task);
       const outputModel = mediaModelIdForOutput(task.model, selectedModel);
       const upstreamModel = typeof task.upstreamModel === 'string' && task.upstreamModel.trim()
         ? task.upstreamModel.trim()
@@ -7039,6 +7082,7 @@ if (!gotTheLock) {
       if (status === 'succeeded' && mediaType === 'image' && sessionId) {
         const persistResult = await persistGeneratedImages(sessionId, assets);
         if (!isRequestAccountCurrent()) return staleAccountResult();
+          mediaUsage.save(request.context.toolCallId, persistResult?.saved.length ?? 0, assets.length);
         if (persistResult && persistResult.saved.length > 0) {
           detailsAssets = persistResult.saved;
           const fileLines = persistResult.saved.map(asset =>
@@ -7052,6 +7096,7 @@ if (!gotTheLock) {
       } else if (status === 'succeeded' && mediaType === 'video' && sessionId) {
         const persistResult = await persistGeneratedVideos(sessionId, assets);
         if (!isRequestAccountCurrent()) return staleAccountResult();
+          mediaUsage.save(request.context.toolCallId, persistResult?.saved.length ?? 0, assets.length);
         if (persistResult && persistResult.saved.length > 0) {
           detailsAssets = persistResult.saved;
           const fileLines = persistResult.saved.map(asset =>
@@ -7116,7 +7161,16 @@ if (!gotTheLock) {
     }
   };
 
-  getMcpRuntime().setMediaGenerationHandler(handleMediaGenerationCallback);
+  getMcpRuntime().setMediaGenerationHandler(request => {
+    if (request.tool !== MediaGenerationTool.Image && request.tool !== MediaGenerationTool.Video) {
+      return handleMediaGenerationCallback(request);
+    }
+    return mediaUsage.run({ sessionId: extractSessionIdFromKey(request.context.sessionKey),
+      mediaType: request.tool === MediaGenerationTool.Image ? 'image' : 'video',
+      action: typeof request.args.action === 'string' ? request.args.action : 'generate',
+      taskId: request.args.taskId, callId: request.context.toolCallId,
+    }, () => handleMediaGenerationCallback(request));
+  });
 
   const registerMediaTaskForPolling = (tracker: MediaTaskTracker) => {
     rememberMediaTaskOwnership(tracker.ownerAccountKey, tracker.taskId);
@@ -7182,6 +7236,7 @@ if (!gotTheLock) {
       }
 
       if (now - tracker.startedAt > tracker.timeoutMs) {
+        mediaUsage.observe(taskId, 'timeout', 0);
         tasksToRemove.set(taskId, tracker);
         emitMediaTaskMessage(tracker.sessionId, `${tracker.mediaType === 'video' ? 'Video' : 'Image'} generation timed out.\nTask ID: ${taskId}\nStatus: timeout`);
         continue;
@@ -7232,6 +7287,7 @@ if (!gotTheLock) {
 
         if (TERMINAL_MEDIA_TASK_STATUSES.has(status)) {
           const resultUrls = (task.resultUrls as string[]) || [];
+          mediaUsage.observe(taskId, status, resultUrls.length);
           const outputModel = mediaModelIdForOutput(task.model, tracker.model);
           const upstreamModel = typeof task.upstreamModel === 'string' && task.upstreamModel.trim()
             ? task.upstreamModel.trim()
@@ -7251,6 +7307,7 @@ if (!gotTheLock) {
             if (!isMediaAccountScopeCurrent(trackerAccountScope, getCurrentMediaAccountScope())) {
               continue;
             }
+            mediaUsage.save(taskId, persistResult?.saved.length ?? 0, assets.length);
             if (persistResult && persistResult.saved.length > 0) {
               const fileLines = persistResult.saved.map(asset => `  - [${asset.filename}](${pathToFileURL(asset.filePath).toString()})`);
               emitMediaTaskMessage(
@@ -7281,6 +7338,7 @@ if (!gotTheLock) {
             if (!isMediaAccountScopeCurrent(trackerAccountScope, getCurrentMediaAccountScope())) {
               continue;
             }
+            mediaUsage.save(taskId, persistResult?.saved.length ?? 0, assets.length);
             if (persistResult && persistResult.saved.length > 0) {
               const fileLines = persistResult.saved.map(asset => `  - [${asset.filename}](${pathToFileURL(asset.filePath).toString()})`);
               emitMediaTaskMessage(
@@ -7388,6 +7446,8 @@ if (!gotTheLock) {
     } catch {
       // Session may have been deleted
     }
+    const mediaAttribution = mediaUsage.attribution((metadata?.toolResultDetails as Record<string, unknown> | undefined)?.taskId);
+    if (mediaAttribution) getTaskUsageAnalytics().attachDelivery(sessionId, message, mediaAttribution.context, mediaAttribution.mediaJobId);
     BrowserWindow.getAllWindows().forEach(win => {
       if (!win.isDestroyed()) {
         win.webContents.send('cowork:stream:message', { sessionId, message });
@@ -9773,10 +9833,11 @@ if (!gotTheLock) {
   });
 
   ipcMain.handle(
-    'cowork:session:start',
+    CoworkIpcChannel.SessionStart,
     async (
       _event,
       options: {
+        analytics?: UsageContext;
         prompt: string;
         cwd?: string;
         systemPrompt?: string;
@@ -9979,6 +10040,7 @@ if (!gotTheLock) {
         );
         runtime
           .startSession(session.id, prompt, {
+            analytics: options.analytics,
             skipInitialUserMessage: true,
             systemPrompt,
             skillIds: runtimeSkillIds,
@@ -10033,10 +10095,11 @@ if (!gotTheLock) {
   );
 
   ipcMain.handle(
-    'cowork:session:continue',
+    CoworkIpcChannel.SessionContinue,
     async (
       _event,
       options: {
+        analytics?: UsageContext;
         sessionId: string;
         prompt: string;
         systemPrompt?: string;
@@ -10172,6 +10235,7 @@ if (!gotTheLock) {
         );
         runtime
           .continueSession(options.sessionId, options.prompt, {
+            analytics: options.analytics,
             systemPrompt: continuationSystemPrompt,
             skillIds: options.runtimeSkillIds ?? options.activeSkillIds,
             messageSkillIds: options.activeSkillIds,
@@ -11058,6 +11122,8 @@ if (!gotTheLock) {
   };
 
   registerAgentHandlers({
+    reportPresetPreparation: fields => { void getMainLogReporter().report({ action: LogReporterAction.ExpertJourney,
+      schemaVersion: UsageAnalytics.SchemaVersion, stage: UsageStage.Prepare, ...fields }); },
     getAgentManager,
     getCoworkStore,
     getCoworkEngineRouter,

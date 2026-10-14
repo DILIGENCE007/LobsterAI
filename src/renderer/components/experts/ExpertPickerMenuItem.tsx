@@ -1,9 +1,11 @@
 import { ArrowUpRightIcon, CheckIcon, ChevronRightIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 import { ExpertUiEvent } from '@shared/agent/presets';
+import { UsageEntry, UsageStage } from '@shared/analytics/usage';
 import React, { useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
 import { i18nService } from '../../services/i18n';
+import { reportExpertJourney } from '../../services/usageAnalytics';
 import type { RootState } from '../../store';
 import { getAgentDisplayName, usesManagedPresetAvatar } from '../../utils/agentDisplay';
 import AgentAvatarIcon from '../agent/AgentAvatarIcon';
@@ -21,17 +23,22 @@ const ExpertPickerMenuItem: React.FC<ExpertPickerMenuItemProps> = ({ disabled, o
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
+  const shownRef = useRef(false);
   const { agents, currentAgentId } = useSelector((state: RootState) => state.agent);
   const t = (key: string) => i18nService.t(key);
   const matching = agents.filter(agent => agent.enabled && `${getAgentDisplayName(agent)} ${agent.description}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   const show = () => {
     if (disabled) return;
+    if (!shownRef.current) {
+      shownRef.current = true;
+      reportExpertJourney(UsageStage.View, { entry: UsageEntry.Picker, installedCount: agents.filter(agent => agent.enabled).length });
+    }
     onOpen();
     setOpen(true);
   };
 
   return (
-    <div className="relative" onMouseLeave={() => setOpen(false)}>
+    <div className="relative" onMouseLeave={() => { setOpen(false); shownRef.current = false; }}>
       <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={open} disabled={disabled}
         onMouseEnter={show} onFocus={onOpen} onClick={() => { show(); searchRef.current?.focus(); }}
         onKeyDown={event => {

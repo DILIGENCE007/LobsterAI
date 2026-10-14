@@ -2980,7 +2980,7 @@ test('sessions.changed start reports an IM prompt once across lifecycle and Acti
     conversationState: 'new_task',
     isMainAgent: true,
     platform: 'weixin',
-  });
+  }, session.id);
   expect(observedStatuses).toEqual(['running']);
   expect(adapter.activeTurns.has(session.id)).toBe(false);
 
@@ -3082,7 +3082,7 @@ test('IM prompt submit analytics reports each channel run once with routing cont
     conversationState: 'new_task',
     isMainAgent: false,
     platform: 'feishu',
-  });
+  }, session.id);
 
   session.messages.push({
     id: 'assistant-1',
@@ -3099,7 +3099,7 @@ test('IM prompt submit analytics reports each channel run once with routing cont
     conversationState: 'continue_session',
     isMainAgent: false,
     platform: 'feishu',
-  });
+  }, session.id);
 });
 
 test('IM prompt submit analytics keeps its run deduplication memory bounded', () => {

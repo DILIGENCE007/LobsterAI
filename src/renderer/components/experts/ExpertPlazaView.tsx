@@ -1,9 +1,11 @@
 import { ArrowRightIcon, MagnifyingGlassIcon, SparklesIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import type { ExpertCatalog, PresetAgent } from '@shared/agent/presets';
+import { UsageEntry, usageFailureCode,UsageOutcome, UsageStage } from '@shared/analytics/usage';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { agentService } from '../../services/agent';
 import { i18nService } from '../../services/i18n';
+import { prepareExpertAnalytics, reportExpertJourney } from '../../services/usageAnalytics';
 import type { Agent } from '../../types/agent';
 import AgentAvatarIcon from '../agent/AgentAvatarIcon';
 import { MANAGEMENT_PAGE_TITLE_TEXT } from '../common/managementTypography';
@@ -12,6 +14,7 @@ import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import { expertText, filterExperts } from './catalog';
 import ExpertFeaturedScenarios from './ExpertFeaturedScenarios';
+import { useExpertImpressions } from './useExpertImpressions';
 
 interface ExpertPlazaViewProps {
   onSummon: (agent: Agent, prompt: string) => void;
@@ -33,6 +36,16 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
   const [summoning, setSummoning] = useState<string | null>(null);
   const [summonFailed, setSummonFailed] = useState(false);
   const mountedRef = useRef(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [journeyId] = useState(() => crypto.randomUUID());
+  const viewedRef = useRef(false);
+  const detailEntry = useRef<UsageEntry>(UsageEntry.Plaza);
+  useExpertImpressions(rootRef, journeyId, catalog?.version, [catalog, query, category, tag].join(':'));
+  useEffect(() => {
+    if (viewedRef.current) return;
+    viewedRef.current = true;
+    reportExpertJourney(UsageStage.View, { journeyId, entry: UsageEntry.Plaza });
+  }, [journeyId]);
   const summoningRef = useRef(false);
   const t = (key: string) => i18nService.t(key);
   const language = i18nService.getLanguage();
@@ -48,17 +61,22 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
   const load = useCallback(async () => {
     setLoading(true);
     setLoadFailed(false);
+    const startedAt = Date.now();
     try {
       const result = await window.electron.agents.expertCatalog();
       await agentService.loadAgents();
       if (mountedRef.current) setCatalog(result);
+      reportExpertJourney(UsageStage.Load, { journeyId, outcome: UsageOutcome.Succeeded,
+        catalogVersion: result.version, count: result.experts.length, durationMs: Date.now() - startedAt });
     } catch (error) {
+      reportExpertJourney(UsageStage.Load, { journeyId, outcome: UsageOutcome.Failed,
+        failureCode: usageFailureCode(error), durationMs: Date.now() - startedAt });
       console.error('[ExpertPlaza] Failed to load experts:', error);
       if (mountedRef.current) setLoadFailed(true);
     } finally {
       if (mountedRef.current) setLoading(false);
     }
-  }, []);
+  }, [journeyId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -66,16 +84,43 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
     return () => { mountedRef.current = false; };
   }, [load]);
 
-  const summon = async (preset: PresetAgent, prompt = expertText(preset.starterPrompts[0], language)) => {
+  useEffect(() => {
+    if (loading || loadFailed) return;
+    const timer = window.setTimeout(() => reportExpertJourney(UsageStage.Filter, {
+      journeyId, catalogVersion: catalog?.version, queryLength: query.trim().length,
+      categoryId: category ?? undefined, hasTag: Boolean(tag), resultCount: filtered.length,
+    }), 600);
+    return () => window.clearTimeout(timer);
+  }, [query, category, tag, filtered.length, loading, loadFailed, catalog?.version, journeyId]);
+
+  const showDetail = (preset: PresetAgent, scenarioId?: string) => {
+    detailEntry.current = scenarioId ? UsageEntry.Featured : UsageEntry.Plaza;
+    reportExpertJourney(UsageStage.Detail, { journeyId, presetId: preset.id, catalogVersion: catalog?.version,
+      entry: detailEntry.current, scenarioId });
+    setDetail(preset);
+  };
+
+  const summon = async (preset: PresetAgent, prompt = expertText(preset.starterPrompts[0], language), starterIndex?: number) => {
     if (summoningRef.current) return;
     summoningRef.current = true;
     setSummoning(preset.id);
     setSummonFailed(false);
+    const startedAt = Date.now();
+    const entry = starterIndex !== undefined ? UsageEntry.Starter : detail ? UsageEntry.Detail : UsageEntry.Plaza;
+    const fields = { journeyId, presetId: preset.id, catalogVersion: catalog?.version, entry,
+      starterIndex, wasInstalled: Boolean(preset.installed) };
+    reportExpertJourney(UsageStage.Summon, { ...fields, outcome: UsageOutcome.Started });
     try {
       const agent = await agentService.addPreset(preset.id);
       if (!agent) throw new Error('Expert preparation failed');
-      if (mountedRef.current) onSummon(agent, prompt);
+      reportExpertJourney(UsageStage.Summon, { ...fields, outcome: UsageOutcome.Succeeded, durationMs: Date.now() - startedAt });
+      if (mountedRef.current) {
+        onSummon(agent, prompt);
+        prepareExpertAnalytics(agent.id, agent.presetId, { journeyId, catalogVersion: catalog?.version, entry });
+      }
     } catch (error) {
+      reportExpertJourney(UsageStage.Summon, { ...fields, outcome: UsageOutcome.Failed,
+        failureCode: usageFailureCode(error), durationMs: Date.now() - startedAt });
       console.error('[ExpertPlaza] Failed to summon expert:', error);
       if (mountedRef.current) setSummonFailed(true);
     } finally {
@@ -97,7 +142,7 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
   const errorNotice = summonFailed && <p role="alert" className="rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-400">{t('expertSummonFailed')}</p>;
 
   return (
-    <div data-skin-management-page="true" className="relative z-10 flex h-full min-w-0 flex-1 flex-col bg-background">
+    <div ref={rootRef} data-skin-management-page="true" className="relative z-10 flex h-full min-w-0 flex-1 flex-col bg-background">
       <div className="draggable flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
         {isSidebarCollapsed && window.electron.platform !== 'win32' && (
           <div className={`non-draggable flex items-center gap-1 ${window.electron.platform === 'darwin' ? 'pl-[68px]' : ''}`}>
@@ -127,7 +172,7 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
             <div role="alert" className="space-y-4 py-16 text-center"><p className="text-sm text-secondary">{t('expertLoadFailed')}</p><button type="button" onClick={() => void load()} className="rounded-lg border border-border px-4 py-2 text-sm hover:bg-surface-raised">{t('retry')}</button></div>
           ) : <>
             {!query.trim() && !category && !tag && presets.length > 0 && (
-              <ExpertFeaturedScenarios presets={presets} scenarios={catalog?.scenarios ?? []} onSelect={setDetail} />
+              <ExpertFeaturedScenarios presets={presets} scenarios={catalog?.scenarios ?? []} onSelect={showDetail} />
             )}
             <section aria-labelledby="expert-list-title" className="space-y-4">
               <div className="flex items-center justify-between"><h2 id="expert-list-title" className="text-base font-semibold text-foreground">{t('expertAll')}</h2><span className="text-xs text-muted" role="status">{t('expertCount').replace('{count}', String(filtered.length))}</span></div>
@@ -145,8 +190,8 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
                 <div className="rounded-2xl border border-dashed border-border py-16 text-center"><MagnifyingGlassIcon className="mx-auto mb-3 h-6 w-6 text-muted" /><p className="text-sm text-secondary">{t('expertEmpty')}</p><button type="button" onClick={() => { setQuery(''); setCategory(null); setTag(null); }} className="mt-3 text-sm text-primary hover:underline">{t('expertClearFilters')}</button></div>
               ) : <div className="grid grid-cols-1 gap-4 min-[900px]:grid-cols-2 min-[1280px]:grid-cols-3">
                 {filtered.map(preset => (
-                  <article key={preset.id} className="group relative flex flex-col rounded-2xl border border-border bg-surface p-5 transition-all hover:border-primary/30 hover:shadow-sm">
-                    <button type="button" onClick={() => setDetail(preset)} aria-label={`${name(preset)} · ${t('expertViewExamples')}`} className="absolute inset-0 cursor-pointer rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background" />
+                  <article data-expert-id={preset.id} key={preset.id} className="group relative flex flex-col rounded-2xl border border-border bg-surface p-5 transition-all hover:border-primary/30 hover:shadow-sm">
+                    <button type="button" onClick={() => showDetail(preset)} aria-label={`${name(preset)} · ${t('expertViewExamples')}`} className="absolute inset-0 cursor-pointer rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background" />
                     <div className="pointer-events-none flex items-start gap-3 text-left">
                       <AgentAvatarIcon value={preset.icon} expertFallback className="h-12 w-12" iconClassName="h-7 w-7" />
                       <span className="min-w-0 flex-1"><span className="block break-words text-sm font-semibold text-foreground group-hover:text-primary">{name(preset)}</span><span className="mt-1 block text-xs text-muted">{categoryName(preset.category)}</span></span>
@@ -167,7 +212,7 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
           <p className="my-5 text-sm leading-6 text-secondary">{description(detail)}</p>
           <div className="mb-7 flex flex-wrap gap-2">{detail.tags.map(item => <button type="button" key={item.zh} title={t('expertFilterByTag').replace('{tag}', expertText(item, language))} onClick={() => { setTag(item.zh); setCategory(null); closeDetail(); }} className="rounded-md bg-surface-raised px-2.5 py-1 text-xs text-secondary hover:text-primary">{expertText(item, language)}</button>)}</div>
           <h3 className="mb-3 text-sm font-semibold text-foreground">{t('expertExampleHeading')}</h3>
-          <div className="space-y-3">{detail.starterPrompts.map(prompt => <button type="button" key={prompt.zh} disabled={summoning !== null} onClick={() => void summon(detail, expertText(prompt, language))} className="flex w-full items-center gap-4 rounded-xl border border-border p-4 text-left text-sm leading-6 text-secondary transition-colors hover:border-primary/40 hover:bg-primary/5 disabled:opacity-50"><span className="flex-1">{expertText(prompt, language)}</span><ArrowRightIcon className="h-4 w-4 shrink-0 text-muted" /></button>)}</div>
+          <div className="space-y-3">{detail.starterPrompts.map((prompt, index) => <button type="button" key={prompt.zh} disabled={summoning !== null} onClick={() => void summon(detail, expertText(prompt, language), index)} className="flex w-full items-center gap-4 rounded-xl border border-border p-4 text-left text-sm leading-6 text-secondary transition-colors hover:border-primary/40 hover:bg-primary/5 disabled:opacity-50"><span className="flex-1">{expertText(prompt, language)}</span><ArrowRightIcon className="h-4 w-4 shrink-0 text-muted" /></button>)}</div>
           <div className="mt-5">{errorNotice}</div>
           <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-5"><p className="max-w-[300px] text-xs leading-5 text-muted">{t('expertDraftHint')}</p>{summonButton(detail, true)}</div>
         </div>

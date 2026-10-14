@@ -21,7 +21,7 @@ function setup(syncOpenClawConfig: AgentHandlerDeps['syncOpenClawConfig'], agent
     { isDestroyed: () => false, webContents: { id: 2, send: otherWindowSend } },
   ] as unknown as BrowserWindow[]);
   registerAgentHandlers({
-    getAgentManager: () => ({ addPresetAgent }),
+    getAgentManager: () => ({ addPresetAgent, listAgents: () => [] }),
     resolveDefaultAgentModelRef: () => 'provider/model',
     syncOpenClawConfig,
   } as unknown as AgentHandlerDeps);
