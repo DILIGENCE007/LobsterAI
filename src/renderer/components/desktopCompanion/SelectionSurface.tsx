@@ -10,6 +10,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
+  CompanionQuickAnswerErrorCode,
   CompanionQuickAnswerEventType,
   type CompanionQuickAnswerTurn,
   type DesktopCompanionSelection,
@@ -32,7 +33,9 @@ import {
   SourceQuote,
   SwapLabel,
 } from './SelectionCard';
+import SelectionLoginRequired from './SelectionLoginRequired';
 import { COMPANION_TOOLBAR_PRESENTATION } from './selectionToolbarPresentation';
+import { useCompanionAuth } from './useCompanionAuth';
 import { useMeasuredSurface } from './useMeasuredSurface';
 import { usePointerPassThrough } from './usePointerPassThrough';
 
@@ -60,6 +63,7 @@ interface MenuItem {
 export default function SelectionSurface({ state }: { state: DesktopCompanionState }) {
   const api = window.electron.desktopCompanion;
   const [selection, setSelection] = useState<DesktopCompanionSelection | null>(null);
+  const { isLoggedIn, requireLogin } = useCompanionAuth(selection?.id);
   const [question, setQuestion] = useState('');
   const [turns, setTurns] = useState<CompanionQuickAnswerTurn[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
@@ -99,6 +103,16 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
 
   useEffect(() => () => clearTimeout(copiedTimer.current), []);
 
+  useEffect(() => {
+    if (isLoggedIn !== false) return;
+    if (streamRef.current) void api.abortQuickAnswer(streamRef.current.requestId);
+    setStream(null);
+    setTurns([]);
+    setQuestion('');
+    setInput('');
+    setError('');
+  }, [api, isLoggedIn]);
+
   useEffect(() => api.onQuickAnswer(event => {
     const current = streamRef.current;
     if (!current || event.requestId !== current.requestId) return;
@@ -121,22 +135,23 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
 
   const ask = useCallback((action: CompanionSelectionAction, history: CompanionQuickAnswerTurn[], firstQuestion?: string) => {
     const current = selectionRef.current;
-    if (!current) return;
+    if (!current || isLoggedIn !== true) return;
     const requestId = crypto.randomUUID();
     setStream({ requestId, text: '' });
     setError('');
     void api.startQuickAnswer({ requestId, action, text: current.text, question: firstQuestion, history }).then(result => {
       if (!result.success && streamRef.current?.requestId === requestId) {
+        if (result.code === CompanionQuickAnswerErrorCode.LoginRequired) requireLogin();
         setError(result.error || t('desktopCompanionRequestFailed'));
         setStream(null);
       }
     }).catch(() => {
       if (streamRef.current?.requestId === requestId) { setError(t('desktopCompanionRequestFailed')); setStream(null); }
     });
-  }, [api]);
+  }, [api, isLoggedIn, requireLogin]);
 
   // Toolbar and menu actions enter the same answer flow; Ask waits for a question first.
-  const autoAnswerAction = answering && selection.action !== CompanionSelectionAction.Ask
+  const autoAnswerAction = isLoggedIn === true && answering && selection.action !== CompanionSelectionAction.Ask
     && selection.action !== CompanionSelectionAction.Translate ? selection.action : null;
   useEffect(() => {
     if (autoAnswerAction) ask(autoAnswerAction, []);
@@ -157,7 +172,7 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
   const submit = () => {
     const text = input.trim();
     const current = selectionRef.current;
-    if (!text || !current?.action || streamRef.current) return;
+    if (!text || !current?.action || streamRef.current || isLoggedIn !== true) return;
     setInput('');
     if (current.action === CompanionSelectionAction.Ask && !question && turns.length === 0) {
       setQuestion(text);
@@ -316,7 +331,7 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
           {streaming && (streaming.text
             ? <SelectionAnswer text={streaming.text} streaming />
             : <SelectionThinking label={t('desktopCompanionAnswerThinking')} />)}
-          {error && (
+          {isLoggedIn === false ? <SelectionLoginRequired /> : error && (
             <SelectionError
               message={error}
               action={<button type="button" onClick={retry}>{t('desktopCompanionAnswerRetry')}</button>}
@@ -347,6 +362,7 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
           placeholder={t(awaitingQuestion ? 'desktopCompanionAnswerAskPlaceholder' : 'desktopCompanionAnswerFollowUp')}
           onChange={setInput}
           onSubmit={submit}
+          disabled={isLoggedIn !== true}
           onStop={streaming ? () => { void api.abortQuickAnswer(streaming.requestId); setStream(null); } : undefined}
           onPointerDown={() => command({ type: DesktopCompanionSelectionCommandType.FocusInput })}
         />

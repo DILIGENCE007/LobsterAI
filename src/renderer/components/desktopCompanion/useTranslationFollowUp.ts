@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { CompanionQuickAnswerEventType, type CompanionQuickAnswerTurn } from '../../../shared/desktopCompanion/constants';
+import { CompanionQuickAnswerErrorCode, CompanionQuickAnswerEventType, type CompanionQuickAnswerTurn } from '../../../shared/desktopCompanion/constants';
 import { CompanionSelectionAction } from '../../../shared/desktopCompanion/selectionActions';
 import { i18nService } from '../../services/i18n';
 
@@ -12,6 +12,7 @@ export function useTranslationFollowUp(key: string, source: string, translation:
   const [turns, setTurns] = useState<CompanionQuickAnswerTurn[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [error, setError] = useState('');
+  const [loginRequired, setLoginRequired] = useState(false);
   const [question, setQuestion] = useState('');
   const streamRef = useRef<Streaming | null>(null);
   const stop = useCallback(() => {
@@ -21,7 +22,7 @@ export function useTranslationFollowUp(key: string, source: string, translation:
   }, [api]);
 
   useEffect(() => {
-    stop(); setTurns([]); setError(''); setQuestion('');
+    stop(); setTurns([]); setError(''); setQuestion(''); setLoginRequired(false);
     return stop;
   }, [key, stop]);
   useEffect(() => api.onQuickAnswer(event => {
@@ -41,7 +42,7 @@ export function useTranslationFollowUp(key: string, source: string, translation:
   const ask = (history: CompanionQuickAnswerTurn[]) => {
     const requestId = crypto.randomUUID();
     streamRef.current = { requestId, text: '' };
-    setStreaming(streamRef.current); setError('');
+    setStreaming(streamRef.current); setError(''); setLoginRequired(false);
     const fail = (message?: string) => {
       if (streamRef.current?.requestId !== requestId) return;
       streamRef.current = null; setStreaming(null);
@@ -49,7 +50,10 @@ export function useTranslationFollowUp(key: string, source: string, translation:
     };
     void api.startQuickAnswer({ requestId, action: CompanionSelectionAction.Ask, text: source,
       history: [{ role: 'assistant', content: translation }, ...history] }).then(result => {
-      if (!result.success) fail(result.error);
+      if (!result.success && streamRef.current?.requestId === requestId) {
+        setLoginRequired(result.code === CompanionQuickAnswerErrorCode.LoginRequired);
+        fail(result.error);
+      }
     }).catch(() => fail());
   };
   const submit = () => {
@@ -57,5 +61,5 @@ export function useTranslationFollowUp(key: string, source: string, translation:
     const history: CompanionQuickAnswerTurn[] = [...turns, { role: 'user', content: question.trim() }];
     setQuestion(''); setTurns(history); ask(history);
   };
-  return { turns, streaming, error, question, setQuestion, submit, stop, retry: () => ask(turns) };
+  return { turns, streaming, error, loginRequired, question, setQuestion, submit, stop, retry: () => ask(turns) };
 }
