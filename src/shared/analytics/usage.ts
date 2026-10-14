@@ -24,6 +24,7 @@ export const UsageStage = {
   Permission: 'permission',
   PermissionDecision: 'permission_decision',
   End: 'end',
+  Confirmation: 'confirmation',
   Accepted: 'accepted',
   Generated: 'generated',
   Saved: 'saved',

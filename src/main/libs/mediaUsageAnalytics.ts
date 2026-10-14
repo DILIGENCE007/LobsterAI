@@ -20,6 +20,8 @@ interface MediaJob {
   terminal: boolean;
   saved: boolean;
   accepted: boolean;
+  confirmationStartedAt?: number;
+  confirmationResolved?: boolean;
   modelId?: string;
   generatedSuccessfully?: boolean;
 }
@@ -148,6 +150,28 @@ export class MediaUsageAnalytics {
         String(task.status),
         Array.isArray(task.resultUrls) ? task.resultUrls.length : 0,
       );
+    });
+  }
+
+  confirmation(
+    callId: string,
+    outcome: typeof UsageOutcome.Requested | typeof UsageOutcome.Allowed | typeof UsageOutcome.Denied,
+    modelId?: string,
+  ): void {
+    this.safe(() => {
+      const job = this.jobs.get(callId);
+      if (!job || job.owner !== this.deps.getOwner() || job.accepted || job.terminal) return;
+      if (outcome === UsageOutcome.Requested) {
+        if (job.confirmationStartedAt !== undefined) return;
+        job.confirmationStartedAt = this.now();
+        job.modelId = catalogAnalyticsId(modelId);
+      } else {
+        if (job.confirmationStartedAt === undefined || job.confirmationResolved) return;
+        job.confirmationResolved = true;
+      }
+      this.emit(job, UsageStage.Confirmation, outcome, {
+        durationMs: Math.max(0, this.now() - job.confirmationStartedAt),
+      });
     });
   }
 

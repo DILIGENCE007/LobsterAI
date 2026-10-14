@@ -43,7 +43,7 @@ import {
   LogReporterStoreKey,
   PromptAnalyticsConversationState,
 } from '../shared/analytics/constants';
-import { UsageAnalytics, type UsageContext, UsageOrigin, UsageStage } from '../shared/analytics/usage';
+import { UsageAnalytics, type UsageContext, UsageOrigin, UsageOutcome, UsageStage } from '../shared/analytics/usage';
 import { AppIpcChannel, type OpenSettingsRequest, OpenSettingsTab } from '../shared/app/constants';
 import { AppSettingsAutoLaunchErrorCode, AppSettingsIpc } from '../shared/appSettings/constants';
 import { type AppUpdateActiveWorkloads, AppUpdateIpc } from '../shared/appUpdate/constants';
@@ -6753,6 +6753,7 @@ if (!gotTheLock) {
           `生成后请妥善保存视频，若误删可在[「个人主页-用量详情-生成任务」](${portalTasksUrl})中下载`,
           '~~（链接有时效性，请尽快下载）~~',
         ].join('\n');
+        mediaUsage.confirmation(request.context.toolCallId, UsageOutcome.Requested, selectedModel);
         const confirmResponse = await getMcpRuntime().askUserInternal(
           [{
             question: questionText,
@@ -6771,6 +6772,7 @@ if (!gotTheLock) {
           || confirmResponse?.answers?.[questionText] === '取消';
 
         if (!isRequestAccountCurrent()) return staleAccountResult();
+        mediaUsage.confirmation(request.context.toolCallId, userCancelled ? UsageOutcome.Denied : UsageOutcome.Allowed);
         if (userCancelled) {
           console.log('[MediaGeneration] user cancelled video generation confirmation.');
           return {

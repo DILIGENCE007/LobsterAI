@@ -3,13 +3,14 @@ import { expect, test, vi } from 'vitest';
 import { UsageEntry, UsageOutcome, UsageStage } from '../../shared/analytics/usage';
 import { MediaUsageAnalytics } from './mediaUsageAnalytics';
 
-function setup() {
+function setup(now?: () => number) {
   const report = vi.fn();
   let owner: string | null = 'account-a:1';
   const tracker = new MediaUsageAnalytics({
     report,
     getOwner: () => owner,
     context: () => undefined,
+    now,
   });
   return {
     tracker,
@@ -136,4 +137,56 @@ test('delayed media delivery retains the original turn after a later conversatio
   await tracker.run(request, async () => ({ content: [], details: { taskId: 'media-task', status: 'running' } }));
   current = { ...original, turnId: 'second' };
   expect(tracker.attribution('media-task')?.context).toBe(original);
+});
+
+test('video confirmation measures user waiting time separately and deduplicates decisions', async () => {
+  let now = 0;
+  const s = setup(() => now);
+  await s.tracker.run(request, async () => {
+    now = 100;
+    s.tracker.confirmation(request.callId, UsageOutcome.Requested, 'MiniMax-Hailuo-2.3');
+    now = 200;
+    s.tracker.confirmation(request.callId, UsageOutcome.Requested, 'ignored-duplicate');
+    now = 4100;
+    s.tracker.confirmation(request.callId, UsageOutcome.Allowed);
+    s.tracker.confirmation(request.callId, UsageOutcome.Denied);
+    now = 5000;
+    return { content: [], details: { taskId: 'server-task', status: 'running' } };
+  });
+  expect(s.events().filter(event => event.stage === UsageStage.Confirmation)).toEqual([
+    expect.objectContaining({ outcome: UsageOutcome.Requested, durationMs: 0, modelId: 'MiniMax-Hailuo-2.3' }),
+    expect.objectContaining({ outcome: UsageOutcome.Allowed, durationMs: 4000, modelId: 'MiniMax-Hailuo-2.3' }),
+  ]);
+  expect(s.events().at(-1)).toMatchObject({ stage: UsageStage.Accepted, durationMs: 5000 });
+  expect(new Set(s.events().map(event => event.mediaJobId)).size).toBe(1);
+});
+
+test('declining video confirmation records cancellation without successful acceptance or generation', async () => {
+  const s = setup();
+  await s.tracker.run(request, async () => {
+    s.tracker.confirmation(request.callId, UsageOutcome.Denied);
+    s.tracker.confirmation(request.callId, UsageOutcome.Requested, 'private model/name');
+    s.tracker.confirmation(request.callId, UsageOutcome.Denied);
+    return { isError: true, content: [], details: { status: 'cancelled', reason: 'USER_CANCELLED' } };
+  });
+  expect(s.events().map(event => [event.stage, event.outcome])).toEqual([
+    [UsageStage.Start, UsageOutcome.Started],
+    [UsageStage.Confirmation, UsageOutcome.Requested],
+    [UsageStage.Confirmation, UsageOutcome.Denied],
+    [UsageStage.Accepted, UsageOutcome.Cancelled],
+  ]);
+  expect(JSON.stringify(s.events())).not.toContain('private');
+});
+
+test('a confirmation resolved after an account change or opt-out cannot report for the new owner', async () => {
+  for (const nextOwner of ['account-b:2', null]) {
+    const s = setup();
+    await s.tracker.run(request, async () => {
+      s.tracker.confirmation(request.callId, UsageOutcome.Requested);
+      s.setOwner(nextOwner);
+      s.tracker.confirmation(request.callId, UsageOutcome.Allowed);
+      return { content: [], details: { status: 'running' } };
+    });
+    expect(s.events().map(event => event.stage)).toEqual([UsageStage.Start, UsageStage.Confirmation]);
+  }
 });

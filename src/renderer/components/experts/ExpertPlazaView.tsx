@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { agentService } from '../../services/agent';
 import { i18nService } from '../../services/i18n';
+import { beginLatestAsyncRequest, invalidateLatestAsyncRequest, isLatestAsyncRequest } from '../../services/latestAsyncRequest';
 import { prepareExpertAnalytics, reportExpertJourney } from '../../services/usageAnalytics';
 import type { Agent } from '../../types/agent';
 import AgentAvatarIcon from '../agent/AgentAvatarIcon';
@@ -36,6 +37,7 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
   const [summoning, setSummoning] = useState<string | null>(null);
   const [summonFailed, setSummonFailed] = useState(false);
   const mountedRef = useRef(false);
+  const loadRequestIdRef = useRef(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const [journeyId] = useState(() => crypto.randomUUID());
   const viewedRef = useRef(false);
@@ -59,29 +61,36 @@ const ExpertPlazaView: React.FC<ExpertPlazaViewProps> = ({ onSummon, isSidebarCo
   const selectedTag = presets.flatMap(preset => preset.tags).find(item => item.zh === tag);
 
   const load = useCallback(async () => {
+    const requestId = beginLatestAsyncRequest(loadRequestIdRef);
     setLoading(true);
     setLoadFailed(false);
     const startedAt = Date.now();
     try {
       const result = await window.electron.agents.expertCatalog();
+      if (!isLatestAsyncRequest(loadRequestIdRef, requestId)) return;
       await agentService.loadAgents();
+      if (!isLatestAsyncRequest(loadRequestIdRef, requestId)) return;
       if (mountedRef.current) setCatalog(result);
       reportExpertJourney(UsageStage.Load, { journeyId, outcome: UsageOutcome.Succeeded,
         catalogVersion: result.version, count: result.experts.length, durationMs: Date.now() - startedAt });
     } catch (error) {
+      if (!isLatestAsyncRequest(loadRequestIdRef, requestId)) return;
       reportExpertJourney(UsageStage.Load, { journeyId, outcome: UsageOutcome.Failed,
         failureCode: usageFailureCode(error), durationMs: Date.now() - startedAt });
       console.error('[ExpertPlaza] Failed to load experts:', error);
       if (mountedRef.current) setLoadFailed(true);
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (mountedRef.current && isLatestAsyncRequest(loadRequestIdRef, requestId)) setLoading(false);
     }
   }, [journeyId]);
 
   useEffect(() => {
     mountedRef.current = true;
     void load();
-    return () => { mountedRef.current = false; };
+    return () => {
+      mountedRef.current = false;
+      invalidateLatestAsyncRequest(loadRequestIdRef);
+    };
   }, [load]);
 
   useEffect(() => {
