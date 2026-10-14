@@ -988,16 +988,6 @@ function applyPackagedEnvOverrides(env: Record<string, string | undefined>): voi
       env.LC_ALL = 'C.UTF-8';
     }
 
-    // Force Python to use UTF-8 mode (PEP 540, Python 3.7+).
-    // Without this, Python on Chinese Windows defaults to GBK for stdin/stdout/stderr
-    // and file I/O, causing garbled output when the SDK reads it as UTF-8.
-    if (!env.PYTHONUTF8) {
-      env.PYTHONUTF8 = '1';
-    }
-    if (!env.PYTHONIOENCODING) {
-      env.PYTHONIOENCODING = 'utf-8';
-    }
-
     // Force `less` and `git` pager output to use UTF-8.
     if (!env.LESSCHARSET) {
       env.LESSCHARSET = 'utf-8';
