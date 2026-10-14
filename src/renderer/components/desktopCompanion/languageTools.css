@@ -1,0 +1,59 @@
+/* Translate and read-aloud cards; the shared card parts live in selectionSurface.css. */
+
+/* Source and target sit in equal halves under the title bar, so the direction stays in view while answers scroll. */
+.lt-langs { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 10px; flex-shrink: 0; padding: 2px 16px 14px; }
+.lt-lang {
+  position: relative; display: flex; align-items: center; height: 36px; padding: 0 12px; overflow: hidden;
+  border: 1px solid var(--s-line); border-radius: 10px; color: var(--s-ink-3); font-size: 13.5px; white-space: nowrap; text-overflow: ellipsis;
+}
+.lt-arrow { width: 16px; height: 16px; color: var(--s-ink-3); stroke-width: 1.8; }
+.lt-select { padding: 0; overflow: visible; color: var(--s-ink); font-weight: 500; transition: background-color 0.12s, border-color 0.12s; }
+.lt-select:hover { background: var(--s-fill); }
+.lt-select:focus-within { border-color: var(--s-line-strong); }
+.lt-select select {
+  width: 100%; height: 100%; padding: 0 32px 0 12px; border: 0; border-radius: inherit; outline: none; appearance: none;
+  background: transparent; color: inherit; font: inherit; text-overflow: ellipsis; cursor: pointer;
+}
+.lt-select svg { position: absolute; right: 11px; width: 14px; height: 14px; color: var(--s-ink-3); stroke-width: 2; pointer-events: none; }
+
+.lt-translation { min-height: 24px; color: var(--s-ink); font-size: 15px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.lt-translation .sel-thinking { font-size: 13px; }
+.lt-conversation:has(> *) { margin-top: 14px; padding-top: 2px; border-top: 0.5px solid var(--s-divider); }
+
+.lt-player { display: flex; align-items: center; gap: 10px; margin: 2px 0 4px; padding: 10px 8px 10px 10px; border-radius: 12px; background: var(--s-field); }
+.lt-translation + .lt-player { margin-top: 12px; }
+.lt-play {
+  width: 34px; height: 34px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%;
+  background: var(--s-primary); color: var(--s-primary-ink); transition: background-color 0.15s, transform 0.1s;
+}
+.lt-play svg { width: 16px; height: 16px; }
+.lt-play:hover { background: var(--s-primary-hover); }
+.lt-play:active { transform: scale(0.94); }
+.lt-track { flex: 1; min-width: 0; }
+.lt-status { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 12.5px; }
+.lt-status strong { overflow: hidden; color: var(--s-ink); font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
+.lt-status small { margin-left: auto; color: var(--s-ink-3); font-size: 11.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lt-wave { display: inline-flex; align-items: center; gap: 2px; height: 12px; color: var(--s-ink-4); }
+.lt-wave i { width: 2px; height: 5px; border-radius: 1px; background: currentColor; }
+.lt-wave i:nth-child(2) { height: 11px; }
+.lt-wave i:nth-child(3) { height: 8px; }
+.lt-wave[data-playing="true"] { color: var(--s-accent); }
+.lt-wave[data-playing="true"] i { animation: lt-wave 0.85s ease-in-out infinite alternate; }
+.lt-wave i:nth-child(2n) { animation-delay: -0.4s; }
+.lt-progress { height: 3px; margin-top: 8px; overflow: hidden; border-radius: 3px; background: var(--s-fill-strong); }
+.lt-progress i { display: block; height: 100%; border-radius: inherit; background: var(--s-accent); transition: width 0.3s ease; }
+.lt-rate select {
+  height: 26px; padding: 0 8px; border: 0; border-radius: 7px; outline: none; appearance: none;
+  background: var(--s-fill); color: var(--s-ink-2); font-family: inherit; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.lt-rate select:hover { background: var(--s-fill-strong); color: var(--s-ink); }
+.lt-rate select:focus-visible { outline: 2px solid color-mix(in srgb, var(--s-accent) 60%, transparent); }
+
+.lt-quota { display: flex; gap: 12px; flex-shrink: 0; padding: 0 16px 11px; color: var(--s-ink-3); font-size: 11px; }
+.lt-quota span:last-child:not(:first-child) { margin-left: auto; }
+.sel-composer + .lt-quota { margin-top: -4px; }
+.sel-card[data-tool="tts"] .sel-scroll { padding-bottom: 10px; }
+
+.orb-speech { position: absolute; right: 5px; bottom: 4px; width: 27px; height: 27px; display: grid; place-items: center; border: 1px solid var(--c-surface); border-radius: 50%; background: var(--c-accent); color: white; box-shadow: 0 2px 6px #0002; }
+.orb-speech svg { width: 17px; height: 17px; }
+@keyframes lt-wave { to { transform: scaleY(0.35); opacity: 0.6; } }

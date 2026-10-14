@@ -12,10 +12,13 @@
  *   const msg = t('imMissingCredentials', { fields: 'appId, appSecret' });
  */
 
+import { desktopCompanionTranslations } from '../shared/desktopCompanion/copy';
+
 export type LanguageType = 'zh' | 'en';
 
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    ...desktopCompanionTranslations.zh,
     browserPasskeyChooseAccountTitle: '使用通行密钥',
     browserPasskeyChooseAccountMessage: '选择用于登录 {site} 的账号',
     browserPasskeyUnnamedAccount: '已保存的账号',
@@ -418,6 +421,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     'enterprise.updateBlocked': '版本更新由企业统一管理',
   },
   en: {
+    ...desktopCompanionTranslations.en,
     openClawRepairCommandTimeout: 'Repair command {command} timed out after {seconds} seconds. Repair has stopped. Diagnostics: {path}',
     openClawRepairCommandFailed: 'Repair command {command} did not complete. Diagnostics: {path}',
     browserPasskeyChooseAccountTitle: 'Use a passkey',

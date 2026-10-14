@@ -1,3 +1,4 @@
+import { desktopCompanionTranslations } from '../../shared/desktopCompanion/copy';
 import { configService } from './config';
 
 // 支持的语言类型
@@ -6,6 +7,7 @@ export type LanguageType = 'zh' | 'en';
 // 语言文本映射
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    ...desktopCompanionTranslations.zh,
     officeSaved: '已自动保存',
     officePending: '等待保存…',
     officeSaving: '正在保存…',
@@ -2559,6 +2561,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // Media Generation
     mediaGeneration: '媒体生成',
+    mediaGenerationMenuItem: '图片/视频生成',
+    clearMediaModel: '清除生成模型',
     mediaImage: '图片',
     mediaVideo: '视频',
     mediaAuto: '自动',
@@ -4491,6 +4495,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     workspaceDiffIncomplete: '部分文件超出读取限额，行数统计不完整。',
   },
   en: {
+    ...desktopCompanionTranslations.en,
     officeSaved: 'All changes saved',
     officePending: 'Waiting to save…',
     officeSaving: 'Saving…',
@@ -7187,6 +7192,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // Media Generation
     mediaGeneration: 'Media Generation',
+    mediaGenerationMenuItem: 'Images & Videos',
+    clearMediaModel: 'Clear Generation Model',
     mediaImage: 'Image',
     mediaVideo: 'Video',
     mediaAuto: 'Auto',

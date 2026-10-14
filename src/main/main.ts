@@ -42,7 +42,7 @@ import {
   LogReporterSource,
   LogReporterStoreKey,
 } from '../shared/analytics/constants';
-import { AppIpcChannel } from '../shared/app/constants';
+import { AppIpcChannel, type OpenSettingsRequest, OpenSettingsTab } from '../shared/app/constants';
 import { AppSettingsAutoLaunchErrorCode, AppSettingsIpc } from '../shared/appSettings/constants';
 import { type AppUpdateActiveWorkloads, AppUpdateIpc } from '../shared/appUpdate/constants';
 import { ArtifactBrowserPartition, ArtifactPreviewIpc, ArtifactPreviewProtocol } from '../shared/artifactPreview/constants';
@@ -230,6 +230,8 @@ import { readEnvironmentSnapshot } from './conversation/environmentSnapshot';
 import { WorkspaceReviewSourceStore } from './conversation/reviewSource';
 import { isScopedReview, ScopedReviewStore } from './conversation/scopedReview';
 import { type CoworkForkContextMessage, type CoworkMessage, CoworkStore } from './coworkStore';
+import { DesktopCompanionManager } from './desktopCompanion/desktopCompanionManager';
+import { CompanionLanguageClient } from './desktopCompanion/languageToolClient';
 import {
   buildEnterpriseAccountRequestHeaders,
   clearEnterpriseAccountContext,
@@ -548,6 +550,7 @@ import {
 } from './libs/openclawTokenProxy';
 import { runLegacyWeixinAllowFromMigration } from './libs/openclawWeixinPairingMigration';
 import { migrateMainAgentWorkspace } from './libs/openclawWorkspaceMigration';
+import { collectOpenWithArgv, OpenWithPathQueue } from './libs/openWithPathQueue';
 import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
 import { isAnalyticsEndpointUrl, sanitizeUrlForLog, serializeForLog } from './libs/sanitizeForLog';
 import { SessionTitleGenerator } from './libs/sessionTitleGenerator';
@@ -4486,6 +4489,7 @@ const getNotificationIconPath = (): string | null => {
 let mainWindow: BrowserWindow | null = null;
 let dataMigrationRestoreWindow: BrowserWindow | null = null;
 let desktopNotificationManager: DesktopNotificationManager | null = null;
+let desktopCompanionManager: DesktopCompanionManager | null = null;
 let ensureMainWindowForReason: ((reason: string) => BrowserWindow | null) | null = null;
 let isOpenSessionFromNotificationReady = false;
 let pendingOpenSessionFromNotificationId: string | null = null;
@@ -5233,6 +5237,75 @@ if (!gotTheLock) {
     handleDeepLink(url);
   });
 
+  // macOS: Finder "Open With" and drops on the Dock icon. electron-builder.json
+  // declares public.content/public.archive/public.folder for the Open With
+  // menu, which ignores the public.data wildcard (that one only widens Dock
+  // drops). Cold starts deliver this before `ready`, so paths wait in the
+  // queue until the renderer takes them.
+  const openWithPathQueue = new OpenWithPathQueue({
+    getTarget: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null),
+  });
+
+  app.on('open-file', (event, filePath) => {
+    event.preventDefault();
+    if (isDataMigrationRestoreInProgress) {
+      console.log('[OpenWith] ignored open-file while data restore is in progress.');
+      return;
+    }
+    console.debug('[OpenWith] queued a path from macOS open-file');
+    // A multi-selection arrives as one event per item; focus the window once.
+    if (!openWithPathQueue.enqueue(filePath)) return;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      focusMainWindow('open with');
+    } else if (hasRenderedFirstFrame) {
+      // The window was closed after startup; recreate it as a Dock click would.
+      focusMainWindowForReason('open with');
+    }
+  });
+
+  // Windows: Explorer "Open with" (registered by scripts/nsis-installer.nsh)
+  // starts LobsterAI.exe "<path>"; a running instance gets that command line
+  // in second-instance below.
+  const collectWindowsOpenWithArgv = (argv: string[], cwd: string) => (
+    process.platform === 'win32'
+      ? collectOpenWithArgv(argv, {
+        cwd,
+        appPath: process.defaultApp ? app.getAppPath() : undefined,
+        isExistingPath: fs.existsSync,
+      })
+      : []
+  );
+
+  const launchOpenWithArgs = new Set<string>();
+  for (const entry of collectWindowsOpenWithArgv(process.argv, process.cwd())) {
+    launchOpenWithArgs.add(entry.arg);
+    openWithPathQueue.enqueue(entry.path);
+  }
+  if (launchOpenWithArgs.size > 0) {
+    console.log(`[OpenWith] launched with ${launchOpenWithArgs.size} path(s) from Explorer`);
+  }
+
+  // app.relaunch() reuses the launch command line; leave out the paths
+  // Explorer passed so a relaunch does not open them again.
+  const relaunchApp = (): void => {
+    if (launchOpenWithArgs.size === 0) {
+      app.relaunch();
+      return;
+    }
+    app.relaunch({ args: process.argv.slice(1).filter(arg => !launchOpenWithArgs.has(arg)) });
+  };
+
+  ipcMain.handle(AppIpcChannel.ConsumeOpenWithPaths, event => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender.id !== mainWindow.webContents.id) {
+      return [];
+    }
+    const paths = openWithPathQueue.consume();
+    if (paths.length > 0) {
+      console.log(`[OpenWith] renderer took ${paths.length} queued path(s)`);
+    }
+    return paths;
+  });
+
   app.on('second-instance', (_event, commandLine, workingDirectory) => {
     console.debug('[Main] second-instance event', { commandLine, workingDirectory });
     if (isDataMigrationRestoreInProgress) {
@@ -5244,6 +5317,11 @@ if (!gotTheLock) {
     const deepLink = commandLine.find(arg => arg.startsWith('lobsterai://'));
     if (deepLink) {
       handleDeepLink(deepLink);
+    }
+
+    for (const entry of collectWindowsOpenWithArgv(commandLine, workingDirectory)) {
+      console.debug('[OpenWith] queued a path from a second instance');
+      openWithPathQueue.enqueue(entry.path);
     }
 
     focusMainWindow('second instance activation');
@@ -5495,7 +5573,7 @@ if (!gotTheLock) {
 
   ipcMain.handle('app:relaunch', () => {
     console.log('[Main] app:relaunch requested, scheduling restart...');
-    app.relaunch();
+    relaunchApp();
     quitAppWithoutConfirmation('app:relaunch');
   });
 
@@ -5825,6 +5903,7 @@ if (!gotTheLock) {
   };
 
   const emitAuthSessionChanged = (event: AuthSessionChangedEvent): void => {
+    desktopCompanionManager?.resetLanguageTools();
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) {
         window.webContents.send(AuthIpcChannel.SessionChanged, event);
@@ -7649,6 +7728,7 @@ if (!gotTheLock) {
       const previousAccountScope = getCurrentMediaAccountScope();
       activeAuthExchangeIntent = null;
       authAccountGeneration += 1;
+      desktopCompanionManager?.resetLanguageTools();
       const exchangeAccountGeneration = authAccountGeneration;
       clearEnterpriseAccountContext(getStore());
       clearServerModelMetadata();
@@ -9241,7 +9321,7 @@ if (!gotTheLock) {
       }
       if (rendererReleased) {
         setTimeout(() => {
-          app.relaunch();
+          relaunchApp();
           app.exit(0);
         }, 100);
       }
@@ -9258,7 +9338,7 @@ if (!gotTheLock) {
       if (rendererReleased) {
         dialog.showErrorBox(t('dataMigrationRestoreDialogTitle'), message);
         setTimeout(() => {
-          app.relaunch();
+          relaunchApp();
           app.exit(0);
         }, 100);
       } else {
@@ -13733,6 +13813,8 @@ if (!gotTheLock) {
     getServerApiBaseUrl,
   });
 
+  const desktopLanguageClient = new CompanionLanguageClient({ fetchWithAuth, getServerApiBaseUrl, getSessionKey: getAuthSessionKey });
+
   registerSiteIpcHandlers({
     fetchWithAuth: (url, options) => {
       const { scopedFetch } = capturePublishingRequest();
@@ -14583,7 +14665,13 @@ if (!gotTheLock) {
       const initLang = getStore().get<{ language?: string }>('app_config')?.language;
       setLanguage(initLang === 'en' ? 'en' : 'zh');
       // 窗口就绪后创建系统托盘
-      createTray(() => isQuitting ? null : mainWindow);
+      createTray(() => isQuitting ? null : mainWindow, {
+        isEnabled: () => desktopCompanionManager?.getState().preferences.enabled ?? false,
+        toggleEnabled: () => desktopCompanionManager?.setPreferences({
+          enabled: !desktopCompanionManager.getState().preferences.enabled,
+        }),
+        openPanel: () => desktopCompanionManager?.togglePanel(),
+      });
 
       // Start cron polling after the window is ready.
       (async () => {
@@ -14803,6 +14891,10 @@ if (!gotTheLock) {
     const cleanupStartedAt = Date.now();
     console.log(`[Main] App cleanup started for ${reason}`);
     currentAppCleanupStep = 'sync-teardown';
+    // Tear down companion windows, shortcut and monitors before the first await
+    // so nothing re-shows a window that hideAppWindowsForQuit() just hid.
+    desktopCompanionManager?.dispose();
+    desktopCompanionManager = null;
     skillManager?.stopWatching();
     stopMediaPollTimer();
     pendingMediaTasks.clear();
@@ -15413,6 +15505,25 @@ if (!gotTheLock) {
     console.log('[Main] initApp: creating window');
     createWindow();
     profiler.measure('createWindow');
+    desktopCompanionManager = new DesktopCompanionManager({
+      services: { languageClient: desktopLanguageClient },
+      store: getStore(),
+      preloadPath: PRELOAD_PATH,
+      rendererDirectory: path.join(__dirname, '../dist'),
+      devServerUrl: isDev ? DEV_SERVER_URL : undefined,
+      getMainWindow: () => mainWindow,
+      onPreferencesChanged: () => updateTrayMenu(() => isQuitting ? null : mainWindow),
+      openMain: sessionId => {
+        if (sessionId) pendingOpenSessionFromNotificationId = sessionId;
+        focusMainWindowForReason('desktop companion');
+        flushOpenSessionFromNotification();
+      },
+      openSettings: () => {
+        focusMainWindowForReason('desktop companion settings');
+        const request: OpenSettingsRequest = { tab: OpenSettingsTab.DesktopCompanion };
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(AppIpcChannel.OpenSettings, request);
+      },
+    });
     console.log('[Main] initApp: window created');
 
     // ── Step 2-4: Skill bootstrap (non-blocking) ────────────────────
@@ -15623,9 +15734,8 @@ if (!gotTheLock) {
         if (!mainWindow.isFocused()) mainWindow.focus();
         return;
       }
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
-      }
+      // Companion windows can remain alive after the main window closes.
+      createWindow();
     });
   };
 

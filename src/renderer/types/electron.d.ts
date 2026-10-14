@@ -82,6 +82,7 @@ import type {
   DecisionModelConfigView,
   DecisionModelTestResult,
 } from '../../shared/decisionModel/constants';
+import type { DesktopCompanionBridge } from '../../shared/desktopCompanion/constants';
 import type { EnterpriseQuotaRequestType } from '../../shared/enterpriseAccount/constants';
 import type {
   EnterpriseAccountContext,
@@ -681,6 +682,7 @@ interface HtmlShareResult {
 }
 
 interface IElectronAPI {
+  desktopCompanion: DesktopCompanionBridge;
   platform: string;
   arch: string;
   store: {
@@ -858,6 +860,8 @@ interface IElectronAPI {
     presetTemplates: () => Promise<PresetAgent[]>;
     expertCatalog: () => Promise<ExpertCatalog>;
     addPreset: (presetId: string) => Promise<Agent>;
+    /** Another window changed agents; reload them. */
+    onChanged?: (callback: () => void) => () => void;
   };
   api: {
     fetch: (options: {
@@ -1668,6 +1672,11 @@ interface IElectronAPI {
     }>;
     relaunch: () => Promise<void>;
     openSystemNotificationSettings: () => Promise<{ success: boolean; error?: string }>;
+  };
+  /** Files and folders macOS asked LobsterAI to open (Finder "Open With", Dock drops). */
+  openWith: {
+    consumePaths: () => Promise<string[]>;
+    onPathsAvailable: (callback: () => void) => () => void;
   };
   appUpdate: {
     getState: () => Promise<AppUpdateRuntimeState>;

@@ -23,6 +23,8 @@ export const AgentIpcChannel = {
   PresetTemplates: 'agents:presetTemplates',
   ExpertCatalog: 'agents:expertCatalog',
   AddPreset: 'agents:addPreset',
+  /** Main to renderer: agents were changed by another window. */
+  Changed: 'agents:changed',
 } as const;
 
 export type AgentIpcChannel = typeof AgentIpcChannel[keyof typeof AgentIpcChannel];

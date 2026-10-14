@@ -183,6 +183,8 @@ export default defineConfig({
       // sandboxed thumbnail page never shares chunks with the app entry.
       input: {
         main: path.resolve(__dirname, 'index.html'),
+        desktopCompanion: path.resolve(__dirname, 'desktop-companion.html'),
+        companionComposer: path.resolve(__dirname, 'companion-composer.html'),
       },
     },
   },
