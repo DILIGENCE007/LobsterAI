@@ -255,7 +255,7 @@ export function registerAgentHandlers(deps: AgentHandlerDeps): void {
 
   ipcMain.handle(AgentIpcChannel.Presets, async () => {
     try {
-      const presets = getAgentManager().getPresetAgents();
+      const presets = await getAgentManager().getPresetAgents();
       return { success: true, presets };
     } catch (error) {
       return {
@@ -267,7 +267,7 @@ export function registerAgentHandlers(deps: AgentHandlerDeps): void {
 
   ipcMain.handle(AgentIpcChannel.PresetTemplates, async () => {
     try {
-      const presets = getAgentManager().getAllPresetAgents();
+      const presets = await getAgentManager().getAllPresetAgents();
       return { success: true, presets };
     } catch (error) {
       return {
@@ -277,12 +277,25 @@ export function registerAgentHandlers(deps: AgentHandlerDeps): void {
     }
   });
 
+  ipcMain.handle(AgentIpcChannel.ExpertCatalog, async () => {
+    try {
+      return { success: true, catalog: await getAgentManager().getExpertCatalog() };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get expert catalog' };
+    }
+  });
+
   ipcMain.handle(AgentIpcChannel.AddPreset, async (event, presetId: string) => {
     try {
-      const agent = getAgentManager().addPresetAgent(presetId, resolveDefaultAgentModelRef());
-      syncOpenClawConfig({ reason: 'agent-preset-added' }).catch(err => {
-        console.error('[OpenClaw] config sync after agent-preset-added failed:', err);
-      });
+      const agent = await getAgentManager().addPresetAgent(presetId, resolveDefaultAgentModelRef());
+      if (!agent) return { success: false, error: 'Preset agent not found' };
+      // The composer must not become ready before OpenClaw knows this agent.
+      // If sync fails, a retry reuses the saved instance instead of duplicating it.
+      const syncResult = await syncOpenClawConfig({ reason: 'agent-preset-added' });
+      if (!syncResult.success) {
+        console.error('[OpenClaw] config sync after agent-preset-added failed:', syncResult.error);
+        return { success: false, error: syncResult.error || 'Failed to sync preset agent' };
+      }
       notifyAgentsChanged(event.sender);
       return { success: true, agent };
     } catch (error) {

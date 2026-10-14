@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
+import type { GenerateSessionTitleRequest } from '../common/sessionTitle';
 import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
 import {
   type ActivityHostExecuteActionInput,
@@ -394,8 +395,8 @@ contextBridge.exposeInMainWorld('electron', {
     model: string;
     apiType?: 'anthropic' | 'openai';
   }) => ipcRenderer.invoke('save-api-config', config),
-  generateSessionTitle: (userInput: string | null) =>
-    ipcRenderer.invoke('generate-session-title', userInput),
+  generateSessionTitle: (request: GenerateSessionTitleRequest) =>
+    ipcRenderer.invoke(CoworkIpcChannel.GenerateSessionTitle, request),
   getRecentCwds: (limit?: number) => ipcRenderer.invoke('get-recent-cwds', limit),
   dsh: {
     getState: () => ipcRenderer.invoke(DshIpcChannel.GetState),
@@ -581,7 +582,13 @@ contextBridge.exposeInMainWorld('electron', {
     },
     presetTemplates: async () => {
       const result = await ipcRenderer.invoke(AgentIpcChannel.PresetTemplates);
-      return result?.success ? result.presets : [];
+      if (!result?.success) throw new Error(result?.error || 'Failed to load preset templates');
+      return result.presets;
+    },
+    expertCatalog: async () => {
+      const result = await ipcRenderer.invoke(AgentIpcChannel.ExpertCatalog);
+      if (!result?.success) throw new Error(result?.error || 'Failed to load expert catalog');
+      return result.catalog;
     },
     addPreset: async (presetId: string) => {
       const result = await ipcRenderer.invoke(AgentIpcChannel.AddPreset, presetId);
@@ -656,7 +663,7 @@ contextBridge.exposeInMainWorld('electron', {
     setSessionPinned: (options: { sessionId: string; pinned: boolean }) =>
       ipcRenderer.invoke('cowork:session:pin', options),
     renameSession: (options: { sessionId: string; title: string }) =>
-      ipcRenderer.invoke('cowork:session:rename', options),
+      ipcRenderer.invoke(CoworkIpcChannel.RenameSession, options),
     forkSession: (options: {
       sessionId: string;
       forkedFromMessageId?: string | null;

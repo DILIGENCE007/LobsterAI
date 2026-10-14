@@ -1,4 +1,5 @@
 import type { OpenClawSessionPatch } from '../../common/openclawSession';
+import type { GenerateSessionTitleRequest } from '../../common/sessionTitle';
 import type {
   ActivityActionResponse,
   ActivityContextResponse,
@@ -8,6 +9,7 @@ import type {
   ActivityResult,
   ActivitySlotResponse,
 } from '../../shared/activity/constants';
+import type { ExpertCatalog } from '../../shared/agent/presets';
 import type { AppUpdateActiveWorkloads, AppUpdateCheckResult, AppUpdateRuntimeState } from '../../shared/appUpdate/constants';
 import type { MarkdownFileBridge } from '../../shared/artifactPreview/markdownEditing';
 import type { ReviewScopeRequest } from '../../shared/artifactPreview/reviewScopes';
@@ -856,6 +858,7 @@ interface IElectronAPI {
     delete: (id: string) => Promise<boolean>;
     presets: () => Promise<PresetAgent[]>;
     presetTemplates: () => Promise<PresetAgent[]>;
+    expertCatalog: () => Promise<ExpertCatalog>;
     addPreset: (presetId: string) => Promise<Agent>;
     /** Another window changed agents; reload them. */
     onChanged?: (callback: () => void) => () => void;
@@ -885,7 +888,7 @@ interface IElectronAPI {
     probeModel?: boolean;
   }) => Promise<{ hasConfig: boolean; config: CoworkApiConfig | null; error?: string }>;
   saveApiConfig: (config: CoworkApiConfig) => Promise<{ success: boolean; error?: string }>;
-  generateSessionTitle: (userInput: string | null) => Promise<string>;
+  generateSessionTitle: (request: GenerateSessionTitleRequest) => Promise<string | null>;
   getRecentCwds: (limit?: number) => Promise<string[]>;
   dsh: {
     getState: () => Promise<{

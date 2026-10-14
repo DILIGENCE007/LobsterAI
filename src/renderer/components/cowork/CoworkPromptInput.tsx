@@ -20,6 +20,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
+import { buildSessionTitleInput } from '../../../common/sessionTitle';
 import {
   CoworkBtwCommandValidationError,
   createCoworkBtwRunId,
@@ -51,6 +52,7 @@ import {
   type PreparedCoworkPromptPayload,
 } from '../../services/coworkPromptPayload';
 import { getPortalPricingUrl } from '../../services/endpoints';
+import { switchExpertInDraft } from '../../services/expertOnboarding';
 import { i18nService } from '../../services/i18n';
 import { getInstalledKitSkillIds } from '../../services/kitCapability';
 import {
@@ -99,7 +101,7 @@ import { setActiveSkillIds, setSkills, toggleActiveSkill } from '../../store/sli
 import { CoworkCollaborationMode, CoworkImageAttachment } from '../../types/cowork';
 import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { Skill } from '../../types/skill';
-import { getAgentDisplayName } from '../../utils/agentDisplay';
+import { getAgentDisplayName, usesManagedPresetAvatar } from '../../utils/agentDisplay';
 import { applyOptimisticGoalCommand } from '../../utils/goalCommand';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import { getCompactFolderName } from '../../utils/path';
@@ -112,6 +114,7 @@ import {
 } from '../common/activeContextBadgeStyles';
 import Modal from '../common/Modal';
 import { PromptFoldedTool, PromptSubmenuSide, resolvePromptSubmenuSide } from '../common/promptSubmenu';
+import ExpertPickerMenuItem from '../experts/ExpertPickerMenuItem';
 import EditIcon from '../icons/EditIcon';
 import GoalIcon from '../icons/GoalIcon';
 import PaperClipIcon from '../icons/PaperClipIcon';
@@ -385,13 +388,16 @@ interface AgentSelectorOption {
   id: string;
   name?: string;
   icon?: string;
+  iconCustomized?: boolean;
   enabled?: boolean;
+  source?: RootState['agent']['agents'][number]['source'];
 }
 
 const AgentContextAvatar: React.FC<{ agent: AgentSelectorOption; className?: string }> = ({ agent, className = 'h-4 w-4' }) => {
   return (
     <AgentAvatarIcon
       value={agent.icon}
+      expertFallback={usesManagedPresetAvatar(agent)}
       className={className}
       iconClassName={className}
       inheritColor
@@ -421,6 +427,7 @@ interface CoworkPromptInputProps {
     selectedTextSnippets?: CoworkSelectedTextSnippet[],
     browserAnnotations?: CoworkBrowserAnnotationMessageBatch[],
     collaborationMode?: CoworkCollaborationMode,
+    titleInput?: string,
   ) => boolean | void | Promise<boolean | void>;
   onStop?: () => void | Promise<void>;
   isStreaming?: boolean;
@@ -1934,6 +1941,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       promptPayload.selectedTextSnippets,
       preparedBrowserAnnotations,
       effectiveCollaborationMode,
+      buildSessionTitleInput(goalCommandPrompt, attachments),
     );
     if (result === false) {
       reportPromptControl('submit_blocked', {
@@ -2069,9 +2077,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       hasAgentModel: Boolean(nextAgent?.model),
       agentModelId: nextAgent?.model,
     });
-    agentService.switchAgent(agentId);
+    switchExpertInDraft(agentId, value);
     setShowAgentMenu(false);
-  }, [agents, currentAgentId, reportPromptControl]);
+  }, [agents, currentAgentId, reportPromptControl, value]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const isComposing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
@@ -3091,6 +3099,19 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             <PaperClipIcon className="h-5 w-5 shrink-0 text-secondary" />
             <span className="min-w-0 truncate">{i18nService.t('coworkAddFile')}</span>
           </button>
+          {showAgentSelector && !sessionId && <ExpertPickerMenuItem
+            disabled={disabled || voiceInputLocksEditing}
+            onOpen={handleCloseSkillsPopover}
+            onSelect={agentId => {
+              handleSelectAgent(agentId);
+              setShowAddMenu(false);
+              textareaRef.current?.focus();
+            }}
+            onExplore={() => {
+              dispatch(setDraftPrompt({ sessionId: draftKey, draft: value }));
+              setShowAddMenu(false);
+            }}
+          />}
           <button
             ref={skillMenuItemRef}
             type="button"

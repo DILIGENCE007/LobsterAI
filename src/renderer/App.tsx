@@ -2,6 +2,7 @@ import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useMemo,useRef, useState } from 'react';
 import { useDispatch,useSelector } from 'react-redux';
 
+import { ExpertUiEvent } from '../shared/agent/presets';
 import { AppIpcChannel, type OpenSettingsRequest, OpenSettingsTab } from '../shared/app/constants';
 import {
   APP_UPDATE_HEARTBEAT_INTERVAL_MS,
@@ -37,7 +38,7 @@ import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
 import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
 import EngineFailureOverlay from './components/cowork/EngineFailureOverlay';
 import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
-import KitsView from './components/kits/KitsView';
+import ExpertPlazaView from './components/experts/ExpertPlazaView';
 import LibraryView from './components/library/LibraryView';
 import FirstRunLoginIntroduction from './components/login/FirstRunLoginIntroduction';
 import NewUserOnboardingOverlay, {
@@ -74,6 +75,7 @@ import { applyAppConfigToStore } from './services/appConfigModels';
 import { authService } from './services/auth';
 import { configService } from './services/config';
 import { coworkService } from './services/cowork';
+import { openExpertDraft } from './services/expertOnboarding';
 import { i18nService } from './services/i18n';
 import {
   beginLatestAsyncRequest,
@@ -108,7 +110,9 @@ import { setActiveKitIds } from './store/slices/kitSlice';
 import { setAvailableModels } from './store/slices/modelSlice';
 import { clearSelection } from './store/slices/quickActionSlice';
 import { setActiveSkillIds } from './store/slices/skillSlice';
+import type { Agent } from './types/agent';
 import { CoworkCollaborationMode, type CoworkPermissionResult } from './types/cowork';
+import { MainView } from './types/navigation';
 
 const AGENT_TASK_SLOT_SHORTCUT_ACTIONS = [
   ShortcutAction.OpenAgentTask1,
@@ -225,7 +229,7 @@ const logAppUpdateRendererLifecycle = (
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions & { requestId: number }>({ requestId: 0 });
-  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp' | 'library'>('cowork');
+  const [mainView, setMainView] = useState<MainView>(MainView.Cowork);
   const [libraryNavigationRequest, setLibraryNavigationRequest] = useState<{
     source: LibrarySourceFilter;
     requestId: number;
@@ -324,7 +328,7 @@ const App: React.FC = () => {
       source: 'first_run_gate',
       step: newUserOnboardingStep,
     });
-    setMainView('cowork');
+    setMainView(MainView.Cowork);
     setIsSidebarCollapsed(false);
   }, [newUserOnboardingStep, shouldShowNewUserOnboarding]);
 
@@ -718,19 +722,19 @@ const App: React.FC = () => {
   }, []);
 
   const handleShowSkills = useCallback(() => {
-    setMainView('skills');
+    setMainView(MainView.Skills);
   }, []);
 
   const handleShowCowork = useCallback(() => {
-    setMainView('cowork');
+    setMainView(MainView.Cowork);
   }, []);
 
   const handleShowScheduledTasks = useCallback(() => {
-    setMainView('scheduledTasks');
+    setMainView(MainView.ScheduledTasks);
   }, []);
 
   const handleShowMcp = useCallback(() => {
-    setMainView('mcp');
+    setMainView(MainView.Connectors);
   }, []);
 
   const handleShowLibrary = useCallback(() => {
@@ -738,7 +742,7 @@ const App: React.FC = () => {
       source: LibrarySourceFilter.Local,
       requestId: current.requestId + 1,
     }));
-    setMainView('library');
+    setMainView(MainView.Library);
   }, []);
 
   useEffect(() => {
@@ -747,7 +751,7 @@ const App: React.FC = () => {
         source: LibrarySourceFilter.Cloud,
         requestId: current.requestId + 1,
       }));
-      setMainView('library');
+      setMainView(MainView.Library);
     };
     window.addEventListener(LibraryNavigationEvent.OpenCloud, handleOpenCloudLibrary);
     return () => {
@@ -756,7 +760,7 @@ const App: React.FC = () => {
   }, []);
 
   const handleOpenLibrarySession = useCallback((session: LibrarySessionRef) => {
-    setMainView('cowork');
+    setMainView(MainView.Cowork);
     void coworkService.loadSession(session.sessionId).then(loaded => {
       if (!loaded || !session.sessionArtifactId) return;
       dispatch(openArtifactPreviewTab({
@@ -767,16 +771,37 @@ const App: React.FC = () => {
   }, [dispatch]);
 
   const handleShowKits = useCallback(() => {
-    setMainView('kits');
+    setMainView(MainView.Kits);
+  }, []);
+
+  const handleShowExperts = useCallback(() => {
+    setMainView(MainView.Experts);
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener(ExpertUiEvent.OpenPlaza, handleShowExperts);
+    return () => window.removeEventListener(ExpertUiEvent.OpenPlaza, handleShowExperts);
+  }, [handleShowExperts]);
+
+  const handleExpertSummon = useCallback((agent: Agent, prompt: string) => {
+    openExpertDraft(agent, prompt);
+    setMainView(MainView.Cowork);
+    window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent(CoworkUiEvent.FocusInput, {
+        detail: { resetCollaborationMode: true, text: prompt },
+      }));
+    }, 0);
   }, []);
 
   const handleSkillsConnectorsSectionChange = useCallback((section: SkillsConnectorsSection) => {
     if (section === SkillsConnectorsSection.Connectors) {
       handleShowMcp();
+    } else if (section === SkillsConnectorsSection.Kits) {
+      handleShowKits();
     } else {
       handleShowSkills();
     }
-  }, [handleShowMcp, handleShowSkills]);
+  }, [handleShowKits, handleShowMcp, handleShowSkills]);
 
   const openHomeWithKit = useCallback((kitId: string, text?: string) => {
     dispatch(setActiveKitIds([kitId]));
@@ -792,7 +817,7 @@ const App: React.FC = () => {
       dispatch(setDraftPrompt({ sessionId: '__home__', draft: text }));
     }
     dispatch(setDraftKitIds({ draftKey: '__home__', kitIds: [kitId] }));
-    setMainView('cowork');
+    setMainView(MainView.Cowork);
     window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent(CoworkUiEvent.FocusInput, {
         // Without text, keep any existing home draft and just focus with the kit selected
@@ -814,7 +839,7 @@ const App: React.FC = () => {
     coworkService.clearSession({ restoreAgentSkills: true });
     dispatch(clearSelection());
     dispatch(setDraftSkillIds({ draftKey: '__home__', skillIds: [skillId] }));
-    setMainView('cowork');
+    setMainView(MainView.Cowork);
     window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent(CoworkUiEvent.FocusInput, {
         detail: { clear: false },
@@ -878,14 +903,14 @@ const App: React.FC = () => {
   const handleNewChat = useCallback(() => {
     setTrialTaskCreatedSignal(value => value + 1);
     // Only clear when already on home (no session) — preserve __home__ draft when returning from a session
-    const shouldClearInput = mainView === 'cowork' && !currentSessionId;
+    const shouldClearInput = mainView === MainView.Cowork && !currentSessionId;
     coworkService.clearSession({ restoreAgentSkills: true });
     dispatch(clearSelection());
     dispatch(setDraftCollaborationMode({
       draftKey: '__home__',
       mode: CoworkCollaborationMode.Default,
     }));
-    setMainView('cowork');
+    setMainView(MainView.Cowork);
     window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent(CoworkUiEvent.FocusInput, {
         detail: { clear: shouldClearInput, resetCollaborationMode: true },
@@ -901,7 +926,7 @@ const App: React.FC = () => {
       draftKey: '__home__',
       mode: CoworkCollaborationMode.Default,
     }));
-    setMainView('cowork');
+    setMainView(MainView.Cowork);
   }, [dispatch]);
 
   const showToast = useCallback((toast: string | ToastEventDetail) => {
@@ -1150,7 +1175,7 @@ const App: React.FC = () => {
   }, [acceptPrivacyAgreement, privacyAgreed]);
 
   const openNewUserWelcomeTask = useCallback((source: string) => {
-    setMainView('cowork');
+    setMainView(MainView.Cowork);
     console.log(`[Onboarding] opening new user welcome task source=${source}`);
     void coworkService.seedNewUserWelcomeTask()
       .then((result) => {
@@ -1549,7 +1574,7 @@ const App: React.FC = () => {
 
       if (matchesAction(ShortcutAction.Search)) {
         const shortcutTarget = resolveConversationSearchShortcutTarget({
-          isCoworkView: mainView === 'cowork',
+          isCoworkView: mainView === MainView.Cowork,
           hasCurrentSession: Boolean(currentSessionId),
           isTextEditing,
           isCoworkSearchEligibleEditor: isCoworkSearchEligibleEditorActive(),
@@ -1594,7 +1619,7 @@ const App: React.FC = () => {
 
       if (matchesAction(ShortcutAction.FocusPrompt)) {
         event.preventDefault();
-        setMainView('cowork');
+        setMainView(MainView.Cowork);
         window.setTimeout(() => {
           window.dispatchEvent(new CustomEvent(CoworkUiEvent.FocusInput, {
             detail: { clear: false },
@@ -1605,7 +1630,7 @@ const App: React.FC = () => {
 
       if (matchesAction(ShortcutAction.StopCurrentTask)) {
         event.preventDefault();
-        if (mainView === 'cowork') {
+        if (mainView === MainView.Cowork) {
           window.dispatchEvent(new CustomEvent(CoworkUiEvent.ShortcutStopSession));
         } else if (currentSessionId) {
           void coworkService.stopSession(currentSessionId);
@@ -1621,7 +1646,7 @@ const App: React.FC = () => {
 
       if (matchesAction(ShortcutAction.ToggleArtifacts)) {
         event.preventDefault();
-        setMainView('cowork');
+        setMainView(MainView.Cowork);
         window.setTimeout(() => {
           window.dispatchEvent(new CustomEvent(CoworkUiEvent.ShortcutToggleArtifacts));
         }, 0);
@@ -1630,7 +1655,7 @@ const App: React.FC = () => {
 
       if (matchesAction(ShortcutAction.PreviousAgent)) {
         event.preventDefault();
-        setMainView('cowork');
+        setMainView(MainView.Cowork);
         setIsSidebarCollapsed(false);
         window.dispatchEvent(new CustomEvent(CoworkUiEvent.ShortcutSwitchAgent, {
           detail: { direction: CoworkShortcutDirection.Previous },
@@ -1640,7 +1665,7 @@ const App: React.FC = () => {
 
       if (matchesAction(ShortcutAction.NextAgent)) {
         event.preventDefault();
-        setMainView('cowork');
+        setMainView(MainView.Cowork);
         setIsSidebarCollapsed(false);
         window.dispatchEvent(new CustomEvent(CoworkUiEvent.ShortcutSwitchAgent, {
           detail: { direction: CoworkShortcutDirection.Next },
@@ -1650,7 +1675,7 @@ const App: React.FC = () => {
 
       if (matchesAction(ShortcutAction.ShowCurrentAgentTasks)) {
         event.preventDefault();
-        setMainView('cowork');
+        setMainView(MainView.Cowork);
         setIsSidebarCollapsed(false);
         window.dispatchEvent(new CustomEvent(CoworkUiEvent.ShortcutShowCurrentAgentTasks));
         return;
@@ -1658,7 +1683,7 @@ const App: React.FC = () => {
 
       if (matchesAction(ShortcutAction.CollapseCurrentAgentTasks)) {
         event.preventDefault();
-        setMainView('cowork');
+        setMainView(MainView.Cowork);
         setIsSidebarCollapsed(false);
         window.dispatchEvent(new CustomEvent(CoworkUiEvent.ShortcutCollapseCurrentAgentTasks));
         return;
@@ -1667,7 +1692,7 @@ const App: React.FC = () => {
       const taskSlotIndex = AGENT_TASK_SLOT_SHORTCUT_ACTIONS.findIndex(action => matchesAction(action));
       if (taskSlotIndex >= 0) {
         event.preventDefault();
-        setMainView('cowork');
+        setMainView(MainView.Cowork);
         setIsSidebarCollapsed(false);
         window.dispatchEvent(new CustomEvent(CoworkUiEvent.ShortcutOpenAgentTaskSlot, {
           detail: { slot: taskSlotIndex + 1 },
@@ -1775,7 +1800,7 @@ const App: React.FC = () => {
       dispatch(clearDraftAttachments('__home__'));
       dispatch(clearDraftSelectedTextSnippets('__home__'));
       setShowSettings(false);
-      setMainView('cowork');
+      setMainView(MainView.Cowork);
       if (askAiFocusTimerRef.current !== null) {
         window.clearTimeout(askAiFocusTimerRef.current);
       }
@@ -1824,7 +1849,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const unsubscribe = window.electron.cowork.onOpenSessionFromNotification?.(({ sessionId }) => {
       setShowSettings(false);
-      setMainView('cowork');
+      setMainView(MainView.Cowork);
       void coworkService.loadSession(sessionId);
     });
     void window.electron.cowork.notifyOpenSessionFromNotificationReady?.();
@@ -1873,7 +1898,7 @@ const App: React.FC = () => {
   // Tell the main process which session is currently visible so desktop
   // notifications for that session can be suppressed and cleared.
   useEffect(() => {
-    const visibleSessionId = mainView === 'cowork' && !showSettings ? currentSessionId ?? null : null;
+    const visibleSessionId = mainView === MainView.Cowork && !showSettings ? currentSessionId ?? null : null;
     void window.electron.cowork.setActiveSession?.(visibleSessionId)?.catch?.((error: unknown) => {
       console.debug('[App] failed to report active session:', error);
     });
@@ -2026,7 +2051,7 @@ const App: React.FC = () => {
       onNewChat={canUseWindowsCollapsedTopBarActions ? handleNewChat : undefined}
       sidebarToggleLabel={isSidebarCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
       searchLabel={i18nService.t('search')}
-      showFilterIcon={SIDEBAR_TASK_FILTER_ENABLED && canUseWindowsTopBarActions && !isSidebarCollapsed && mainView === 'cowork'}
+      showFilterIcon={SIDEBAR_TASK_FILTER_ENABLED && canUseWindowsTopBarActions && !isSidebarCollapsed && mainView === MainView.Cowork}
       filterLabel={i18nService.t('sidebarFilter')}
       isFilterActive={isTaskFilterActive}
       hasFilterNotice={hasUnreadCompletedTasks}
@@ -2131,10 +2156,10 @@ const App: React.FC = () => {
           onShowLogin={handleShowLogin}
           onShowSettings={handleShowSettings}
           activeView={mainView}
-          onShowSkills={handleShowSkills}
           onShowCowork={handleShowCowork}
           onShowScheduledTasks={handleShowScheduledTasks}
           onShowKits={handleShowKits}
+          onShowExperts={handleShowExperts}
           onShowLibrary={handleShowLibrary}
           onNewChat={handleNewChat}
           isCollapsed={isSidebarCollapsed}
@@ -2154,43 +2179,44 @@ const App: React.FC = () => {
               border or corner), so the gray sidebar and white canvas read as
               two flat planes. */}
           <div
-            data-skin-cowork-frame={mainView === 'cowork' ? 'true' : undefined}
-            data-skin-management-frame={mainView !== 'cowork' ? 'true' : undefined}
+            data-skin-cowork-frame={mainView === MainView.Cowork ? 'true' : undefined}
+            data-skin-management-frame={mainView !== MainView.Cowork ? 'true' : undefined}
             className="relative h-full min-h-0 bg-background overflow-hidden"
           >
-            {mainView !== 'cowork' && (
+            {mainView !== MainView.Cowork && (
               <SkinBackdrop variant={SkinBackdropVariant.Management} />
             )}
             <EngineStartupOverlay />
-            {mainView === 'skills' || mainView === 'mcp' ? (
+            {mainView === MainView.Skills || mainView === MainView.Connectors || mainView === MainView.Kits ? (
               <SkillsAndConnectorsView
-                activeSection={mainView === 'mcp' ? SkillsConnectorsSection.Connectors : SkillsConnectorsSection.Skills}
+                activeSection={mainView === MainView.Connectors ? SkillsConnectorsSection.Connectors : mainView === MainView.Kits ? SkillsConnectorsSection.Kits : SkillsConnectorsSection.Skills}
                 onSectionChange={handleSkillsConnectorsSectionChange}
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
                 onCreateSkillByChat={handleCreateSkillByChat}
                 onUseSkill={handleSkillUse}
+                onTryAsking={handleKitTryAsking}
+                onUseKit={handleKitUse}
                 updateBadge={collapsedHeaderUpdateBadge}
                 skillsReadOnly={enterpriseConfig?.ui?.skills === 'readonly'}
               />
-            ) : mainView === 'scheduledTasks' ? (
+            ) : mainView === MainView.ScheduledTasks ? (
               <ScheduledTasksView
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
                 updateBadge={collapsedHeaderUpdateBadge}
               />
-            ) : mainView === 'kits' ? (
-              <KitsView
+            ) : mainView === MainView.Experts ? (
+              <ExpertPlazaView
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
                 updateBadge={collapsedHeaderUpdateBadge}
-                onTryAsking={handleKitTryAsking}
-                onUseKit={handleKitUse}
+                onSummon={handleExpertSummon}
               />
-            ) : mainView === 'library' ? (
+            ) : mainView === MainView.Library ? (
               <LibraryView
                 isAuthenticated={Boolean(authUser)}
                 isSidebarCollapsed={isSidebarCollapsed}

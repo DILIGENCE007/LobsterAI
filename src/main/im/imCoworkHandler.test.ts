@@ -606,3 +606,27 @@ test('does not relay thinking content for raw async reminder replies', async () 
 
   handler.destroy();
 });
+
+test('destroy tolerates background accumulators without rejection callbacks', () => {
+  const runtime = new FakeRuntime();
+  const coworkStore = new FakeCoworkStore();
+  const imStore = new FakeIMStore();
+  const session = coworkStore.createSession('Background session', process.cwd(), '', 'auto');
+  imStore.createSessionMapping('conv-background', 'nim', session.id as string);
+
+  const handler = new IMCoworkHandler({
+    coworkRuntime: runtime,
+    coworkStore,
+    imStore,
+  });
+
+  runtime.emit('message', session.id, {
+    id: 'background-message',
+    type: 'assistant',
+    content: 'Background reply',
+    timestamp: Date.now(),
+    metadata: {},
+  });
+
+  expect(() => handler.destroy()).not.toThrow();
+});

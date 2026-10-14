@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { buildGoalSettingMessageMetadata } from '../../../common/goalCommandDisplay';
-import { buildSessionTitleFromInput } from '../../../common/sessionTitle';
+import { buildSessionTitleFromInput, buildSessionTitleInput } from '../../../common/sessionTitle';
 import { COWORK_TEMP_SESSION_ID_PREFIX } from '../../../shared/cowork/constants';
 import { buildCoworkImageAttachmentPreviews } from '../../../shared/cowork/imageAttachments';
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
@@ -334,6 +334,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     selectedTextSnippets?: CoworkSelectedTextSnippet[],
     browserAnnotations?: CoworkBrowserAnnotationMessageBatch[],
     collaborationMode: CoworkCollaborationModeType = CoworkCollaborationMode.Default,
+    titleInput: string = buildSessionTitleInput(prompt),
   ): Promise<boolean | void> => {
     console.log('[CoworkView] handleStartSession: imageAttachments diagnosis', {
       hasImageAttachments: !!imageAttachments,
@@ -550,6 +551,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         if (getPendingCancellationAction() === 'delete') {
           await coworkService.deleteSession(startedSession.id);
         }
+      } else {
+        void coworkService.generateSessionTitle(startedSession.id, titleInput, startedSession.title);
       }
     } finally {
       if (pendingStartRef.current?.requestId === requestId) {
@@ -572,6 +575,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     selectedTextSnippets?: CoworkSelectedTextSnippet[],
     browserAnnotations?: CoworkBrowserAnnotationMessageBatch[],
     collaborationMode: CoworkCollaborationModeType = CoworkCollaborationMode.Default,
+    titleInput?: string,
   ) => {
     if (!currentSession) return false;
     // A rejected start only exists in the optimistic UI, not in the database.
@@ -579,7 +583,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
     if (currentSession.id.startsWith(COWORK_TEMP_SESSION_ID_PREFIX)) {
       return handleStartSession(
         prompt, skillPrompt, imageAttachments, mediaReferences,
-        selectedTextSnippets, browserAnnotations, collaborationMode,
+        selectedTextSnippets, browserAnnotations, collaborationMode, titleInput,
       );
     }
     // Prevent duplicate submissions
