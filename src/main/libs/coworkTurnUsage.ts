@@ -62,13 +62,26 @@ export class CoworkTurnUsageService {
     const trace = getCoworkLlmTrace(message?.metadata);
     if (!message || !trace) return;
     const stats = this.deps.getTraceStats(trace.traceId);
-    if (!stats || stats.requests === 0) {
+    if ((!stats || stats.requests === 0) && !message.metadata?.turnMediaTaskIds?.length) {
       console.debug(
         `[TurnUsage] skipped session ${sessionId}: trace ${trace.traceId} made no LobsterAI model requests.`,
       );
       return;
     }
     await this.settle(sessionId, message.id, { afterTurn: true });
+  }
+
+  /** Bind a generated task to the user message captured before the async tool request. */
+  recordMediaTask(sessionId: string, userMessageId: string, taskId: unknown): void {
+    const id = String(taskId ?? '');
+    if (!/^[1-9]\d*$/.test(id)) return;
+    const store = this.deps.getStore();
+    const message = store.getMessage(sessionId, userMessageId);
+    if (!message || message.type !== 'user') return;
+    const ids = [...new Set([...(message.metadata?.turnMediaTaskIds ?? []), id])];
+    store.updateMessage(sessionId, userMessageId, {
+      metadata: { ...message.metadata, turnMediaTaskIds: ids },
+    });
   }
 
   /** Renderer-triggered refresh, e.g. retrying a failed or partial summary. */
@@ -102,10 +115,11 @@ export class CoworkTurnUsageService {
       });
     }
 
-    let usage = await this.fetchUsage(trace, observedCompletedRequests);
+    const mediaTaskIds = message.metadata?.turnMediaTaskIds ?? [];
+    let usage = await this.fetchUsage(trace, observedCompletedRequests, mediaTaskIds);
     if (mode.afterTurn && usage?.status === CoworkTurnUsageStatus.Partial) {
       await this.sleep(PARTIAL_RETRY_DELAY_MS);
-      usage = await this.fetchUsage(trace, observedCompletedRequests) ?? usage;
+      usage = await this.fetchUsage(trace, observedCompletedRequests, mediaTaskIds) ?? usage;
     }
 
     // A failed refresh keeps a summary that was already fetched.
@@ -132,14 +146,15 @@ export class CoworkTurnUsageService {
   private async fetchUsage(
     trace: CoworkLlmTrace,
     observedCompletedRequests: number | undefined,
+    mediaTaskIds: string[],
   ): Promise<CoworkTurnUsage | null> {
     if (!this.deps.hasAuthTokens()) {
       console.warn(`[TurnUsage] cannot fetch trace ${trace.traceId}: not signed in.`);
       return null;
     }
-    const url = this.deps.buildServerUrl(
-      `${LLM_TRACE_USAGE_API_PATH}/${trace.traceId}?since=${Math.floor(trace.startedAt)}`,
-    );
+    const params = new URLSearchParams({ since: String(Math.floor(trace.startedAt)) });
+    if (mediaTaskIds.length > 0) params.set('mediaTaskIds', mediaTaskIds.join(','));
+    const url = this.deps.buildServerUrl(`${LLM_TRACE_USAGE_API_PATH}/${trace.traceId}?${params}`);
     try {
       const response = await this.deps.fetchWithAuth(url, {
         method: 'GET',
