@@ -6127,15 +6127,17 @@ test('chat error replaces generic LLM failure using safe OpenClaw metadata', () 
   ]);
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const sessionKey = `agent:main:lobsterai:${session.id}`;
+  // Run IDs are opaque correlation keys; auth failures are represented by the metadata below.
+  const runId = 'b398b8c7-4e10-4018-a080-8094c142eec0';
   const errorSpy = vi.fn();
 
   session.status = 'running';
   adapter.on('error', errorSpy);
-  adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-minimax-oauth'));
+  adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, runId));
 
   adapter.handleChatEvent({
     state: 'error',
-    runId: 'run-minimax-oauth',
+    runId,
     sessionKey,
     errorMessage: 'LLM request failed.',
     provider: 'minimax-portal',
