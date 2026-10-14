@@ -68,7 +68,7 @@ describe('read-aloud playback queue', () => {
   });
 
   test('plays arriving segments in order and replays cached audio without another request', async () => {
-    const { queue, audio, status } = fixture();
+    const { queue, audio, states, status } = fixture();
     queue.begin();
     queue.append(0, 'one', 'audio/mpeg');
     queue.append(1, 'two', 'audio/mpeg');
@@ -81,10 +81,12 @@ describe('read-aloud playback queue', () => {
     expect(audio.src).toBe('blob:two');
     audio.onended?.(new Event('ended'));
     expect(status()).toBe(SpeechStatus.Ended);
+    expect(states[states.length - 1]?.completed).toBe(2);
     queue.resume();
     await Promise.resolve();
     expect(audio.src).toBe('blob:one');
     expect(status()).toBe(SpeechStatus.Playing);
+    expect(states[states.length - 1]?.completed).toBe(0);
   });
 
   test('pausing before synthesis finishes prevents arriving audio from starting', async () => {
@@ -119,17 +121,22 @@ describe('read-aloud playback queue', () => {
   });
 
   test('waits between segments, ignores duplicates, and rejects missing segments', async () => {
-    const { queue, audio, status } = fixture();
+    const { queue, audio, states, status } = fixture();
     queue.begin();
     queue.append(0, 'one', 'audio/mpeg');
     await Promise.resolve();
     audio.onended?.(new Event('ended'));
     expect(status()).toBe(SpeechStatus.Loading);
+    expect(states[states.length - 1]?.completed).toBe(1);
+    queue.pause();
+    expect(states[states.length - 1]?.completed).toBe(1);
+    queue.resume();
     queue.append(0, 'duplicate', 'audio/mpeg');
     expect(() => queue.append(2, 'three', 'audio/mpeg')).toThrow();
     queue.append(1, 'two', 'audio/mpeg');
     await Promise.resolve();
     expect(audio.src).toBe('blob:two');
     expect(status()).toBe(SpeechStatus.Playing);
+    expect(states[states.length - 1]?.completed).toBe(1);
   });
 });

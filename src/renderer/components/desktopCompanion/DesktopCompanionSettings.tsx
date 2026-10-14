@@ -1,4 +1,5 @@
-import { XMarkIcon } from '@heroicons/react/20/solid';
+import { CheckIcon, ChevronRightIcon } from '@heroicons/react/20/solid';
+import { AdjustmentsHorizontalIcon } from '@heroicons/react/24/outline';
 import { type ReactNode, useState } from 'react';
 
 import {
@@ -8,27 +9,23 @@ import {
 } from '../../../shared/desktopCompanion/constants';
 import { COMPANION_SKINS, type CompanionSkin, CompanionSkinKind } from '../../../shared/desktopCompanion/skins';
 import { i18nService } from '../../services/i18n';
-import { CompanionMood } from './mascot/companionMood';
-import LobsterHood from './mascot/LobsterHood';
 import LobsterMark from './mascot/LobsterMark';
-import { companionShortcutFromKeys } from './shortcut';
+import SelectionToolbarSettings from './SelectionToolbarSettings';
 import { useDesktopCompanionState } from './useDesktopCompanionState';
 
 type ToggleKey = 'enabled' | 'selectionToolbar' | 'dragAssist' | 'contextHints';
 
 function SkinPreview({ skin }: { skin: CompanionSkin }) {
-  if (skin.kind === CompanionSkinKind.Brand) return <LobsterMark size={32} />;
-  if (skin.kind === CompanionSkinKind.Mascot || !skin.asset) return <LobsterHood mood={CompanionMood.Idle} size={44} />;
+  if (skin.kind === CompanionSkinKind.Brand || !skin.asset) return <LobsterMark size={32} />;
   return <img src={skin.asset} alt="" className="h-11 w-11 object-contain" draggable={false} />;
 }
 
 // Same labeled card as the General tab's groups.
-function SettingsGroup({ title, footer, children }: { title: string; footer?: ReactNode; children: ReactNode }) {
+function SettingsGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-2.5">
       <h4 className="px-1 text-xs font-semibold uppercase tracking-wider text-secondary">{title}</h4>
       <div className="divide-y divide-border rounded-xl border border-border bg-surface">{children}</div>
-      {footer}
     </section>
   );
 }
@@ -37,6 +34,7 @@ export default function DesktopCompanionSettings() {
   const { state, error: loadError } = useDesktopCompanionState();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [selectionSettingsOpen, setSelectionSettingsOpen] = useState(false);
   const t = (key: string) => i18nService.t(key);
   const api = window.electron.desktopCompanion;
   const preferences = state?.preferences;
@@ -96,19 +94,14 @@ export default function DesktopCompanionSettings() {
     return null;
   })();
 
-  const excluded = preferences?.selectionExcludedApps ?? [];
-
   return (
     <div className="space-y-8">
-      <SettingsGroup
-        title={t('desktopCompanionGroupDisplay')}
-        footer={<p className="px-1 text-xs text-secondary">{t('desktopCompanionSettingsSaved')}</p>}
-      >
+      <SettingsGroup title={t('desktopCompanionGroupDisplay')}>
         {toggle('enabled', 'desktopCompanionEnable', 'desktopCompanionEnableDescription')}
         <div className="px-4 py-3.5">
           <div className="text-sm font-medium text-foreground">{t('desktopCompanionSkin')}</div>
           <p className="mt-1 text-sm text-secondary">{t('desktopCompanionSkinDescription')}</p>
-          <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(76px,1fr))] gap-2" role="radiogroup" aria-label={t('desktopCompanionSkin')}>
+          <div className="mt-3 grid grid-cols-3 gap-2" role="radiogroup" aria-label={t('desktopCompanionSkin')}>
             {COMPANION_SKINS.map(skin => {
               const selected = preferences?.skin === skin.id;
               return (
@@ -117,15 +110,17 @@ export default function DesktopCompanionSettings() {
                   key={skin.id}
                   role="radio"
                   aria-checked={selected}
+                  title={t(skin.nameKey)}
                   disabled={!state || saving}
                   onClick={() => { void update({ skin: skin.id }); }}
-                  className={'flex flex-col items-center gap-1.5 rounded-xl border px-1 pb-2 pt-2.5 text-xs transition-colors '
+                  className={'relative flex min-w-0 items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left text-xs transition-colors disabled:opacity-50 '
                     + (selected ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-secondary hover:bg-secondary/10')}
                 >
-                  <span className="grid h-11 w-11 place-items-center">
+                  <span className="grid h-11 w-11 shrink-0 place-items-center">
                     <SkinPreview skin={skin} />
                   </span>
-                  <span className="max-w-full truncate">{t(skin.nameKey)}</span>
+                  <span className="min-w-0 truncate font-medium">{t(skin.nameKey)}</span>
+                  {selected && <CheckIcon className="absolute right-1.5 top-1.5 h-3.5 w-3.5 text-primary" aria-hidden="true" />}
                 </button>
               );
             })}
@@ -136,26 +131,16 @@ export default function DesktopCompanionSettings() {
         {toggle('selectionToolbar', 'desktopCompanionSelection', 'desktopCompanionSelectionDescription', (
           <>
             {selectionNote}
-            {excluded.length > 0 && (
-              <div className="mt-2.5">
-                <div className="text-xs text-secondary">{t('desktopCompanionExcludedApps')}</div>
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {excluded.map(app => (
-                    <span key={app} className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-xs text-foreground">
-                      {app}
-                      <button
-                        type="button"
-                        aria-label={`${t('desktopCompanionRemoveExcludedApp')} ${app}`}
-                        className="text-secondary hover:text-foreground"
-                        disabled={saving}
-                        onClick={() => { void update({ selectionExcludedApps: excluded.filter(item => item !== app) }); }}
-                      ><XMarkIcon className="h-3.5 w-3.5" /></button>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-            {excluded.length === 0 && preferences?.selectionToolbar && <p className="mt-1.5 text-xs text-secondary">{t('desktopCompanionExcludedAppsEmpty')}</p>}
+            <button type="button" disabled={!state}
+              onClick={() => setSelectionSettingsOpen(true)}
+              className="mt-3 flex w-full items-center gap-3 rounded-lg bg-background px-3 py-2.5 text-left transition-colors hover:bg-secondary/10 disabled:opacity-50">
+              <AdjustmentsHorizontalIcon className="h-5 w-5 shrink-0 text-secondary" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium text-foreground">{t('desktopCompanionToolbarCustomize')}</span>
+                <span className="mt-0.5 block text-xs text-secondary">{t('desktopCompanionToolbarCustomizeDescription')}</span>
+              </span>
+              <ChevronRightIcon className="h-4 w-4 shrink-0 text-secondary" />
+            </button>
           </>
         ))}
         {toggle('dragAssist', 'desktopCompanionDragAssist', 'desktopCompanionDragAssistDescription', (
@@ -165,35 +150,10 @@ export default function DesktopCompanionSettings() {
         ))}
         {toggle('contextHints', 'desktopCompanionHints', 'desktopCompanionHintsDescription')}
       </SettingsGroup>
-      <SettingsGroup title={t('desktopCompanionGroupQuickPanel')}>
-        <div className="space-y-2 px-4 py-3.5">
-          <label htmlFor="desktop-companion-shortcut" className="text-sm font-medium text-foreground">{t('desktopCompanionShortcut')}</label>
-          <div className="flex gap-2">
-            <input
-              id="desktop-companion-shortcut"
-              className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
-              readOnly
-              disabled={!state || saving}
-              value={preferences?.shortcut ?? ''}
-              placeholder={t('desktopCompanionShortcutHint')}
-              onKeyDown={event => {
-                if (event.key === 'Escape') { event.currentTarget.blur(); return; }
-                if (event.key === 'Tab' && !event.altKey && !event.ctrlKey && !event.metaKey) return;
-                event.preventDefault();
-                const shortcut = companionShortcutFromKeys(event);
-                if (shortcut) void update({ shortcut });
-              }}
-            />
-            <button type="button" className="rounded-lg border border-border px-3 text-sm text-foreground" disabled={!state || saving || !preferences?.shortcut} onClick={() => { void update({ shortcut: '' }); }}>{t('clear')}</button>
-          </div>
-          {!preferences?.shortcut && <p className="text-xs text-secondary">{t('desktopCompanionShortcutDescription')}</p>}
-          {state?.shortcutUnavailable && <p role="alert" className="text-sm text-red-500">{t('desktopCompanionShortcutUnavailable')}</p>}
-        </div>
-        <div className="px-4 py-3.5">
-          <button type="button" className="rounded-lg bg-primary px-3 py-2 text-sm text-white" disabled={!state} onClick={() => { void api.togglePanel().catch(() => setError(t('desktopCompanionRequestFailed'))); }}>{t('desktopCompanionOpenPanel')}</button>
-        </div>
-      </SettingsGroup>
       {(error || loadError) && <p role="alert" className="px-1 text-sm text-red-500">{error || t('desktopCompanionRequestFailed')}</p>}
+      {selectionSettingsOpen && preferences && (
+        <SelectionToolbarSettings preferences={preferences} saving={saving} error={error} onUpdate={update} onClose={() => setSelectionSettingsOpen(false)} />
+      )}
     </div>
   );
 }

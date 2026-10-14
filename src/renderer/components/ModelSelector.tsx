@@ -36,6 +36,7 @@ import ModelThinkingMenu, {
 } from './modelSelector/ModelThinkingMenu';
 import { useModelPurchaseOffer } from './modelSelector/useModelPurchaseOffer';
 import PurchaseOfferCountdown from './PurchaseOfferCountdown';
+import Tooltip, { TooltipPosition } from './ui/Tooltip';
 
 interface ModelSelectorProps {
   dropdownDirection?: 'up' | 'down' | 'auto';
@@ -52,6 +53,8 @@ interface ModelSelectorProps {
   disabled?: boolean;
   /** Use a denser trigger for compact toolbars. */
   compact?: boolean;
+  /** Show just the provider avatar, with the full model name in its tooltip. */
+  iconOnly?: boolean;
   /** Render the dropdown outside the local stacking context. */
   portal?: boolean;
   /** Align the dropdown's trailing edge with the trigger's trailing edge. */
@@ -437,6 +440,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   defaultLabel,
   disabled = false,
   compact = false,
+  iconOnly = false,
   portal = false,
   alignDropdownToTriggerEnd = false,
   triggerMaxWidthClassName,
@@ -531,9 +535,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const selectedModelUnavailableFallbackLogKeyRef = React.useRef('');
   const triggerMaxWidthClass = triggerMaxWidthClassName
     ?? (compact ? (isCustomModelSelected ? 'max-w-[260px]' : 'max-w-[220px]') : 'max-w-[280px]');
-  const triggerClassName = compact
-    ? `space-x-1.5 px-2 py-1 rounded-lg ${triggerMaxWidthClass}`
-    : `space-x-2 px-3 py-1.5 rounded-xl ${triggerMaxWidthClass}`;
+  const triggerClassName = iconOnly
+    ? 'relative h-8 w-8 shrink-0 justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30'
+    : compact
+      ? `space-x-1.5 px-2 py-1 rounded-lg ${triggerMaxWidthClass}`
+      : `space-x-2 px-3 py-1.5 rounded-xl ${triggerMaxWidthClass}`;
+  const triggerLabel = selectedModel?.name ?? defaultLabel ?? i18nService.t('selectModel');
   const triggerTextClassName = compact
     ? 'font-normal text-[13px] leading-5'
     : 'font-medium text-sm';
@@ -888,18 +895,21 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     if (showSelectedModelUnavailableFallback) {
       return (
         <div ref={containerRef} className="relative cursor-wait">
-          <button
-            type="button"
-            disabled
-            aria-disabled="true"
-            className={`flex min-w-0 items-center overflow-hidden text-foreground transition-colors disabled:cursor-wait disabled:opacity-70 ${triggerClassName}`}
-          >
-            <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-secondary">
-              {renderProviderIcon(selectedModel)}
-            </span>
-            <span className={`${triggerTextClassName} min-w-0 truncate`}>{selectedModel.name}</span>
-            <ChevronDownIcon className={`${triggerIconClassName} shrink-0 dark:text-claude-darkTextSecondary text-claude-textSecondary`} />
-          </button>
+          <Tooltip content={selectedModel.name} position={TooltipPosition.Top} delay={300} multiline disabled={!iconOnly}>
+            <button
+              type="button"
+              disabled
+              aria-disabled="true"
+              aria-label={iconOnly ? selectedModel.name : undefined}
+              className={`flex min-w-0 items-center overflow-hidden text-foreground transition-colors disabled:cursor-wait disabled:opacity-70 ${triggerClassName}`}
+            >
+              <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-secondary">
+                {renderProviderIcon(selectedModel)}
+              </span>
+              <span className={iconOnly ? 'sr-only' : `${triggerTextClassName} min-w-0 truncate`}>{selectedModel.name}</span>
+              {!iconOnly && <ChevronDownIcon className={`${triggerIconClassName} shrink-0 dark:text-claude-darkTextSecondary text-claude-textSecondary`} />}
+            </button>
+          </Tooltip>
         </div>
       );
     }
@@ -907,17 +917,25 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     if (shouldRenderPlanModelLoginPrompt(availableModels.length, isLoggedIn)) {
       return (
         <div ref={containerRef} className="relative">
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => setRestrictedPrompt(ModelAccessPromptKind.Login)}
-            className={`flex min-w-0 items-center overflow-hidden text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-wait disabled:opacity-70 ${triggerClassName}`}
+          <Tooltip
+            content={i18nService.t('modelSelectorLoginForPlanModels')}
+            position={TooltipPosition.Top}
+            delay={300}
+            multiline
+            disabled={!iconOnly || Boolean(restrictedPrompt)}
           >
-            <LockClosedIcon className={`${triggerIconClassName} shrink-0`} />
-            <span className={`${triggerTextClassName} min-w-0 truncate`}>
-              {i18nService.t('modelSelectorLoginForPlanModels')}
-            </span>
-          </button>
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => setRestrictedPrompt(ModelAccessPromptKind.Login)}
+              className={`flex min-w-0 items-center overflow-hidden text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-wait disabled:opacity-70 ${triggerClassName}`}
+            >
+              <LockClosedIcon className={`${triggerIconClassName} shrink-0`} />
+              <span className={iconOnly ? 'sr-only' : `${triggerTextClassName} min-w-0 truncate`}>
+                {i18nService.t('modelSelectorLoginForPlanModels')}
+              </span>
+            </button>
+          </Tooltip>
           {restrictedPrompt && (
             <ModelAccessPromptModal
               promptKind={restrictedPrompt}
@@ -929,9 +947,14 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     }
 
     return (
-      <div className="px-3 py-1.5 rounded-xl bg-surface text-secondary text-sm">
-        {i18nService.t('modelSelectorNoModels')}
-      </div>
+      <Tooltip content={i18nService.t('modelSelectorNoModels')} position={TooltipPosition.Top} delay={300} multiline disabled={!iconOnly}>
+        <div
+          className={iconOnly ? 'flex h-8 w-8 items-center justify-center rounded-lg text-secondary' : 'px-3 py-1.5 rounded-xl bg-surface text-secondary text-sm'}
+        >
+          {iconOnly && <CustomProviderIcon className={MODEL_ICON_CLASS_NAME} />}
+          <span className={iconOnly ? 'sr-only' : undefined}>{i18nService.t('modelSelectorNoModels')}</span>
+        </div>
+      </Tooltip>
     );
   }
 
@@ -1348,37 +1371,41 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
 
   return (
     <div ref={containerRef} className={`relative ${disabled ? 'cursor-wait' : 'cursor-pointer'}`}>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={toggleOpen}
-        className={`flex min-w-0 items-center overflow-hidden hover:bg-surface-raised text-foreground transition-colors disabled:opacity-70 disabled:cursor-wait ${triggerClassName} ${isOpen ? 'bg-surface-raised' : ''}`}
-      >
-        {selectedModel?.isServerModel && (
-          <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-secondary">
-            {renderProviderIcon(selectedModel)}
-          </span>
-        )}
-        {isCustomModelSelected && (
-          <span
-            className="inline-flex h-5 shrink-0 items-center gap-1 rounded-md bg-emerald-600/[0.07] px-1.5 text-[11px] font-medium leading-none text-emerald-800 ring-1 ring-inset ring-emerald-700/[0.08] dark:bg-emerald-400/[0.08] dark:text-emerald-200 dark:ring-emerald-300/[0.12]"
-            title={i18nService.t('modelGroupUser')}
-          >
-            <span className="flex shrink-0 items-center" aria-hidden="true">
-              <CustomProviderIcon className="h-3 w-3" />
+      <Tooltip content={triggerLabel} position={TooltipPosition.Top} delay={300} multiline disabled={!iconOnly || isOpen}>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={toggleOpen}
+          aria-label={iconOnly ? `${i18nService.t('model')}: ${triggerLabel}` : undefined}
+          aria-expanded={isOpen}
+          className={`flex min-w-0 items-center overflow-hidden hover:bg-surface-raised text-foreground transition-colors disabled:opacity-70 disabled:cursor-wait ${triggerClassName} ${isOpen ? 'bg-surface-raised' : ''}`}
+        >
+          {(iconOnly || selectedModel?.isServerModel) && (
+            <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-secondary">
+              {selectedModel ? renderProviderIcon(selectedModel) : <CustomProviderIcon className={MODEL_ICON_CLASS_NAME} />}
             </span>
-            <span>{i18nService.t('modelSourceCustom')}</span>
-          </span>
-        )}
-        <span className={`${triggerTextClassName} min-w-0 truncate`}>{selectedModel?.name ?? defaultLabel ?? ''}</span>
-        {isModelAgenticBlocked(selectedModel) && (
-          <ClockIcon
-            className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-300"
-            aria-label={i18nService.t('serverModelAgenticNotReady')}
-          />
-        )}
-        <ChevronDownIcon className={`${triggerIconClassName} shrink-0 dark:text-claude-darkTextSecondary text-claude-textSecondary`} />
-      </button>
+          )}
+          {!iconOnly && isCustomModelSelected && (
+            <span
+              className="inline-flex h-5 shrink-0 items-center gap-1 rounded-md bg-emerald-600/[0.07] px-1.5 text-[11px] font-medium leading-none text-emerald-800 ring-1 ring-inset ring-emerald-700/[0.08] dark:bg-emerald-400/[0.08] dark:text-emerald-200 dark:ring-emerald-300/[0.12]"
+              title={i18nService.t('modelGroupUser')}
+            >
+              <span className="flex shrink-0 items-center" aria-hidden="true">
+                <CustomProviderIcon className="h-3 w-3" />
+              </span>
+              <span>{i18nService.t('modelSourceCustom')}</span>
+            </span>
+          )}
+          <span className={iconOnly ? 'sr-only' : `${triggerTextClassName} min-w-0 truncate`}>{selectedModel?.name ?? defaultLabel ?? ''}</span>
+          {isModelAgenticBlocked(selectedModel) && (
+            <ClockIcon
+              className={`${iconOnly ? 'absolute right-0 top-0 h-2.5 w-2.5 rounded-full bg-surface' : 'h-3.5 w-3.5 shrink-0'} text-amber-600 dark:text-amber-300`}
+              aria-label={i18nService.t('serverModelAgenticNotReady')}
+            />
+          )}
+          {!iconOnly && <ChevronDownIcon className={`${triggerIconClassName} shrink-0 dark:text-claude-darkTextSecondary text-claude-textSecondary`} />}
+        </button>
+      </Tooltip>
 
       {portal && dropdown ? createPortal(dropdown, document.body) : dropdown}
       {renderHoverCard()}

@@ -206,18 +206,3 @@ export function resolveCompanionToolbarMenuBounds(
 export function rectContains(rect: CompanionRect, point: CompanionPoint): boolean {
   return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
 }
-
-/** Eye direction toward the cursor, in [-1, 1] on each axis, quantized to avoid chatty updates. */
-export function companionGaze(orb: CompanionRect, cursor: CompanionPoint): CompanionPoint {
-  const cx = orb.x + orb.width / 2;
-  const cy = orb.y + orb.height / 2;
-  const dx = cursor.x - cx;
-  const dy = cursor.y - cy;
-  const distance = Math.hypot(dx, dy);
-  if (distance < 8) return { x: 0, y: 0 };
-  // Eyes reach their limit at ~240px; beyond that they keep the direction.
-  const strength = Math.min(1, distance / 240);
-  // `|| 0` folds -0 into 0 so equal gazes compare and serialize equal.
-  const quantize = (value: number) => Math.round(value * 4) / 4 || 0;
-  return { x: quantize((dx / distance) * strength), y: quantize((dy / distance) * strength) };
-}

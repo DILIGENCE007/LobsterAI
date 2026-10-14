@@ -1,7 +1,7 @@
 /*
  * Selection toolbar, its menu, and the answer, translate and read-aloud cards.
  * Neutral surfaces with near-black primary controls, like the main window;
- * the character's warm colors stay on the orb.
+ * a small LobsterAI mark identifies the result cards.
  */
 
 .sel-surface {
@@ -118,11 +118,16 @@
 }
 /* The title bar moves the window. */
 .sel-head {
-  display: flex; align-items: center; gap: 2px; flex-shrink: 0; height: 44px; padding: 0 8px 0 12px;
+  position: relative; display: flex; align-items: center; gap: 2px; flex-shrink: 0; height: 44px; padding: 0 8px 0 12px;
   -webkit-app-region: drag; user-select: none;
+}
+.sel-head-grip {
+  position: absolute; top: 2px; left: 50%; width: 18px; height: 18px; transform: translateX(-50%);
+  color: var(--s-ink-3); stroke-width: 1.8; pointer-events: none;
 }
 .sel-head button, .sel-head select, .sel-head label { -webkit-app-region: no-drag; }
 .sel-head-icon { width: 16px; height: 16px; margin-right: 7px; flex-shrink: 0; color: var(--s-ink-2); stroke-width: 1.7; }
+.sel-head-brand { display: inline-flex; width: 20px; height: 20px; margin-right: 7px; flex-shrink: 0; opacity: 0.9; }
 .sel-head-title { color: var(--s-ink); font-size: 13px; font-weight: 600; white-space: nowrap; }
 .sel-head-fill { flex: 1; }
 .sel-icon {

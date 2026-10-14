@@ -1,11 +1,12 @@
 import './selectionSurface.css';
 
 import { ArrowUpIcon } from '@heroicons/react/16/solid';
-import { ExclamationCircleIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { Bars2Icon, ExclamationCircleIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { type ComponentType, type ReactNode, type Ref, type SVGProps, useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
-import CompanionMarkdown from './CompanionMarkdown';
+import CompanionMarkdown, { type CompanionMarkdownProps } from './CompanionMarkdown';
+import LobsterMark from './mascot/LobsterMark';
 
 const t = (key: string) => i18nService.t(key);
 
@@ -36,8 +37,8 @@ export function SwapLabel({ on, off, showOn }: { on: string; off: string; showOn
 }
 
 interface HeaderProps {
-  /** The action the card shows, with the same icon as its toolbar button. */
-  icon: SelectionIcon;
+  /** Defaults to the LobsterAI mark; standalone tools can use their own icon. */
+  icon?: SelectionIcon;
   title: string;
   pinned: boolean;
   onPin: () => void;
@@ -53,7 +54,12 @@ export function SelectionCardHeader({ icon: Icon, title, pinned, onPin, onClose,
   const close = closeLabel ?? t('desktopCompanionAnswerClose');
   return (
     <header className="sel-head">
-      <Icon className="sel-head-icon" aria-hidden="true" />
+      <Bars2Icon className="sel-head-grip" aria-hidden="true" />
+      {Icon ? <Icon className="sel-head-icon" aria-hidden="true" /> : (
+        <span className="sel-head-brand" role="img" aria-label={t('desktopCompanionSkinLobster')}>
+          <LobsterMark size={20} />
+        </span>
+      )}
       <span className="sel-head-title">{title}</span>
       <span className="sel-head-fill" />
       {children}
@@ -85,8 +91,8 @@ export function SourceQuote({ text, lines = 2 }: { text: string; lines?: number 
   );
 }
 
-export function SelectionAnswer({ text, streaming = false }: { text: string; streaming?: boolean }) {
-  return <div className="sel-markdown" data-streaming={streaming || undefined}><CompanionMarkdown text={text} /></div>;
+export function SelectionAnswer({ streaming = false, ...markdown }: CompanionMarkdownProps & { streaming?: boolean }) {
+  return <div className="sel-markdown" data-streaming={streaming || undefined}><CompanionMarkdown {...markdown} /></div>;
 }
 
 export function SelectionThinking({ label }: { label: string }) {

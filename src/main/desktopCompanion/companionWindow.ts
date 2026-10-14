@@ -16,9 +16,35 @@ export interface CompanionWindowOptions {
   focusable: boolean;
 }
 
+const PANEL_BLUR_DELAY_MS = 120;
+
+/** Dismiss an inactive composer, preserving native file pickers and brief focus handoffs. */
+export function dismissCompanionPanelOnBlur(win: BrowserWindow, dismiss: () => void): void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let sheetOpen = false;
+  const cancel = () => { clearTimeout(timer); timer = undefined; };
+  win.on('blur', () => {
+    cancel();
+    // Native dialogs may begin just after blur. Allow them to establish their
+    // sheet/disabled-owner state before deciding this was an outside click.
+    timer = setTimeout(() => {
+      timer = undefined;
+      if (win.isDestroyed() || !win.isVisible() || win.isFocused() || sheetOpen || !win.isEnabled()) return;
+      if (win.getChildWindows().some(child => !child.isDestroyed() && child.isVisible() && child.isModal())) return;
+      dismiss();
+    }, PANEL_BLUR_DELAY_MS);
+  });
+  win.on('sheet-begin', () => { sheetOpen = true; cancel(); });
+  win.on('sheet-end', () => { sheetOpen = false; });
+  win.on('focus', cancel);
+  win.on('hide', cancel);
+  win.on('closed', cancel);
+}
+
 /** Every companion surface is a transparent, frameless, always-on-top window loading the same entry. */
 export function createCompanionWindow(env: CompanionWindowEnvironment, options: CompanionWindowOptions): BrowserWindow {
   const isSelection = options.surface === DesktopCompanionSurface.Selection;
+  const isScreenshot = options.surface === DesktopCompanionSurface.Screenshot;
   const win = new BrowserWindow({
     ...options.bounds,
     title: env.title,
@@ -32,10 +58,12 @@ export function createCompanionWindow(env: CompanionWindowEnvironment, options: 
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
+    enableLargerThanScreen: isScreenshot,
     skipTaskbar: true,
     alwaysOnTop: true,
     focusable: options.focusable,
-    ...(process.platform === 'darwin' ? { type: 'panel' as const } : {}),
+    // Native panels can hide on app deactivation even when our result card is pinned.
+    ...(process.platform === 'darwin' && options.surface !== DesktopCompanionSurface.Result ? { type: 'panel' as const } : {}),
     webPreferences: {
       preload: env.preloadPath,
       nodeIntegration: false,
@@ -49,9 +77,9 @@ export function createCompanionWindow(env: CompanionWindowEnvironment, options: 
   });
   win.setMenu(null);
   // The selection toolbar sits above menus of the app it is attached to.
-  win.setAlwaysOnTop(true, isSelection ? 'pop-up-menu' : 'floating');
+  win.setAlwaysOnTop(true, isScreenshot ? 'screen-saver' : isSelection ? 'pop-up-menu' : 'floating');
   if (process.platform === 'darwin') {
-    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: isSelection, skipTransformProcessType: true });
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: isSelection || isScreenshot, skipTransformProcessType: true });
   }
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());

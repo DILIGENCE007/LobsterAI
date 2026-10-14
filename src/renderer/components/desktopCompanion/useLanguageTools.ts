@@ -7,9 +7,9 @@ import {
 import { companionTranslationTarget } from '../../../shared/desktopCompanion/selectionActions';
 import { type SpeechPlayback, SpeechQueue } from './speechQueue';
 
-const EMPTY_PLAYBACK: SpeechPlayback = { status: SpeechStatus.Idle, index: 0, total: 0 };
+const EMPTY_PLAYBACK: SpeechPlayback = { status: SpeechStatus.Idle, index: 0, completed: 0, total: 0 };
 
-/** Keeps synthesis and playback alive when the small selection card is hidden. */
+/** Owns synthesis and playback, releasing both when the main process resets the card. */
 export function useLanguageTools() {
   const api = window.electron.desktopCompanion;
   const [input, setInput] = useState<LanguageToolInput | null>(null);

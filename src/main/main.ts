@@ -139,6 +139,7 @@ import {
   type DataMigrationLastRestoreResult,
   DataMigrationRestoreStatus,
 } from '../shared/dataMigration/constants';
+import { getCompanionTaskPreview } from '../shared/desktopCompanion/results';
 import { DialogIpc } from '../shared/dialog/constants';
 import {
   EnterpriseAccountIpcChannel,
@@ -10621,9 +10622,10 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle(CoworkIpcChannel.MarkSessionViewed, async (_event, sessionId: string) => {
+  ipcMain.handle(CoworkIpcChannel.MarkSessionViewed, async (event, sessionId: string) => {
     try {
       getDesktopNotificationManager().markSessionViewed(sessionId);
+      if (event.sender.id === mainWindow?.webContents.id) desktopCompanionManager?.markSessionViewed(sessionId);
       return { success: true };
     } catch (error) {
       console.warn(`[DesktopNotification] failed to mark session ${sessionId} viewed:`, error);
@@ -15566,6 +15568,7 @@ if (!gotTheLock) {
     registerRendererPermissionHandler({
       session: session.defaultSession,
       getMainWindow: () => mainWindow,
+      isAdditionalVoiceInputWebContents: webContents => desktopCompanionManager?.isComposerWebContents(webContents) ?? false,
       isDev,
       startUrl: process.env.ELECTRON_START_URL,
     });
@@ -15575,6 +15578,10 @@ if (!gotTheLock) {
     createWindow();
     profiler.measure('createWindow');
     desktopCompanionManager = new DesktopCompanionManager({
+      getTaskInfo: sessionId => {
+        const task = getCoworkStore().getSession(sessionId, 1);
+        return task ? { ...task, preview: getCompanionTaskPreview(task.messages.at(-1)) } : null;
+      },
       services: { languageClient: desktopLanguageClient },
       store: getStore(),
       preloadPath: PRELOAD_PATH,

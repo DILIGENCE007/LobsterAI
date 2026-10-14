@@ -67,13 +67,14 @@ import type { CoworkSearchMessageCursor } from '../shared/cowork/search';
 import { DataMigrationIpc } from '../shared/dataMigration/constants';
 import { type DecisionModelConfigUpdate, DecisionModelIpcChannel } from '../shared/decisionModel/constants';
 import {
-  type CompanionGaze,
   type CompanionQuickAnswerEvent,
   type DesktopCompanionBridge,
   DesktopCompanionIpc,
   type DesktopCompanionSelection,
   type DesktopCompanionState,
 } from '../shared/desktopCompanion/constants';
+import { CompanionResultIpc } from '../shared/desktopCompanion/results';
+import { CompanionScreenshotIpc } from '../shared/desktopCompanion/screenshot';
 import { DialogIpc } from '../shared/dialog/constants';
 import { DshIpcChannel } from '../shared/dshEngine/constants';
 import {
@@ -155,8 +156,18 @@ import { OpenClawSessionPolicyIpc } from './openclawSessionPolicy/constants';
 contextBridge.exposeInMainWorld('electron', {
   desktopCompanion: {
     ...createLanguageToolsBridge(),
+    openResult: sessionId => ipcRenderer.invoke(CompanionResultIpc.Open, sessionId),
+    hideResult: () => ipcRenderer.invoke(CompanionResultIpc.Hide),
+    dismissResult: sessionId => ipcRenderer.invoke(CompanionResultIpc.Dismiss, sessionId),
+    pinResult: pinned => ipcRenderer.invoke(CompanionResultIpc.Pin, pinned),
+    getRecentTasks: () => ipcRenderer.invoke(CompanionResultIpc.Recent),
+    setResultPassThrough: passThrough => ipcRenderer.invoke(CompanionResultIpc.PassThrough, passThrough),
+    getScreenshotFrame: () => ipcRenderer.invoke(CompanionScreenshotIpc.GetFrame),
+    screenshotReady: () => ipcRenderer.invoke(CompanionScreenshotIpc.Ready),
+    finishScreenshot: rect => ipcRenderer.invoke(CompanionScreenshotIpc.Finish, rect),
     getState: () => ipcRenderer.invoke(DesktopCompanionIpc.GetState),
     setPreferences: patch => ipcRenderer.invoke(DesktopCompanionIpc.SetPreferences, patch),
+    getSelectionExcludedApps: () => ipcRenderer.invoke(DesktopCompanionIpc.GetSelectionExcludedApps),
     setDraft: draft => ipcRenderer.invoke(DesktopCompanionIpc.SetDraft, draft),
     selectSession: id => ipcRenderer.invoke(DesktopCompanionIpc.SelectSession, id),
     togglePanel: () => ipcRenderer.invoke(DesktopCompanionIpc.TogglePanel),
@@ -179,11 +190,6 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = (_event: Electron.IpcRendererEvent, state: DesktopCompanionState) => callback(state);
       ipcRenderer.on(DesktopCompanionIpc.Changed, handler);
       return () => ipcRenderer.removeListener(DesktopCompanionIpc.Changed, handler);
-    },
-    onGaze: callback => {
-      const handler = (_event: Electron.IpcRendererEvent, gaze: CompanionGaze) => callback(gaze);
-      ipcRenderer.on(DesktopCompanionIpc.Gaze, handler);
-      return () => ipcRenderer.removeListener(DesktopCompanionIpc.Gaze, handler);
     },
     onSelection: callback => {
       const handler = (_event: Electron.IpcRendererEvent, selection: DesktopCompanionSelection | null) => callback(selection);

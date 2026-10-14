@@ -2,7 +2,7 @@ import './languageTools.css';
 
 import { PauseIcon, PlayIcon } from '@heroicons/react/16/solid';
 import {
-  ArrowPathIcon, ArrowRightIcon, ArrowUpRightIcon, CheckIcon, ChevronDownIcon, LanguageIcon, MinusIcon, SpeakerWaveIcon, Square2StackIcon,
+  ArrowPathIcon, ArrowRightIcon, ArrowUpRightIcon, CheckIcon, ChevronDownIcon, Square2StackIcon,
 } from '@heroicons/react/24/outline';
 import { useEffect, useRef, useState } from 'react';
 
@@ -72,12 +72,13 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
   if (!input?.text) return null;
   const source = input.text;
   const isTranslation = input.tool === LanguageTool.Translate;
-  const currentQuota = tools.quota?.tools[input.tool];
   const speechVisible = !isTranslation || playback.status !== SpeechStatus.Idle;
   const speechActive = playback.status !== SpeechStatus.Idle;
+  const speechLoading = playback.status === SpeechStatus.Loading;
+  const canReplay = playback.status === SpeechStatus.Ended || playback.status === SpeechStatus.Error;
   const canResume = [SpeechStatus.Idle, SpeechStatus.Paused, SpeechStatus.Ended, SpeechStatus.Error].some(value => value === playback.status);
   const total = Math.max(tools.segmentTotal, playback.total);
-  const completedSegments = playback.status === SpeechStatus.Ended ? playback.index : Math.max(0, playback.index - 1);
+  const completedSegments = playback.completed;
   const progress = total > 0 ? Math.round((completedSegments / total) * 100) : 0;
 
   const toTask = async () => {
@@ -96,26 +97,21 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
       setCopied(true); setTimeout(() => setCopied(false), 1_400);
     });
   };
-  const playLabel = t(playback.status === SpeechStatus.Idle ? 'desktopToolsReadAloud' : canResume ? 'desktopToolsResume' : 'desktopToolsPause');
+  const playLabel = t(canReplay ? 'desktopToolsReplay'
+    : playback.status === SpeechStatus.Idle ? 'desktopToolsReadAloud' : canResume ? 'desktopToolsResume' : 'desktopToolsPause');
+  const progressLabel = t('desktopToolsSegmentProgress')
+    .replace('{current}', String(completedSegments)).replace('{total}', String(total));
 
   return (
     <div className="sel-surface">
       <div className="sel-card" ref={rootRef} data-tool={input.tool} style={{ maxHeight: input.cardMaxHeight }}>
         <SelectionCardHeader
-          icon={isTranslation ? LanguageIcon : SpeakerWaveIcon}
           title={t(isTranslation ? 'desktopCompanionActionTranslate' : 'desktopToolsReadAloud')}
           pinned={pinned}
           onPin={() => { setPinned(!pinned); void api.pinLanguageTool(!pinned); }}
           onClose={() => { void api.closeLanguageTool(); }}
           closeLabel={t('desktopToolsClose')}
-        >
-          {speechActive && (
-            <button type="button" className="sel-icon" title={t('desktopToolsMinimize')} aria-label={t('desktopToolsMinimize')}
-              onClick={() => { void api.hideLanguageTool(); }}>
-              <MinusIcon />
-            </button>
-          )}
-        </SelectionCardHeader>
+        />
 
         {isTranslation && (
           <div className="lt-langs">
@@ -141,36 +137,6 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
                 ? <>{translation}{translating && <span className="sel-caret" />}</>
                 : translating && <SelectionThinking label={t('desktopToolsTranslating')} />}
             </div>
-          )}
-
-          {speechVisible && (
-            <section className="lt-player" aria-label={t('desktopToolsPlayback')}>
-              <button type="button" className="lt-play" onClick={tools.togglePlayback} title={playLabel} aria-label={playLabel}>
-                {canResume ? <PlayIcon /> : <PauseIcon />}
-              </button>
-              <div className="lt-track">
-                <div className="lt-status">
-                  <span className="lt-wave" data-playing={playback.status === SpeechStatus.Playing} aria-hidden="true"><i /><i /><i /><i /></span>
-                  <strong aria-live="polite">{t(STATUS_KEYS[playback.status])}</strong>
-                  <small>{total > 0
-                    ? t('desktopToolsSegmentProgress').replace('{current}', String(playback.index)).replace('{total}', String(total))
-                    : [...(tools.speechText || source)].length.toLocaleString() + t('desktopToolsCharacters')}</small>
-                </div>
-                <div className="lt-progress" role="progressbar" aria-label={t('desktopToolsSegmentLabel')}
-                  aria-valuemin={0} aria-valuemax={total} aria-valuenow={completedSegments}>
-                  <i style={{ width: `${progress}%` }} />
-                </div>
-              </div>
-              <label className="lt-rate">
-                <select aria-label={t('desktopToolsSpeed')} value={tools.rate} onChange={event => tools.changeRate(Number(event.target.value))}>
-                  {RATES.map(value => <option key={value} value={value}>{value}×</option>)}
-                </select>
-              </label>
-              <button type="button" className="sel-icon" disabled={!speechActive} onClick={tools.stopSpeech}
-                title={t('desktopToolsStop')} aria-label={t('desktopToolsStop')}>
-                <StopGlyph />
-              </button>
-            </section>
           )}
 
           {tools.error !== null && (
@@ -200,6 +166,45 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
             </div>
           )}
         </div>
+
+        {speechVisible && (
+          <section className="lt-player" aria-label={t('desktopToolsPlayback')}>
+            <div className="lt-controls">
+              <button type="button" className="lt-play" onClick={tools.togglePlayback}
+                title={playLabel} aria-label={playLabel}>
+                {speechLoading ? <span className="lt-loading-icon" aria-hidden="true"><span className="lt-spinner" /><PauseIcon /></span>
+                  : canReplay ? <ArrowPathIcon /> : canResume ? <PlayIcon /> : <PauseIcon />}
+              </button>
+              <div className="lt-track">
+                <div className="lt-status">
+                  <strong role="status">{t(STATUS_KEYS[playback.status])}</strong>
+                  {playback.status === SpeechStatus.Playing && (
+                    <span className="lt-wave" aria-hidden="true"><i /><i /><i /><i /></span>
+                  )}
+                </div>
+                <span className="lt-meta">{[...(tools.speechText || source)].length.toLocaleString() + t('desktopToolsCharacters')}</span>
+              </div>
+              <label className="lt-rate" title={t('desktopToolsSpeed')}>
+                <select aria-label={t('desktopToolsSpeed')} value={tools.rate} onChange={event => tools.changeRate(Number(event.target.value))}>
+                  {RATES.map(value => <option key={value} value={value}>{value}×</option>)}
+                </select>
+                <ChevronDownIcon aria-hidden="true" />
+              </label>
+              <button type="button" className="sel-icon lt-stop" disabled={!speechActive || playback.status === SpeechStatus.Ended}
+                onClick={tools.stopSpeech} title={t('desktopToolsStop')} aria-label={t('desktopToolsStop')}>
+                <StopGlyph />
+              </button>
+            </div>
+            <div className="lt-timeline">
+              <div className="lt-progress" data-loading={speechLoading} role="progressbar" aria-label={t('desktopToolsSegmentLabel')}
+                aria-valuemin={0} aria-valuemax={total || 1} aria-valuenow={speechLoading && total === 0 ? undefined : completedSegments}
+                aria-valuetext={total > 0 ? progressLabel : t(STATUS_KEYS[playback.status])}>
+                <i style={{ width: `${progress}%` }} />
+              </div>
+              {total > 0 && <span className="lt-progress-label">{progressLabel}</span>}
+            </div>
+          </section>
+        )}
 
         {isTranslation && (translating || (translation && !followUp.streaming)) && (
           <div className="sel-actions">
@@ -235,17 +240,6 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
             onStop={followUp.streaming ? followUp.stop : undefined}
             disabled={!translation || translating}
           />
-        )}
-
-        {!isTranslation && (
-          <footer className="lt-quota" title={t('desktopToolsResetTime')}>
-            {currentQuota ? <>
-              <span>{t('desktopToolsRemaining').replace('{count}', String(currentQuota.remainingRequests))}</span>
-              {currentQuota.remainingCharacters !== null && (
-                <span>{t('desktopToolsRemainingCharacters').replace('{count}', currentQuota.remainingCharacters.toLocaleString())}</span>
-              )}
-            </> : <span>{t('desktopToolsQuotaHint')}</span>}
-          </footer>
         )}
       </div>
     </div>

@@ -2,6 +2,7 @@ import { ArchiveBoxIcon, ArrowPathIcon, ArrowPathRoundedSquareIcon, ChatBubbleLe
 import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import { OpenSettingsTab } from '../../shared/app/constants';
 import { AppSettingsAutoLaunchErrorCode } from '../../shared/appSettings/constants';
 import { type AppUpdateInfo,type AppUpdateRuntimeState,AppUpdateSource,AppUpdateStatus } from '../../shared/appUpdate/constants';
 import {
@@ -11,6 +12,7 @@ import {
 } from '../../shared/browserWebAccess/constants';
 import { DataMigrationRestoreStatus } from '../../shared/dataMigration/constants';
 import type { DecisionModelConfigUpdate } from '../../shared/decisionModel/constants';
+import { DEFAULT_DESKTOP_COMPANION_PREFERENCES } from '../../shared/desktopCompanion/constants';
 import {
   normalizeNotificationSettings,
   TaskCompletionNotificationMode,
@@ -65,6 +67,8 @@ import DreamingSettingsSection from './cowork/DreamingSettingsSection';
 import EmbeddingSettingsSection from './cowork/EmbeddingSettingsSection';
 import DecisionModelExperimentalSettings from './DecisionModelExperimentalSettings';
 import DesktopCompanionSettings from './desktopCompanion/DesktopCompanionSettings';
+import { companionShortcutFromKeys } from './desktopCompanion/shortcut';
+import { useDesktopCompanionState } from './desktopCompanion/useDesktopCompanionState';
 import DshExperimentalSettings from './DshExperimentalSettings';
 import ErrorMessage from './ErrorMessage';
 import BrainIcon from './icons/BrainIcon';
@@ -172,8 +176,12 @@ const resolvePrimaryProviderForSettingsSave = (
     : providers[activeProvider];
 };
 
+// The global shortcut stays in companion preferences so existing bindings are preserved.
+const SettingsShortcutAction = { ...ShortcutAction, QuickPanel: 'quickPanel' } as const;
+type SettingsShortcutAction = typeof SettingsShortcutAction[keyof typeof SettingsShortcutAction];
+
 type ShortcutCommandDefinition = {
-  key: ShortcutAction;
+  key: SettingsShortcutAction;
   labelKey: string;
   descriptionKey: string;
   inputType?: 'recorder' | 'send';
@@ -181,9 +189,10 @@ type ShortcutCommandDefinition = {
   tabLabelKey?: string;
 };
 
-const SETTINGS_TAB_SHORTCUT_ACTIONS: Partial<Record<ShortcutAction, TabType>> = {
+const SETTINGS_TAB_SHORTCUT_ACTIONS: Partial<Record<SettingsShortcutAction, TabType>> = {
   [ShortcutAction.OpenSettingsGeneral]: 'general',
   [ShortcutAction.OpenSettingsAppearance]: 'appearance',
+  [ShortcutAction.OpenSettingsDesktopCompanion]: OpenSettingsTab.DesktopCompanion,
   [ShortcutAction.OpenSettingsAgentEngine]: 'coworkAgentEngine',
   [ShortcutAction.OpenSettingsModel]: 'model',
   [ShortcutAction.OpenSettingsIm]: 'im',
@@ -784,6 +793,7 @@ const AGENT_TASK_SLOT_COMMANDS: ShortcutCommandDefinition[] = [
 const SETTINGS_TAB_SHORTCUT_COMMANDS: ShortcutCommandDefinition[] = [
   { key: ShortcutAction.OpenSettingsGeneral, tabLabelKey: 'general' },
   { key: ShortcutAction.OpenSettingsAppearance, tabLabelKey: 'appearance' },
+  { key: ShortcutAction.OpenSettingsDesktopCompanion, tabLabelKey: 'desktopCompanionTitle' },
   { key: ShortcutAction.OpenSettingsAgentEngine, tabLabelKey: 'coworkAgentEngine' },
   { key: ShortcutAction.OpenSettingsModel, tabLabelKey: 'settingsCustomModel' },
   { key: ShortcutAction.OpenSettingsIm, tabLabelKey: 'imBot' },
@@ -808,6 +818,7 @@ const SHORTCUT_COMMAND_GROUPS: Array<{
     commands: [
       { key: ShortcutAction.NewChat, labelKey: 'newChat', descriptionKey: 'shortcutDescNewChat' },
       { key: ShortcutAction.FocusPrompt, labelKey: 'shortcutFocusPrompt', descriptionKey: 'shortcutDescFocusPrompt' },
+      { key: ShortcutAction.VoiceInput, labelKey: 'shortcutVoiceInput', descriptionKey: 'shortcutDescVoiceInput' },
       { key: ShortcutAction.StopCurrentTask, labelKey: 'shortcutStopCurrentTask', descriptionKey: 'shortcutDescStopCurrentTask' },
       { key: ShortcutAction.Search, labelKey: 'search', descriptionKey: 'shortcutDescSearch' },
       { key: ShortcutAction.ToggleArtifacts, labelKey: 'shortcutToggleArtifacts', descriptionKey: 'shortcutDescToggleArtifacts' },
@@ -833,6 +844,7 @@ const SHORTCUT_COMMAND_GROUPS: Array<{
   {
     titleKey: 'shortcutGroupApp',
     commands: [
+      { key: SettingsShortcutAction.QuickPanel, labelKey: 'shortcutQuickPanel', descriptionKey: 'shortcutDescQuickPanel' },
       { key: ShortcutAction.Settings, labelKey: 'openSettings', descriptionKey: 'shortcutDescSettings' },
       { key: ShortcutAction.ShowShortcuts, labelKey: 'shortcutShowShortcuts', descriptionKey: 'shortcutDescShowShortcuts' },
     ],
@@ -1089,7 +1101,9 @@ const formatShortcutFromEvent = (e: React.KeyboardEvent): string | null => {
     ' ': 'Space', Escape: 'Esc', Enter: 'Enter', Backspace: 'Backspace',
     Delete: 'Delete', Tab: 'Tab',
   };
-  const key = keyMap[e.key] ?? (e.key.length === 1 ? e.key.toUpperCase() : e.key);
+  const key = keyMap[e.key]
+    ?? (e.altKey && /^Key[A-Z]$/.test(e.code) ? e.code.slice(3) : undefined)
+    ?? (e.key.length === 1 ? e.key.toUpperCase() : e.key);
   parts.push(key);
   return parts.join('+');
 };
@@ -1106,8 +1120,10 @@ const isMacPlatform = navigator.platform.includes('Mac');
 const ShortcutRecorder: React.FC<{
   value: string;
   label: string;
+  global?: boolean;
+  disabled?: boolean;
   onChange: (v: string) => void;
-}> = ({ value, label, onChange }) => {
+}> = ({ value, label, global = false, disabled = false, onChange }) => {
   const [recording, setRecording] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const recorderRef = useRef<HTMLButtonElement>(null);
@@ -1115,12 +1131,12 @@ const ShortcutRecorder: React.FC<{
   const editLabel = i18nService.t('shortcutEditCommand').replace('{command}', label);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (!recording) return;
+    if (!recording || disabled) return;
     e.preventDefault();
     e.stopPropagation();
     if (e.key === 'Escape') { setRecording(false); return; }
     if (e.key === 'Delete' || e.key === 'Backspace') { onChange(''); setRecording(false); return; }
-    const shortcut = formatShortcutFromEvent(e);
+    const shortcut = global ? companionShortcutFromKeys(e) : formatShortcutFromEvent(e);
     if (shortcut) { onChange(shortcut); setRecording(false); }
   };
 
@@ -1144,6 +1160,7 @@ const ShortcutRecorder: React.FC<{
         <button
           ref={recorderRef}
           type="button"
+          disabled={disabled}
           data-shortcut-input="true"
           onKeyDown={handleKeyDown}
           className="h-8 min-w-[8rem] rounded-xl border border-border bg-surface px-4 text-xs font-medium text-foreground shadow-sm outline-none transition-colors focus:border-primary focus:ring-1 focus:ring-primary/25"
@@ -1173,6 +1190,7 @@ const ShortcutRecorder: React.FC<{
       <button
         type="button"
         onClick={() => setRecording(true)}
+        disabled={disabled}
         title={editLabel}
         aria-label={editLabel}
         className="pointer-events-none inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-secondary opacity-0 transition-colors hover:bg-surface-raised hover:text-foreground group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
@@ -1520,6 +1538,12 @@ const Settings: React.FC<SettingsProps> = ({
 
   // 快捷键设置
   const [shortcuts, setShortcuts] = useState<ShortcutConfig>(() => ({ ...defaultConfig.shortcuts! }));
+  const { state: companionState, error: companionLoadError } = useDesktopCompanionState();
+  const [quickPanelShortcutDraft, setQuickPanelShortcutDraft] = useState<string | null>(null);
+  const shortcutBindings = useMemo(() => ({
+    ...shortcuts,
+    [SettingsShortcutAction.QuickPanel]: quickPanelShortcutDraft ?? companionState?.preferences.shortcut ?? '',
+  }), [shortcuts, quickPanelShortcutDraft, companionState?.preferences.shortcut]);
   const [shortcutSearchQuery, setShortcutSearchQuery] = useState('');
 
   // GitHub Copilot device code auth state
@@ -3456,6 +3480,12 @@ const Settings: React.FC<SettingsProps> = ({
       );
       let savedPluginPendingChanges: PluginPendingChanges | null = null;
 
+      if (quickPanelShortcutDraft !== null) {
+        const result = await window.electron.desktopCompanion.setPreferences({ shortcut: quickPanelShortcutDraft });
+        if (!result.success) throw new Error(result.error || i18nService.t('desktopCompanionShortcutConflict'));
+        setQuickPanelShortcutDraft(null);
+      }
+
       await configService.updateConfig({
         api: {
           key: primaryProvider.apiKey,
@@ -3792,24 +3822,24 @@ const Settings: React.FC<SettingsProps> = ({
           const haystack = [
             getShortcutCommandText(command, 'labelKey'),
             getShortcutCommandText(command, 'descriptionKey'),
-            shortcuts[command.key] ?? '',
-            formatShortcutForDisplay(shortcuts[command.key], { isMac: isMacPlatform }),
+            shortcutBindings[command.key] ?? '',
+            formatShortcutForDisplay(shortcutBindings[command.key], { isMac: isMacPlatform }),
           ].join(' ').toLowerCase();
           return haystack.includes(query);
         }),
       }))
       .filter(group => group.commands.length > 0);
-  }, [shortcutSearchQuery, shortcuts]);
+  }, [shortcutSearchQuery, shortcutBindings]);
 
   // 快捷键更新处理
-  const handleShortcutChange = (key: ShortcutAction, value: string) => {
+  const handleShortcutChange = (key: SettingsShortcutAction, value: string) => {
     const normalizedValue = value.trim();
     // Check for conflicts with other shortcuts
     const normalizedSignature = getShortcutConflictSignature(normalizedValue, { isMac: isMacPlatform });
     const conflictKey = normalizedSignature
-      ? Object.values(ShortcutAction).find((action) => {
+      ? Object.values(SettingsShortcutAction).find((action) => {
           if (action === key) return false;
-          return getShortcutConflictSignature(shortcuts[action], { isMac: isMacPlatform }) === normalizedSignature;
+          return getShortcutConflictSignature(shortcutBindings[action], { isMac: isMacPlatform }) === normalizedSignature;
         })
       : undefined;
     if (conflictKey) {
@@ -3825,6 +3855,10 @@ const Settings: React.FC<SettingsProps> = ({
       );
       return;
     }
+    if (key === SettingsShortcutAction.QuickPanel) {
+      setQuickPanelShortcutDraft(normalizedValue);
+      return;
+    }
     setShortcuts(prev => ({
       ...prev,
       [key]: normalizedValue
@@ -3833,6 +3867,7 @@ const Settings: React.FC<SettingsProps> = ({
 
   const handleResetShortcuts = () => {
     setShortcuts({ ...defaultConfig.shortcuts! });
+    if (companionState) setQuickPanelShortcutDraft(DEFAULT_DESKTOP_COMPANION_PREFERENCES.shortcut);
   };
 
   // 阻止点击设置窗口时事件传播到背景
@@ -5553,7 +5588,8 @@ const Settings: React.FC<SettingsProps> = ({
                     {i18nService.t(group.titleKey)}
                   </div>
                   {group.commands.map((command, commandIndex) => {
-                    const value = shortcuts[command.key] ?? '';
+                    const value = shortcutBindings[command.key] ?? '';
+                    const isQuickPanel = command.key === SettingsShortcutAction.QuickPanel;
                     const commandLabel = getShortcutCommandText(command, 'labelKey');
                     return (
                       <div
@@ -5569,6 +5605,11 @@ const Settings: React.FC<SettingsProps> = ({
                           <div className="mt-0.5 line-clamp-2 text-xs text-secondary">
                             {getShortcutCommandText(command, 'descriptionKey')}
                           </div>
+                          {isQuickPanel && (companionLoadError || companionState?.shortcutUnavailable) && (
+                            <p role="alert" className="mt-1 text-xs text-red-500">
+                              {i18nService.t(companionLoadError ? 'desktopCompanionRequestFailed' : 'desktopCompanionShortcutUnavailable')}
+                            </p>
+                          )}
                         </div>
                         <div className="flex items-center justify-end gap-2">
                           {command.inputType === 'send' ? (
@@ -5580,6 +5621,8 @@ const Settings: React.FC<SettingsProps> = ({
                             <ShortcutRecorder
                               value={value}
                               label={commandLabel}
+                              global={isQuickPanel}
+                              disabled={isSaving || (isQuickPanel && !companionState)}
                               onChange={(nextValue) => handleShortcutChange(command.key, nextValue)}
                             />
                           )}
@@ -5587,6 +5630,7 @@ const Settings: React.FC<SettingsProps> = ({
                             <button
                               type="button"
                               onClick={() => handleShortcutChange(command.key, '')}
+                              disabled={isSaving || (isQuickPanel && !companionState)}
                               title={i18nService.t('shortcutClear')}
                               aria-label={i18nService.t('shortcutClear')}
                               className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"

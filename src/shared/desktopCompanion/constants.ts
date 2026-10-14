@@ -2,11 +2,16 @@ import type { CompanionAppCategory } from './appCategories';
 import type { CompanionFileKind } from './fileKinds';
 import type { CompanionHintTopic } from './hintPolicy';
 import type { LanguageToolsBridge, SpeechStatus } from './languageTools';
+import type { CompanionResultsBridge, CompanionResultState } from './results';
+import type { CompanionScreenshotBridge } from './screenshot';
 import type { CompanionSelectionAction } from './selectionActions';
+import type { CompanionSelectionApp } from './selectionApps';
+import { type CompanionToolbarItem, DEFAULT_COMPANION_TOOLBAR_ORDER } from './selectionToolbar';
 
 export const DesktopCompanionIpc = {
   GetState: 'desktop-companion:get-state',
   SetPreferences: 'desktop-companion:set-preferences',
+  GetSelectionExcludedApps: 'desktop-companion:get-selection-excluded-apps',
   SetDraft: 'desktop-companion:set-draft',
   SelectSession: 'desktop-companion:select-session',
   TogglePanel: 'desktop-companion:toggle-panel',
@@ -16,7 +21,6 @@ export const DesktopCompanionIpc = {
   Drag: 'desktop-companion:drag',
   Changed: 'desktop-companion:changed',
   OrbFileDrag: 'desktop-companion:orb-file-drag',
-  Gaze: 'desktop-companion:gaze',
   StageCommand: 'desktop-companion:stage-command',
   ResizeSurface: 'desktop-companion:resize-surface',
   Selection: 'desktop-companion:selection',
@@ -26,9 +30,9 @@ export const DesktopCompanionIpc = {
   QuickAnswerEvent: 'desktop-companion:quick-answer-event',
   RequestPermission: 'desktop-companion:request-permission',
   CopyText: 'desktop-companion:copy-text',
-  /** The composer started a task; the orb follows it and the status strip comes out. */
+  /** The composer started a task; the orb follows it and its activity bubble appears. */
   TaskStarted: 'desktop-companion:task-started',
-  /** The followed task finished, failed or needs input; bring the status strip back. */
+  /** The followed task finished, failed or needs input; bring its activity bubble back. */
   TaskUpdated: 'desktop-companion:task-updated',
   /** The composer window lets clicks through its empty room above the card. */
   PanelPassThrough: 'desktop-companion:panel-pass-through',
@@ -40,6 +44,8 @@ export const DesktopCompanionSurface = {
   Stage: 'stage',
   Selection: 'selection',
   LanguageTools: 'language-tools',
+  Screenshot: 'screenshot',
+  Result: 'result',
 } as const;
 export type DesktopCompanionSurface = typeof DesktopCompanionSurface[keyof typeof DesktopCompanionSurface];
 
@@ -88,6 +94,7 @@ export interface DesktopCompanionPreferences {
   dragAssist: boolean;
   contextHints: boolean;
   selectionExcludedApps: string[];
+  selectionToolbarOrder: CompanionToolbarItem[];
 }
 
 export interface DesktopCompanionAttachment {
@@ -145,6 +152,7 @@ export interface DesktopCompanionForeground {
 }
 
 export interface DesktopCompanionState {
+  result: CompanionResultState;
   speechStatus?: SpeechStatus;
   revision: number;
   preferences: DesktopCompanionPreferences;
@@ -262,14 +270,10 @@ export interface CompanionSurfaceSize {
   height: number;
 }
 
-export interface CompanionGaze {
-  x: number;
-  y: number;
-}
-
-export interface DesktopCompanionBridge extends LanguageToolsBridge {
+export interface DesktopCompanionBridge extends LanguageToolsBridge, CompanionScreenshotBridge, CompanionResultsBridge {
   getState(): Promise<DesktopCompanionState>;
   setPreferences(patch: Partial<DesktopCompanionPreferences>): Promise<DesktopCompanionResult>;
+  getSelectionExcludedApps(): Promise<CompanionSelectionApp[]>;
   setDraft(draft: DesktopCompanionDraft): Promise<DesktopCompanionState>;
   selectSession(sessionId: string | null): Promise<DesktopCompanionState>;
   togglePanel(): Promise<void>;
@@ -289,19 +293,20 @@ export interface DesktopCompanionBridge extends LanguageToolsBridge {
   requestPermission(permission: CompanionPermission): Promise<DesktopCompanionState>;
   copyText(text: string): Promise<void>;
   onChanged(callback: (state: DesktopCompanionState) => void): () => void;
-  onGaze(callback: (gaze: CompanionGaze) => void): () => void;
   onSelection(callback: (selection: DesktopCompanionSelection | null) => void): () => void;
   onQuickAnswer(callback: (event: CompanionQuickAnswerEvent) => void): () => void;
 }
 
 export const DEFAULT_DESKTOP_COMPANION_PREFERENCES: DesktopCompanionPreferences = {
   enabled: false,
-  shortcut: '',
+  // Electron's Alt accelerator maps to Option on macOS and Alt on Windows.
+  shortcut: 'Alt+Space',
   skin: DEFAULT_COMPANION_SKIN,
   selectionToolbar: true,
   dragAssist: true,
   contextHints: true,
   selectionExcludedApps: [],
+  selectionToolbarOrder: [...DEFAULT_COMPANION_TOOLBAR_ORDER],
 };
 
 export const EMPTY_DESKTOP_COMPANION_DRAFT: DesktopCompanionDraft = {
@@ -312,12 +317,11 @@ export const EMPTY_DESKTOP_COMPANION_DRAFT: DesktopCompanionDraft = {
 
 export const DesktopCompanionSize = {
   Orb: { width: 84, height: 84 },
-  // Default brand disc; about Doubao's floating orb. A solid disc reads heavier than a
-  // figure of the same size, so this stays smaller than the 64px character skins.
-  BrandMark: 36,
-  // Window for the brand disc, its working ring, badge and shadow. Cards beside the orb
+  // Keep the default disc easy to see and grab alongside other desktop assistants.
+  BrandMark: 40,
+  // Window for the brand disc, status badge and shadow. Cards beside the orb
   // line up with the window's edges, so the window has to fit the art closely.
-  BrandOrb: { width: 56, height: 56 },
+  BrandOrb: { width: 60, height: 60 },
   // Window sizes include the transparent SurfacePad margin that holds the card shadow.
   // The quick panel is the home composer in a narrow card that grows upward. Its
   // window adds room above the card and toward the middle of the screen, so the
@@ -334,6 +338,9 @@ export const DesktopCompanionSize = {
   ToolbarMenu: 200,
   // A card up to 400 × 600 plus the margin.
   Answer: { width: 444, height: 644 },
+  Result: { width: 404, height: 644 },
+  // A 330px summary bubble plus the transparent margin.
+  ResultCompactWidth: 374,
   // About an answer card's first frame (title, quote, thinking, input), so one opening above the selection does not jump once measured.
   AnswerStartHeight: 240,
   SurfacePad: 22,
@@ -344,6 +351,5 @@ export const DesktopCompanionSize = {
 export const DesktopCompanionTiming = {
   HintAutoDismissMs: 12_000,
   DropLingerMs: 450,
-  GazeIntervalMs: 140,
   SnoozeHourMs: 60 * 60_000,
 } as const;

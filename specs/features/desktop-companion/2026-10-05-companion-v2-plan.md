@@ -18,6 +18,8 @@ v2 的核心改变：**让 Lobster 在需要它的那一刻自己出现在手边
 
 ## 2. 形象
 
+> **2026-10-14 更新：移除钳钳形象。** 当前保留默认的 40px LobsterAI 图标和 8 个海洋伙伴。设置及右键菜单均不再展示钳钳；已保存的 `qianqian` 配置自动回退到默认图标。钳钳专用 SVG、表情动画、眨眼定时器、视线跟随轮询及 IPC 已移除。以下形象探索和状态表保留为历史设计记录。
+
 > **2026-10-13 更新：默认形象改为 LobsterAI 应用图标**（参考豆包悬浮球）。钳钳太抢眼、不够专业，退为可选形象（id `qianqian`）。默认 id 仍是 `lobster`，老用户自动切到新样式。
 > - 形状：圆形徽章，红色渐变底 + 白色龙虾，龙虾轮廓从应用图标描出来（`mascot/LobsterMark.tsx`），36px，接近豆包默认悬浮球。
 > - 状态不靠表情和动作：思考中是贴着圆的细进度环；完成 / 需要你 / 出错用右上角标；文件靠近时放大到 1.06，悬停在上面时放大到 1.14；免打扰时褪色。不眨眼、不弹跳、不晃动。
@@ -35,7 +37,7 @@ v2 的核心改变：**让 Lobster 在需要它的那一刻自己出现在手边
 
 | 状态 | 触发 | 表现 |
 | --- | --- | --- |
-| 待命 | 默认 | 3–6 秒随机眨眼，眼睛跟随光标，小微笑；鼠标悬停时只上浮 2px、影子加深、触须微微竖起（2026-10-09 起不再切换表情、不再弹跳）；闲置 4 秒后淡到 80% 不透明 |
+| 待命 | 默认 | 3–6 秒随机眨眼，眼睛跟随光标，小微笑；鼠标悬停时只上浮 2px、影子加深、触须微微竖起（2026-10-09 起不再切换表情、不再弹跳）；2026-10-14 起闲置时保持完全不透明，不再自动变淡 |
 | 有话说 | 情境提示出现 | 举起右钳 + 星星 |
 | 好奇 | 检测到全局拖文件 | 钳子竖起轻晃，触须抖动，嘴巴「o」 |
 | 接住 | 文件悬停在钳钳/投放区上 | 张大嘴、眼睛放大、身体轻压 |
@@ -45,7 +47,7 @@ v2 的核心改变：**让 Lobster 在需要它的那一刻自己出现在手边
 | 出错 | 任务失败 | 波浪嘴、汗滴、钳子和触须耷拉 |
 | 打盹 | 静音 / 全屏 / 会议应用在前台 | 闭眼、钳子触须耷拉、半透明、zz |
 
-**停靠**：拖到哪里就停在哪里，始终完整留在光标所在屏幕的工作区内，默认位置右下。2026-10-09 取消了「靠边吸附并半身藏入」：多显示器时藏入部分会落到相邻屏幕，钳钳就看不到了；想让它少占地方，用闲置淡出或右键「隐藏 1 小时」。
+**停靠**：拖到哪里就停在哪里，始终完整留在光标所在屏幕的工作区内，默认位置右下。2026-10-09 取消了「靠边吸附并半身藏入」：多显示器时藏入部分会落到相邻屏幕，钳钳就看不到了；想让它少占地方，用右键「隐藏 1 小时」。
 
 **可选形象**：你设计的 8 个海洋角色（软软虾、醒醒星、鲨饿饿、章多多、鲸一鸣、溜溜鱼、胆怕怕、轻轻飘）作为「换个形象」选项（设置 + 右键菜单）。当前用原图抠出的透明图占位：
 
@@ -109,6 +111,7 @@ v2 的核心改变：**让 Lobster 在需要它的那一刻自己出现在手边
 - 替代现有 416×560 表单：输入框（文件 / 截图 / 工作区）+ 与前台应用相关的建议 + 进行中/最近任务（状态、停止、查看）+ 打开主窗口。
 - 2026-10-09 最终方案：点钳钳打开的就是首页那个输入框（`CoworkPromptInput`，同一份代码，附件、技能/套件、模型、语音、工作区、Agent 全都一样），在独立窗口 `companion-composer.html` 里跑，有自己的 store，只加载输入框要读的数据（模型配置、cowork 配置、Agent、技能；登录状态只读，不接管登录回调）。窗口贴在钳钳旁边、朝屏幕中间展开、卡片底边和角色底边对齐（与提示气泡同一规则），卡片上方留出透明区域给向上弹出的菜单，空白处鼠标穿透。发起任务与首页共用 `useHomeStartContext` + `buildCoworkStartPlan` + `resolveCoworkStartBlock`。发出后输入框收起，钳钳旁出现状态条（进行中 · 标题 · 停止 / 查看），完成、出错或需要确认时状态条重新出现；点「查看」在主窗口打开会话。Agent 的模型、工作区改动通过 `agents:changed` 广播在两个窗口间同步。
 - 保留 v1 已验证的能力：草稿与附件持久化、提交后清空、停止任务、跳转主会话、权限确认转主窗口。
+- 2026-10-14 任务结果采用宠物旁的轻任务气泡：发出任务后显示标题和状态，完成时显示简短回答摘要但不抢焦点；点击任务气泡直接唤起主应用并进入对应的 Cowork 任务，关闭气泡，不再展开独立的答案详情或追问浮窗。气泡保持紧凑摘要样式，仅显示进行中与未读任务，默认显示最新 1 个，其余通过「更多任务」查看。主窗口阅读后同步移除已读结果，全部读完后气泡收起；原会话有新结果时再次出现。最多跟踪 10 个任务，全文、文件、追问和权限处理统一在原任务中完成。关闭桌面角色时，快捷输入框底部仍可打开待查看任务。
 - 工作区默认用应用的默认工作目录，不再强制先选文件夹。
 
 右键菜单：隐藏 1 小时 / 今天不再打扰 / 换个形象 ▸ / 划词 ✓ / 拖拽投放 ✓ / 情境提示 ✓ / 设置… / 关闭桌面龙虾。
@@ -187,9 +190,9 @@ v2 的核心改变：**让 Lobster 在需要它的那一刻自己出现在手边
 
 **代码**
 
-- 主进程 `src/main/desktopCompanion/`：`desktopCompanionManager.ts`（偏好、钳钳窗口、贴边探头、视线、静音、右键菜单、IPC）、`companionStage.ts`（气泡/投放区窗口）、`companionHints.ts`（停留计时 + 频控台账）、`companionSelection.ts`（selection-hook、划词条/答案卡窗口、消失规则、权限）、`quickAnswerService.ts` + `sse.ts`（流式直连模型）、`foregroundAppMonitor.ts`、`fileDragMonitor.ts`（mac JXA 小进程、win 轮询）、`windowsNative.ts`（唯一 FFI）、`companionWindow.ts`。
+- 主进程 `src/main/desktopCompanion/`：`desktopCompanionManager.ts`（偏好、悬浮球窗口、静音、右键菜单、IPC）、`companionStage.ts`（气泡/投放区窗口）、`companionHints.ts`（停留计时 + 频控台账）、`companionSelection.ts`（selection-hook、划词条/答案卡窗口、消失规则、权限）、`quickAnswerService.ts` + `sse.ts`（流式直连模型）、`foregroundAppMonitor.ts`、`fileDragMonitor.ts`（mac JXA 小进程、win 轮询）、`windowsNative.ts`（唯一 FFI）、`companionWindow.ts`。
 - 共享 `src/shared/desktopCompanion/`：`constants.ts`、`copy.ts`（中英）、`geometry.ts`、`appCategories.ts`、`hintPolicy.ts`、`selectionActions.ts`、`fileKinds.ts`、`skins.ts`。
-- 渲染 `src/renderer/components/desktopCompanion/`：`mascot/LobsterHood.tsx`（矢量钳钳）、`mascot/CompanionCharacter.tsx`（矢量/图片形象 + 角标 + 眨眼）、`CompanionOrb.tsx`、`CompanionStage.tsx`、`SelectionSurface.tsx`、`CompanionPanel.tsx`（重做）、`DesktopCompanionSettings.tsx`（扩展）。
+- 渲染 `src/renderer/components/desktopCompanion/`：`mascot/LobsterMark.tsx`（默认图标）、`mascot/CompanionCharacter.tsx`（图标/图片形象 + 角标）、`CompanionOrb.tsx`、`CompanionStage.tsx`、`SelectionSurface.tsx`、`CompanionPanel.tsx`（重做）、`DesktopCompanionSettings.tsx`（扩展）。
 - 资源 `public/desktop-companion/skins/*.webp`（8 个角色占位，256px 透明）。
 - 依赖：`selection-hook ^2.1.1`、`koffi ^3.3.2`，并加入 `asarUnpack`。
 

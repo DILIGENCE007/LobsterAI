@@ -26,7 +26,7 @@ interface Host {
 /** How often a card that lost focus to a screenshot checks whether the shot is done. */
 const CAPTURE_CHECK_MS = 500;
 
-/** A persistent window owns audio, so hiding a selection never interrupts read-aloud. */
+/** Reuses the tool window, but ends read-aloud whenever its card disappears. */
 export class CompanionLanguageToolsController {
   private window: BrowserWindow | null = null;
   private input: LanguageToolInput | null = null;
@@ -55,13 +55,20 @@ export class CompanionLanguageToolsController {
     handle(LanguageToolsIpc.Close, () => this.reset(), true);
     handle(LanguageToolsIpc.Pin, value => { this.pinned = value === true; }, true);
     handle(LanguageToolsIpc.PassThrough, value => this.window?.setIgnoreMouseEvents(value === true, { forward: true }), true);
-    handle(LanguageToolsIpc.Start, value => this.client?.start(value as LanguageToolRequest, event => {
-      if (this.window && !this.window.isDestroyed()) this.window.webContents.send(LanguageToolsIpc.Event, event);
-    }) ?? { success: false, code: LanguageToolCode.Unavailable }, true);
+    handle(LanguageToolsIpc.Start, value => {
+      const request = value as LanguageToolRequest;
+      // A renderer request already queued before dismissal must not restart hidden speech.
+      if (request?.tool === LanguageTool.Tts && (!this.input || !this.window?.isVisible())) {
+        return { success: false, code: LanguageToolCode.Unavailable };
+      }
+      return this.client?.start(request, event => {
+        if (this.window && !this.window.isDestroyed()) this.window.webContents.send(LanguageToolsIpc.Event, event);
+      }) ?? { success: false, code: LanguageToolCode.Unavailable };
+    }, true);
     handle(LanguageToolsIpc.Abort, value => { if (typeof value === 'string') this.client?.abort(value); }, true);
     handle(LanguageToolsIpc.Quota, () => this.client?.quota() ?? { success: false, code: LanguageToolCode.Unavailable });
     handle(LanguageToolsIpc.SpeechStatus, value => {
-      if (!Object.values(SpeechStatus).includes(value as SpeechStatus)) return;
+      if (!this.input || !this.window?.isVisible() || !Object.values(SpeechStatus).includes(value as SpeechStatus)) return;
       this.status = value as SpeechStatus;
       host.publish();
     }, true);
@@ -100,6 +107,9 @@ export class CompanionLanguageToolsController {
       this.window = win;
       win.once('ready-to-show', () => { if (this.input && !win.isDestroyed()) { win.show(); win.focus(); } });
       win.on('blur', () => this.hideOnBlur(win));
+      win.on('hide', () => {
+        if (this.input?.tool === LanguageTool.Tts) this.reset();
+      });
       // Only a drag by the user emits will-move; a card moved out of the way stays open.
       win.on('will-move', () => {
         this.moved = true;
@@ -153,10 +163,12 @@ export class CompanionLanguageToolsController {
     this.window.setBounds(resolveCompanionCardBounds(this.anchor, this.size, workArea));
   }
   command(command: SpeechCommand): void {
-    if (!Object.values(SpeechCommand).includes(command)) return;
+    if (!this.input || !this.window?.isVisible() || !Object.values(SpeechCommand).includes(command)) return;
     this.window?.webContents.send(LanguageToolsIpc.SpeechCommand, command);
   }
   reset(): void {
+    clearTimeout(this.captureTimer);
+    this.captureTimer = undefined;
     this.client?.reset();
     if (this.window) this.host.abortFollowUp(this.window.webContents.id);
     this.input = null;
@@ -164,7 +176,7 @@ export class CompanionLanguageToolsController {
     this.moved = false;
     this.status = SpeechStatus.Idle;
     this.window?.webContents.send(LanguageToolsIpc.Reset);
-    this.window?.hide();
+    if (this.window?.isVisible()) this.window.hide();
     this.host.publish();
   }
   dispose(): void {
