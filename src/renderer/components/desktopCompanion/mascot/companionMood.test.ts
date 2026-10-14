@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 
 import { CoworkSessionStatusValue } from '../../../types/cowork';
 import { parentDirectory } from '../companionTasks';
-import { CompanionMood, companionMood, type CompanionMoodInput, moodCanRest } from './companionMood';
+import { CompanionMood, companionMood, type CompanionMoodInput } from './companionMood';
 
 const calm: CompanionMoodInput = {
   status: null,
@@ -16,7 +16,7 @@ const calm: CompanionMoodInput = {
 };
 
 describe('companion mood', () => {
-  test('rests when nothing is going on and raises a hand for a hint', () => {
+  test('stays idle when nothing is going on and raises a hand for a hint', () => {
     expect(companionMood(calm)).toBe(CompanionMood.Idle);
     expect(companionMood({ ...calm, hintShowing: true })).toBe(CompanionMood.Idea);
   });
@@ -34,15 +34,6 @@ describe('companion mood', () => {
     expect(companionMood({ ...waiting, fileDragActive: true })).toBe(CompanionMood.Curious);
     expect(companionMood({ ...waiting, dropHover: true })).toBe(CompanionMood.Catch);
     expect(companionMood({ ...waiting, dropHover: true, snoozed: true })).toBe(CompanionMood.Snooze);
-  });
-
-  test('fades back only when there is nothing to report', () => {
-    expect(moodCanRest(CompanionMood.Idle)).toBe(true);
-    expect(moodCanRest(CompanionMood.Snooze)).toBe(true);
-    expect([
-      CompanionMood.Working, CompanionMood.Done, CompanionMood.Attention, CompanionMood.Error,
-      CompanionMood.Idea, CompanionMood.Curious, CompanionMood.Catch,
-    ].some(moodCanRest)).toBe(false);
   });
 });
 

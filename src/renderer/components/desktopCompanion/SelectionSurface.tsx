@@ -1,16 +1,10 @@
 import {
   ArrowPathIcon,
   ArrowUpRightIcon,
-  Bars3BottomLeftIcon,
-  BookOpenIcon,
-  ChatBubbleLeftEllipsisIcon,
   CheckIcon,
   Cog6ToothIcon,
   EllipsisHorizontalIcon,
-  LanguageIcon,
   NoSymbolIcon,
-  PencilSquareIcon,
-  SpeakerWaveIcon,
   Square2StackIcon,
 } from '@heroicons/react/24/outline';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -26,6 +20,7 @@ import {
 } from '../../../shared/desktopCompanion/constants';
 import { LanguageTool } from '../../../shared/desktopCompanion/languageTools';
 import { CompanionSelectionAction } from '../../../shared/desktopCompanion/selectionActions';
+import { CompanionToolbarItem, companionToolbarItems } from '../../../shared/desktopCompanion/selectionToolbar';
 import { i18nService } from '../../services/i18n';
 import {
   SelectionAnswer,
@@ -37,24 +32,16 @@ import {
   SourceQuote,
   SwapLabel,
 } from './SelectionCard';
+import { COMPANION_TOOLBAR_PRESENTATION } from './selectionToolbarPresentation';
 import { useMeasuredSurface } from './useMeasuredSurface';
 import { usePointerPassThrough } from './usePointerPassThrough';
 
 const t = (key: string) => i18nService.t(key);
 
-/** Each action keeps one icon, on its toolbar button and in its card's title. */
-const ACTION_ICONS: Record<CompanionSelectionAction, SelectionIcon> = {
-  [CompanionSelectionAction.Translate]: LanguageIcon,
-  [CompanionSelectionAction.Explain]: BookOpenIcon,
-  [CompanionSelectionAction.Summarize]: Bars3BottomLeftIcon,
-  [CompanionSelectionAction.Polish]: PencilSquareIcon,
-  [CompanionSelectionAction.Ask]: ChatBubbleLeftEllipsisIcon,
-};
-
 /** How long "Copied" stays on the toolbar before it goes away. */
 const COPIED_TOOLBAR_MS = 650;
 
-const actionLabel = (action: CompanionSelectionAction) => t(`desktopCompanionAction${action.charAt(0).toUpperCase()}${action.slice(1)}`);
+const actionLabel = (action: CompanionSelectionAction) => t(COMPANION_TOOLBAR_PRESENTATION[action].labelKey);
 
 interface Streaming {
   requestId: string;
@@ -244,23 +231,23 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
   if (!selection) return null;
 
   if (!answering) {
-    const actionItem = (value: CompanionSelectionAction): MenuItem => ({
-      key: value, icon: ACTION_ICONS[value], label: actionLabel(value), run: () => run(value),
-    });
-    const tools: MenuItem[] = [
-      actionItem(CompanionSelectionAction.Translate),
-      { key: 'copy', icon: copied ? CheckIcon : Square2StackIcon, label: '', run: copySelection },
-      {
-        key: 'read',
-        icon: SpeakerWaveIcon,
-        label: t('desktopToolsReadAloud'),
-        run: () => { void api.openLanguageTool({ tool: LanguageTool.Tts, text: selection.text }); },
-      },
-      actionItem(CompanionSelectionAction.Summarize),
-    ];
+    const toolItem = (value: CompanionToolbarItem): MenuItem => {
+      const presentation = COMPANION_TOOLBAR_PRESENTATION[value];
+      return {
+        key: value,
+        icon: value === CompanionToolbarItem.Copy && copied ? CheckIcon : presentation.icon,
+        label: t(value === CompanionToolbarItem.Copy && copied ? 'desktopCompanionSelectionCopied' : presentation.labelKey),
+        run: () => {
+          if (value === CompanionToolbarItem.Copy) copySelection();
+          else if (value === CompanionToolbarItem.ReadAloud) void api.openLanguageTool({ tool: LanguageTool.Tts, text: selection.text });
+          else run(value);
+        },
+      };
+    };
+    const { visible, overflow } = companionToolbarItems(state.preferences.selectionToolbarOrder);
+    const tools = visible.map(toolItem);
     const menu: MenuItem[] = [
-      actionItem(CompanionSelectionAction.Explain),
-      actionItem(CompanionSelectionAction.Ask),
+      ...overflow.map(toolItem),
       { key: 'exclude', icon: NoSymbolIcon, label: t('desktopCompanionSelectionExclude'), run: () => command({ type: DesktopCompanionSelectionCommandType.ExcludeApp }), secondary: true },
       { key: 'settings', icon: Cog6ToothIcon, label: t('desktopCompanionSelectionSettings'), run: () => command({ type: DesktopCompanionSelectionCommandType.Settings }), secondary: true },
     ];
@@ -270,9 +257,9 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
         <div className="sel-stack">
           <div className="sel-toolbar" ref={rootRef} role="toolbar" aria-label={t('desktopCompanionSelection')}>
             {tools.map(({ key, icon: ToolIcon, label, run: onClick }) => (
-              <button key={key} type="button" className="sel-tool" data-done={key === 'copy' && copied} onClick={onClick}>
+              <button key={key} type="button" className="sel-tool" data-done={key === CompanionToolbarItem.Copy && copied} onClick={onClick}>
                 <ToolIcon />
-                {key === 'copy'
+                {key === CompanionToolbarItem.Copy
                   ? <SwapLabel off={t('desktopCompanionSelectionCopy')} on={t('desktopCompanionSelectionCopied')} showOn={copied} />
                   : <span>{label}</span>}
               </button>
@@ -315,7 +302,6 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
     <div className="sel-surface">
       <div className="sel-card" ref={rootRef} style={{ maxHeight: selection.cardMaxHeight }}>
         <SelectionCardHeader
-          icon={ACTION_ICONS[action]}
           title={actionLabel(action)}
           pinned={selection.pinned}
           onPin={() => command({ type: DesktopCompanionSelectionCommandType.Pin, pinned: !selection.pinned })}

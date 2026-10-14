@@ -10,7 +10,6 @@ import {
   type DesktopCompanionState,
   EMPTY_DESKTOP_COMPANION_DRAFT,
 } from '../../../shared/desktopCompanion/constants';
-import { agentService } from '../../services/agent';
 import { authService } from '../../services/auth';
 import { coworkService } from '../../services/cowork';
 import { buildCoworkCapabilitySelection } from '../../services/coworkCapabilitySelection';
@@ -35,6 +34,11 @@ const HOME_DRAFT_KEY = '__home__';
 const TOAST_MS = 2_200;
 const ACTION_TOAST_MS = 6_000;
 
+function isComposerRoom(target: Element | null): boolean {
+  return !target || target === document.documentElement || target === document.body
+    || (target instanceof HTMLElement && target.dataset.composerRoom === 'true');
+}
+
 /**
  * Like the hint bubbles, the card's corner nearest the orb is tight, so it
  * reads as coming out of the character. The context tray is that corner.
@@ -49,7 +53,7 @@ const TAIL_CORNER_CLASS: Record<DesktopCompanionPanelPlacement, string> = {
  * The desktop companion's quick panel: the home page's own composer in a
  * narrow card beside the orb, or a little below mid-screen when the orb is
  * off. Sending starts a task exactly like the home page does; the card folds
- * into the orb's status strip and the result opens in the main window.
+ * into the orb's status strip; recent tasks reopen in a lightweight result card.
  */
 export default function CompanionComposer() {
   const api = window.electron.desktopCompanion;
@@ -75,7 +79,7 @@ export default function CompanionComposer() {
   const visible = companion?.panelVisible ?? false;
   const placement = companion?.panelPlacement ?? DesktopCompanionPanelPlacement.Left;
   useMeasuredSurface(cardRef, visible);
-  const playExit = useComposerMotion(motionRef, visible, placement);
+  const playExit = useComposerMotion(motionRef, ready && visible, placement);
 
   const showToast = useCallback((value: string | ToastEventDetail) => {
     const detail = typeof value === 'string' ? { message: value } : value;
@@ -154,15 +158,24 @@ export default function CompanionComposer() {
   useEffect(() => {
     const onMove = (event: MouseEvent) => {
       const target = document.elementFromPoint(event.clientX, event.clientY);
-      const passThrough = !target || target === document.documentElement || target === document.body
-        || (target instanceof HTMLElement && target.dataset.composerRoom === 'true');
+      const passThrough = isComposerRoom(target);
       if (passThrough === passThroughRef.current) return;
       passThroughRef.current = passThrough;
       api.setPanelPassThrough(passThrough);
     };
+    // A fast click can arrive before the pass-through IPC takes effect.
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Element && isComposerRoom(event.target)) {
+        void playExit(ComposerExit.Dismiss).then(() => api.hidePanel());
+      }
+    };
     window.addEventListener('mousemove', onMove);
-    return () => window.removeEventListener('mousemove', onMove);
-  }, [api]);
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [api, playExit]);
 
   const submit = useCallback(async (
     prompt: string,
@@ -249,7 +262,7 @@ export default function CompanionComposer() {
         {/* The home page's background sits behind its composer; out on the desktop the card brings its own. */}
         <div
           ref={motionRef}
-          className={`rounded-3xl bg-background shadow-popover ring-1 ring-black/5 dark:ring-white/10 ${TAIL_CORNER_CLASS[placement]}`}
+          className={`rounded-2xl bg-surface shadow-popover ring-1 ring-black/10 transition-shadow focus-within:ring-primary/25 dark:ring-white/10 ${TAIL_CORNER_CLASS[placement]}`}
         >
           <CoworkPromptInput
             ref={inputRef}
@@ -259,10 +272,6 @@ export default function CompanionComposer() {
             size="large"
             narrow
             workingDirectory={start.workingDirectory}
-            onWorkingDirectoryChange={async (dir: string) => {
-              await agentService.updateAgent(start.currentAgentId, { workingDirectory: dir });
-            }}
-            showFolderSelector
             showModelSelector
             showAgentSelector
             onManageSkills={openMain}

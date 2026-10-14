@@ -1,8 +1,6 @@
-import { SpeakerWaveIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useRef, useState } from 'react';
 
 import {
-  type CompanionGaze,
   DesktopCompanionDragPhase,
   DesktopCompanionFileDragPhase,
   DesktopCompanionSize,
@@ -10,43 +8,27 @@ import {
   DesktopCompanionStageKind,
   type DesktopCompanionState,
 } from '../../../shared/desktopCompanion/constants';
-import { isSpeechActive, LanguageTool } from '../../../shared/desktopCompanion/languageTools';
 import { CompanionSkinKind, getCompanionSkin } from '../../../shared/desktopCompanion/skins';
 import { i18nService } from '../../services/i18n';
 import { CoworkSessionStatusValue } from '../../types/cowork';
 import { fileKindsFromDataTransfer, filesToAttachments, hasFiles } from './companionTasks';
 import CompanionCharacter from './mascot/CompanionCharacter';
-import { CompanionMood, companionMood, companionMoodLabelKey, moodCanRest } from './mascot/companionMood';
+import { CompanionMood, companionMood, companionMoodLabelKey } from './mascot/companionMood';
 import { useCompanionSession } from './useCompanionSession';
 
 const CHARACTER_SIZE = 64;
 const DRAG_THRESHOLD = 5;
-/** How long the character stays fully present after the last interaction or news. */
-const REST_DELAY_MS = 4_000;
 
 export default function CompanionOrb({ state }: { state: DesktopCompanionState }) {
   const api = window.electron.desktopCompanion;
   const pointer = useRef<{ x: number; y: number; dragging: boolean } | null>(null);
   const dragDepth = useRef(0);
-  const [hovering, setHovering] = useState(false);
   const [dropHover, setDropHover] = useState(false);
   const [moving, setMoving] = useState(false);
-  const [gaze, setGaze] = useState<CompanionGaze>({ x: 0, y: 0 });
-  const [unseenResult, setUnseenResult] = useState(false);
-  const [rested, setRested] = useState(false);
   const { session, pending } = useCompanionSession(state.sessionId, state.panelVisible);
   const status = session?.status ?? null;
-  const previousStatus = useRef(status);
-
-  // A finished task keeps the "done" face until its result is opened or another task is followed.
-  useEffect(() => {
-    if (previousStatus.current === CoworkSessionStatusValue.Running && status === CoworkSessionStatusValue.Completed) {
-      setUnseenResult(true);
-    }
-    previousStatus.current = status;
-  }, [status]);
-  useEffect(() => { setUnseenResult(false); }, [state.sessionId]);
-  useEffect(() => api.onGaze(setGaze), [api]);
+  const viewedAt = state.result.recentTasks.find(task => task.sessionId === state.sessionId)?.viewedAt ?? 0;
+  const unseenResult = status === CoworkSessionStatusValue.Completed && (session?.updatedAt ?? 0) > viewedAt;
 
   const mood = companionMood({
     status,
@@ -58,22 +40,20 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
     dropStage: state.stage.kind === DesktopCompanionStageKind.Drop,
     hintShowing: state.stage.kind === DesktopCompanionStageKind.Hint,
   });
-  const speaking = isSpeechActive(state.speechStatus);
   const skinKind = getCompanionSkin(state.preferences.skin).kind;
 
-  // News about the followed task brings its status strip back next to the orb.
+  // News brings compact task bubbles back without expanding them or taking focus.
   const taskNews = state.sessionId && (mood === CompanionMood.Done || mood === CompanionMood.Attention || mood === CompanionMood.Error)
     ? `${state.sessionId}:${mood}`
     : '';
   useEffect(() => { if (taskNews) api.taskUpdated(); }, [api, taskNews]);
 
-  // Left alone with nothing to report, the character fades back instead of hiding off screen.
-  const canRest = moodCanRest(mood) && !hovering && !moving && !state.panelVisible && !speaking;
-  useEffect(() => {
-    if (!canRest) return;
-    const timer = setTimeout(() => setRested(true), REST_DELAY_MS);
-    return () => { clearTimeout(timer); setRested(false); };
-  }, [canRest]);
+  const open = async () => {
+    try {
+      if ((await api.getRecentTasks()).length) await api.openResult();
+      else await api.togglePanel();
+    } catch (error) { console.warn('[DesktopCompanion] Failed to open task entry', error); }
+  };
 
   const finishDrag = (event: React.PointerEvent<HTMLButtonElement>, canceled = false) => {
     const start = pointer.current;
@@ -82,7 +62,7 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
     if (!start) return;
     api.drag(start.dragging ? DesktopCompanionDragPhase.End : DesktopCompanionDragPhase.Cancel);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    if (!canceled && !start.dragging) void api.togglePanel();
+    if (!canceled && !start.dragging) open();
   };
 
   const leaveFileDrag = () => {
@@ -93,7 +73,6 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
   return (
     <div
       className="orb-surface"
-      data-resting={canRest && rested}
       onDragEnter={event => {
         if (!hasFiles(event.dataTransfer)) return;
         event.preventDefault();
@@ -132,6 +111,7 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
         className="orb-button"
         data-kind={skinKind}
         data-moving={moving}
+        style={skinKind === CompanionSkinKind.Brand ? { width: DesktopCompanionSize.BrandMark + 8, height: DesktopCompanionSize.BrandMark + 8 } : undefined}
         aria-label={i18nService.t(companionMoodLabelKey(mood))}
         title={i18nService.t(companionMoodLabelKey(mood))}
         onPointerDown={event => {
@@ -151,17 +131,11 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
         }}
         onPointerUp={event => finishDrag(event)}
         onPointerCancel={event => finishDrag(event, true)}
-        onClick={event => { if (event.detail === 0) void api.togglePanel(); }}
-        onMouseEnter={() => setHovering(true)}
-        onMouseLeave={() => setHovering(false)}
+        onClick={event => { if (event.detail === 0) open(); }}
         onContextMenu={event => { event.preventDefault(); void api.showContextMenu(); }}
       >
-        <CompanionCharacter skin={state.preferences.skin} mood={mood} size={skinKind === CompanionSkinKind.Brand ? DesktopCompanionSize.BrandMark : CHARACTER_SIZE} gaze={gaze} />
-        {mood === CompanionMood.Working && skinKind !== CompanionSkinKind.Mascot && <span className="orb-ring" aria-hidden="true" />}
+        <CompanionCharacter skin={state.preferences.skin} mood={mood} size={skinKind === CompanionSkinKind.Brand ? DesktopCompanionSize.BrandMark : CHARACTER_SIZE} />
       </button>
-      {speaking && <button type="button" className="orb-speech"
-        aria-label={i18nService.t('desktopToolsPlayback')} title={i18nService.t('desktopToolsPlayback')}
-        onClick={() => { void api.openLanguageTool({ tool: LanguageTool.Tts }); }}><SpeakerWaveIcon /></button>}
     </div>
   );
 }

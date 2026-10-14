@@ -89,7 +89,7 @@ function HintBubble({ stage }: { stage: HintStage }) {
   );
 }
 
-/** How a task handed to the orb is doing; the result itself opens in the main window. */
+/** How a task handed to the orb is doing; opens the corresponding task in the main window. */
 function TaskStrip({ stage }: { stage: TaskStage }) {
   const api = window.electron.desktopCompanion;
   const [hovering, setHovering] = useState(false);

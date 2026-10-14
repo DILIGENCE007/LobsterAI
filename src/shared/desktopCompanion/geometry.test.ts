@@ -3,7 +3,6 @@ import { describe, expect, test } from 'vitest';
 import { DesktopCompanionPanelPlacement, DesktopCompanionSize } from './constants';
 import {
   clampCompanionBounds,
-  companionGaze,
   companionMenuOpensUp,
   companionStageOpensLeft,
   resolveCompanionBounds,
@@ -212,27 +211,5 @@ describe('selection toolbar placement', () => {
       .toEqual({ x: 300, y: 600, width: 400, height: 260 });
     const up = resolveCompanionToolbarMenuBounds(toolbar, { width: 400, height: 260 }, true, area);
     expect(up.y + up.height).toBe(toolbar.y + toolbar.height);
-  });
-});
-
-describe('gaze', () => {
-  const center = { ...orb, x: 500, y: 500 };
-  const middle = { x: 500 + orb.width / 2, y: 500 + orb.height / 2 };
-
-  test('looks straight ahead when the cursor is on the character', () => {
-    expect(companionGaze(center, { x: middle.x + 2, y: middle.y - 3 })).toEqual({ x: 0, y: 0 });
-  });
-
-  test('turns toward the cursor and saturates far away', () => {
-    expect(companionGaze(center, { x: 2000, y: middle.y - 4 })).toEqual({ x: 1, y: 0 });
-    const near = companionGaze(center, { x: middle.x + 60, y: middle.y });
-    expect(near.x).toBeGreaterThan(0);
-    expect(near.x).toBeLessThan(1);
-  });
-
-  test('quantizes so tiny moves do not flood IPC', () => {
-    const a = companionGaze(center, { x: 900, y: 700 });
-    const b = companionGaze(center, { x: 903, y: 702 });
-    expect(a).toEqual(b);
   });
 });

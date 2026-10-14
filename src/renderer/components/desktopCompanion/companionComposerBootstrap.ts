@@ -4,7 +4,7 @@ import { authService } from '../../services/auth';
 import { configService } from '../../services/config';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
-import { themeService } from '../../services/theme';
+import { synchronizeCompanionTheme } from './companionTheme';
 
 /**
  * Loads what the home composer reads, inside the desktop companion's composer
@@ -14,7 +14,7 @@ import { themeService } from '../../services/theme';
 export async function bootstrapCompanionComposer(): Promise<void> {
   await configService.init();
   applyAppConfigToStore();
-  themeService.initialize();
+  synchronizeCompanionTheme();
   await i18nService.initialize();
   await Promise.all([coworkService.loadConfig(), agentService.loadAgents()]);
   // Signed-in users also get the server's models and quota.
@@ -26,7 +26,7 @@ export async function refreshCompanionComposer(): Promise<void> {
   await configService.init();
   applyAppConfigToStore();
   const config = configService.getConfig();
-  themeService.applyPersistedSelection({ mode: config.theme, themeId: config.themeId });
+  synchronizeCompanionTheme();
   i18nService.setLanguage(config.language, { persist: false });
   await Promise.all([coworkService.loadConfig(), agentService.loadAgents()]);
 }

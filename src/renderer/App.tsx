@@ -176,6 +176,7 @@ const SETTINGS_TAB_SHORTCUT_ACTIONS: Array<{
 }> = [
   { action: ShortcutAction.OpenSettingsGeneral, initialTab: 'general' },
   { action: ShortcutAction.OpenSettingsAppearance, initialTab: 'appearance' },
+  { action: ShortcutAction.OpenSettingsDesktopCompanion, initialTab: OpenSettingsTab.DesktopCompanion },
   { action: ShortcutAction.OpenSettingsAgentEngine, initialTab: 'coworkAgentEngine' },
   { action: ShortcutAction.OpenSettingsModel, initialTab: 'model' },
   { action: ShortcutAction.OpenSettingsIm, initialTab: 'im' },

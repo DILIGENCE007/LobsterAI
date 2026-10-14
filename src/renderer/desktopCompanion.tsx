@@ -5,6 +5,8 @@ import ReactDOM from 'react-dom/client';
 
 import { DesktopCompanionSurface } from '../shared/desktopCompanion/constants';
 import CompanionOrb from './components/desktopCompanion/CompanionOrb';
+import CompanionResultSurface from './components/desktopCompanion/CompanionResultSurface';
+import CompanionScreenshot from './components/desktopCompanion/CompanionScreenshot';
 import CompanionStage from './components/desktopCompanion/CompanionStage';
 import LanguageToolsSurface from './components/desktopCompanion/LanguageToolsSurface';
 import SelectionSurface from './components/desktopCompanion/SelectionSurface';
@@ -29,6 +31,7 @@ function DesktopCompanion() {
       document.documentElement.lang = i18nService.getLanguage();
       document.documentElement.dataset.surface = surface ?? '';
       document.title = i18nService.t(surface === DesktopCompanionSurface.LanguageTools ? 'desktopToolsTitle'
+        : surface === DesktopCompanionSurface.Result ? 'desktopCompanionResultTitle'
         : surface === DesktopCompanionSurface.Panel ? 'desktopCompanionOpenPanel' : 'desktopCompanionTitle');
     };
     const unsubscribe = i18nService.subscribe(() => setLanguageRevision(value => value + 1));
@@ -41,6 +44,7 @@ function DesktopCompanion() {
   switch (surface) {
     case DesktopCompanionSurface.Mascot: return <CompanionOrb state={state} />;
     case DesktopCompanionSurface.Stage: return <CompanionStage state={state} />;
+    case DesktopCompanionSurface.Result: return <CompanionResultSurface state={state} />;
     case DesktopCompanionSurface.Selection: return <SelectionSurface state={state} />;
     case DesktopCompanionSurface.LanguageTools: return <LanguageToolsSurface state={state} />;
     // The quick panel loads companion-composer.html instead.
@@ -48,4 +52,6 @@ function DesktopCompanion() {
   }
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><DesktopCompanion /></React.StrictMode>);
+ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode>
+  {surface === DesktopCompanionSurface.Screenshot ? <CompanionScreenshot /> : <DesktopCompanion />}
+</React.StrictMode>);

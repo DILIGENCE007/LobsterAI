@@ -1,6 +1,6 @@
 import { SpeechStatus } from '../../../shared/desktopCompanion/languageTools';
 
-export interface SpeechPlayback { status: SpeechStatus; index: number; total: number }
+export interface SpeechPlayback { status: SpeechStatus; index: number; completed: number; total: number }
 export interface SpeechAudio {
   src: string;
   playbackRate: number;
@@ -18,7 +18,7 @@ const defaultDeps: SpeechQueueDeps = {
   revokeUrl: url => URL.revokeObjectURL(url),
 };
 
-/** A single audio element, with an ordered queue that survives panel visibility changes. */
+/** A single audio element with an ordered queue; stopping releases all cached audio. */
 export class SpeechQueue {
   private urls: string[] = [];
   private index = 0;
@@ -82,6 +82,6 @@ export class SpeechQueue {
   }
   private setStatus(status: SpeechStatus): void {
     this.status = status;
-    this.changed({ status, index: Math.min(this.index + 1, this.urls.length), total: this.urls.length });
+    this.changed({ status, index: Math.min(this.index + 1, this.urls.length), completed: this.index, total: this.urls.length });
   }
 }

@@ -1,9 +1,12 @@
-import { BrowserWindow, globalShortcut, ipcMain, screen } from 'electron';
+import { BrowserWindow, dialog, globalShortcut, ipcMain, Menu, type MenuItemConstructorOptions, screen } from 'electron';
 import { EventEmitter } from 'events';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { CoworkSessionStatusValue } from '../../renderer/types/cowork';
 import {
   CompanionCapability,
+  DEFAULT_COMPANION_SKIN,
+  DEFAULT_DESKTOP_COMPANION_PREFERENCES,
   DesktopCompanionDragPhase,
   DesktopCompanionIpc,
   DesktopCompanionPanelPlacement,
@@ -14,10 +17,14 @@ import {
   DesktopCompanionStoreKey,
 } from '../../shared/desktopCompanion/constants';
 import { CompanionHintRule } from '../../shared/desktopCompanion/hintPolicy';
-import { LanguageTool, LanguageToolsIpc, SpeechStatus } from '../../shared/desktopCompanion/languageTools';
+import { LanguageTool, LanguageToolCode, LanguageToolsIpc, SpeechCommand, SpeechStatus } from '../../shared/desktopCompanion/languageTools';
+import { COMPANION_RECENT_TASK_LIMIT, COMPANION_RECENT_TASKS_KEY, CompanionResultIpc, type CompanionTaskInfo } from '../../shared/desktopCompanion/results';
+import { CompanionToolbarItem, DEFAULT_COMPANION_TOOLBAR_ORDER } from '../../shared/desktopCompanion/selectionToolbar';
+import { CompanionScreenshotController } from './companionScreenshot';
 import { CompanionSelectionController } from './companionSelection';
 import { DesktopCompanionManager } from './desktopCompanionManager';
 import { FileDragEvent } from './fileDragMonitor';
+import type { CompanionLanguageClient } from './languageToolClient';
 
 const mocks = vi.hoisted(() => ({
   handlers: new Map<string, (event: any, value?: unknown) => any>(),
@@ -31,6 +38,8 @@ vi.mock('electron', async () => {
     destroyed = false;
     visible = false;
     focusable = true;
+    focused = false;
+    enabled = true;
     ignoreMouse = false;
     bounds: any;
     webContents = Object.assign(new EventEmitter(), {
@@ -44,6 +53,9 @@ vi.mock('electron', async () => {
     constructor(options: any = {}) { super(); this.bounds = options; mocks.windows.push(this); }
     isDestroyed() { return this.destroyed; }
     isVisible() { return this.visible; }
+    isFocused() { return this.focused; }
+    isEnabled() { return this.enabled; }
+    getChildWindows() { return []; }
     getBounds() { return this.bounds; }
     setBounds(value: any) { this.bounds = value; }
     setFocusable(value: boolean) { this.focusable = value; }
@@ -51,7 +63,8 @@ vi.mock('electron', async () => {
     show() { this.visible = true; }
     showInactive() { this.visible = true; }
     hide() { this.visible = false; this.emit('hide'); }
-    focus() {}
+    focus() { this.focused = true; this.emit('focus'); }
+    blur() { this.focused = false; this.emit('blur'); }
     setMenu() {}
     setAlwaysOnTop() {}
     setVisibleOnAllWorkspaces() {}
@@ -72,7 +85,8 @@ vi.mock('electron', async () => {
       getDisplayNearestPoint: () => ({ workArea }),
       getDisplayMatching: () => ({ workArea }),
     }),
-    Menu: { buildFromTemplate: () => ({ popup: vi.fn() }) },
+    Menu: { buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })) },
+    dialog: { showMessageBox: vi.fn(async () => ({ response: 0 })) },
     clipboard: { writeText: vi.fn() },
     shell: { openExternal: vi.fn(() => Promise.resolve()) },
     systemPreferences: { isTrustedAccessibilityClient: vi.fn(() => true) },
@@ -100,14 +114,18 @@ let manager: DesktopCompanionManager;
 let main: BrowserWindow;
 let values: Map<string, unknown>;
 let openMain: ReturnType<typeof vi.fn>;
+let openSettings: ReturnType<typeof vi.fn>;
 let foreground: FakeMonitor;
 let fileDrag: FakeMonitor;
+let getTaskInfo: ReturnType<typeof vi.fn<(id: string) => CompanionTaskInfo | null>>;
 
-function create() {
+function create(languageClient?: CompanionLanguageClient) {
   main = new BrowserWindow();
   openMain = vi.fn();
+  openSettings = vi.fn();
   foreground = new FakeMonitor();
   fileDrag = new FakeMonitor();
+  getTaskInfo = vi.fn(id => ({ id, title: `Task ${id}`, status: 'completed', updatedAt: 1000 }));
   manager = new DesktopCompanionManager({
     store: {
       get: <T>(key: string) => values.get(key) as T | undefined,
@@ -116,9 +134,11 @@ function create() {
     preloadPath: '/preload.js',
     rendererDirectory: '/dist',
     getMainWindow: () => main,
+    getTaskInfo,
     onPreferencesChanged: vi.fn(),
     openMain,
-    services: { foreground: foreground as any, fileDrag: fileDrag as any, loadSelectionHook: () => null },
+    openSettings,
+    services: { foreground: foreground as any, fileDrag: fileDrag as any, loadSelectionHook: () => null, languageClient },
   });
 }
 
@@ -131,6 +151,15 @@ function orb() {
   return mocks.windows[1];
 }
 
+function menu(): MenuItemConstructorOptions[] {
+  invoke(DesktopCompanionIpc.ContextMenu);
+  return vi.mocked(Menu.buildFromTemplate).mock.calls.at(-1)![0];
+}
+
+function clickMenu(label: string) {
+  return menu().find(item => item.label === label)!.click!(null as never, undefined, {} as never);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(globalShortcut.register).mockReturnValue(true);
@@ -140,6 +169,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   manager?.dispose();
+  vi.restoreAllMocks();
   ipcMain.removeAllListeners();
   vi.useRealTimers();
 });
@@ -166,41 +196,70 @@ describe('desktop companion lifecycle', () => {
     } finally { anchor.mockRestore(); }
   });
 
-  test('pin keeps a card visible on blur; close stops it and prevents an empty page from reopening', () => {
+  test('pin keeps a read-aloud card playing on blur; an unpinned card stops when it disappears', () => {
     create();
     invoke(LanguageToolsIpc.Open, { tool: LanguageTool.Tts });
     expect(mocks.windows).toHaveLength(1);
     invoke(LanguageToolsIpc.Open, { tool: LanguageTool.Tts, text: 'Read this' });
     const window = mocks.windows[1];
+    invoke(LanguageToolsIpc.SpeechStatus, SpeechStatus.Playing, window.webContents);
     invoke(LanguageToolsIpc.Pin, true, window.webContents);
     window.emit('blur');
     expect(window.visible).toBe(true);
-    invoke(LanguageToolsIpc.SpeechStatus, SpeechStatus.Playing, window.webContents);
+    expect(manager.getState().speechStatus).toBe(SpeechStatus.Playing);
     invoke(LanguageToolsIpc.Pin, false, window.webContents);
     window.emit('blur');
     expect(window.visible).toBe(false);
-    expect(manager.getState().speechStatus).toBe(SpeechStatus.Playing);
-    invoke(LanguageToolsIpc.Close, undefined, window.webContents);
     expect(manager.getState().speechStatus).toBe(SpeechStatus.Idle);
+    expect(window.webContents.send).toHaveBeenCalledWith(LanguageToolsIpc.Reset);
     expect(invoke(LanguageToolsIpc.GetInput, undefined, window.webContents)).toBeNull();
     invoke(LanguageToolsIpc.Open, { tool: LanguageTool.Tts });
     window.emit('ready-to-show');
     expect(window.visible).toBe(false);
   });
 
-  test('language tools retain their window and playback when hidden, but reset on account changes', () => {
+  test.each([SpeechStatus.Loading, SpeechStatus.Playing, SpeechStatus.Paused])('hiding a %s read-aloud card cancels synthesis and cannot resume playback', status => {
+    const client = { reset: vi.fn(), start: vi.fn(() => ({ success: true })) };
+    create(client as unknown as CompanionLanguageClient);
+    invoke(LanguageToolsIpc.Open, { tool: LanguageTool.Tts, text: 'Read this' });
+    const window = mocks.windows[1];
+    invoke(LanguageToolsIpc.SpeechStatus, status, window.webContents);
+    const request = { tool: LanguageTool.Tts, text: 'Read this', requestId: 'pending-speech' };
+    expect(invoke(LanguageToolsIpc.Start, request, window.webContents)).toEqual({ success: true });
+    window.webContents.send.mockClear();
+    // Also cover native/system hiding, which does not use the close button.
+    window.hide();
+    expect(client.reset).toHaveBeenCalledOnce();
+    expect(window.webContents.send).toHaveBeenCalledWith(LanguageToolsIpc.Reset);
+    expect(manager.getState().speechStatus).toBe(SpeechStatus.Idle);
+    expect(invoke(LanguageToolsIpc.GetInput, undefined, window.webContents)).toBeNull();
+    expect(invoke(LanguageToolsIpc.Start, request, window.webContents)).toEqual({ success: false, code: LanguageToolCode.Unavailable });
+    expect(client.start).toHaveBeenCalledOnce();
+    invoke(LanguageToolsIpc.SpeechStatus, SpeechStatus.Playing, window.webContents);
+    invoke(LanguageToolsIpc.SpeechCommand, SpeechCommand.Resume);
+    expect(manager.getState().speechStatus).toBe(SpeechStatus.Idle);
+    expect(window.webContents.send).not.toHaveBeenCalledWith(LanguageToolsIpc.SpeechCommand, SpeechCommand.Resume);
+    invoke(LanguageToolsIpc.Open, { tool: LanguageTool.Tts });
+    expect(window.visible).toBe(false);
+    expect(menu().some(item => item.label === 'desktopToolsPlayback')).toBe(false);
+  });
+
+  test('closing a read-aloud card and resetting an account both stop playback', () => {
     create();
     invoke(LanguageToolsIpc.Open, { tool: LanguageTool.Tts, text: 'Read this' });
     const window = mocks.windows[1];
     expect(window.visible).toBe(true);
     invoke(LanguageToolsIpc.SpeechStatus, SpeechStatus.Playing, window.webContents);
-    invoke(LanguageToolsIpc.Hide, undefined, window.webContents);
+    invoke(LanguageToolsIpc.Close, undefined, window.webContents);
     expect(window.visible).toBe(false);
-    expect(manager.getState().speechStatus).toBe(SpeechStatus.Playing);
-    invoke(LanguageToolsIpc.Open, { tool: LanguageTool.Tts });
+    expect(manager.getState().speechStatus).toBe(SpeechStatus.Idle);
+    expect(invoke(LanguageToolsIpc.GetInput, undefined, window.webContents)).toBeNull();
+    invoke(LanguageToolsIpc.Open, { tool: LanguageTool.Tts, text: 'Read a new selection' });
     expect(mocks.windows).toHaveLength(2);
     expect(window.visible).toBe(true);
+    invoke(LanguageToolsIpc.SpeechStatus, SpeechStatus.Playing, window.webContents);
     manager.resetLanguageTools();
+    expect(window.visible).toBe(false);
     expect(manager.getState().speechStatus).toBe(SpeechStatus.Idle);
     expect(window.webContents.send).toHaveBeenCalledWith(LanguageToolsIpc.Reset);
   });
@@ -211,6 +270,26 @@ describe('desktop companion lifecycle', () => {
     expect(() => invoke(LanguageToolsIpc.SpeechStatus, SpeechStatus.Playing)).toThrow('Invalid language tools IPC sender');
     const unknown = new BrowserWindow();
     expect(() => invoke(LanguageToolsIpc.Open, { tool: LanguageTool.Tts }, unknown.webContents)).toThrow('Unknown desktop companion IPC sender');
+  });
+
+  test('the orb menu focuses visible playback and hiding it removes the playback entry', () => {
+    create();
+    expect(menu().some(item => item.label === 'desktopToolsPlayback')).toBe(false);
+    invoke(LanguageToolsIpc.Open, { tool: LanguageTool.Tts, text: 'Keep reading this text' });
+    const window = mocks.windows[1];
+    const input = invoke(LanguageToolsIpc.GetInput, undefined, window.webContents);
+    for (const status of [SpeechStatus.Loading, SpeechStatus.Playing, SpeechStatus.Paused]) {
+      invoke(LanguageToolsIpc.SpeechStatus, status, window.webContents);
+      clickMenu('desktopToolsPlayback');
+      expect(window.visible).toBe(true);
+      expect(mocks.windows).toHaveLength(2);
+      expect(invoke(LanguageToolsIpc.GetInput, undefined, window.webContents)).toEqual(input);
+      expect(manager.getState().speechStatus).toBe(status);
+    }
+    invoke(LanguageToolsIpc.Hide, undefined, window.webContents);
+    expect(window.visible).toBe(false);
+    expect(manager.getState().speechStatus).toBe(SpeechStatus.Idle);
+    expect(menu().some(item => item.label === 'desktopToolsPlayback')).toBe(false);
   });
 
   test('a new profile creates no floating window and opening a temporary panel does not opt in', () => {
@@ -260,9 +339,43 @@ describe('desktop companion lifecycle', () => {
       dragAssist: true,
       contextHints: true,
       selectionExcludedApps: [],
+      selectionToolbarOrder: [...DEFAULT_COMPANION_TOOLBAR_ORDER],
     });
     // Without the native selection hook the toolbar reports itself unsupported instead of failing.
     expect(manager.getState().capabilities.selection).toBe(CompanionCapability.Unsupported);
+    expect(globalShortcut.register).not.toHaveBeenCalled();
+  });
+
+  test('the default global shortcut opens and closes the panel while the orb is off', () => {
+    create();
+    expect(manager.getState().preferences.enabled).toBe(false);
+    expect(globalShortcut.register).toHaveBeenCalledWith(DEFAULT_DESKTOP_COMPANION_PREFERENCES.shortcut, expect.any(Function));
+    const toggle = vi.mocked(globalShortcut.register).mock.calls[0][1];
+    toggle();
+    expect(manager.getState().panelVisible).toBe(true);
+    toggle();
+    expect(manager.getState().panelVisible).toBe(false);
+    expect(manager.getState().preferences.enabled).toBe(false);
+  });
+
+  test('a stored custom shortcut is registered instead of the default', () => {
+    const shortcut = 'Control+Shift+J';
+    values.set(DesktopCompanionStoreKey.Preferences, { shortcut });
+    create();
+    expect(manager.getState().preferences.shortcut).toBe(shortcut);
+    expect(globalShortcut.register).toHaveBeenCalledExactlyOnceWith(shortcut, expect.any(Function));
+  });
+
+  test('clearing the default shortcut unregisters it and persists the disabled binding', () => {
+    create();
+    expect(manager.setPreferences({ shortcut: '' }).success).toBe(true);
+    expect(globalShortcut.unregister).toHaveBeenCalledWith(DEFAULT_DESKTOP_COMPANION_PREFERENCES.shortcut);
+    expect(values.get(DesktopCompanionStoreKey.Preferences)).toMatchObject({ shortcut: '' });
+    manager.dispose();
+    vi.mocked(globalShortcut.register).mockClear();
+    create();
+    expect(globalShortcut.register).not.toHaveBeenCalled();
+    expect(manager.getState().preferences.shortcut).toBe('');
   });
 
   test('rejects unknown skins and keeps a short, clean exclusion list', () => {
@@ -272,19 +385,150 @@ describe('desktop companion lifecycle', () => {
     expect(manager.getState().preferences.selectionExcludedApps).toEqual(['com.google.Chrome']);
   });
 
-  test('the brand mark gets a smaller orb, and switching skins keeps the orb centered', () => {
+  test('saves toolbar order, repairs invalid entries and retains it on restart', () => {
+    create();
+    const result = manager.setPreferences({ selectionToolbarOrder: [CompanionToolbarItem.Ask, CompanionToolbarItem.Copy, CompanionToolbarItem.Ask] });
+    const expected = [CompanionToolbarItem.Ask, CompanionToolbarItem.Copy, ...DEFAULT_COMPANION_TOOLBAR_ORDER.filter(item => item !== CompanionToolbarItem.Ask && item !== CompanionToolbarItem.Copy)];
+    expect(result.success).toBe(true);
+    expect(result.state.preferences.selectionToolbarOrder).toEqual(expected);
+    expect(values.get(DesktopCompanionStoreKey.Preferences)).toMatchObject({ selectionToolbarOrder: expected });
+    // Renderer snapshots must not be able to mutate the persisted order.
+    result.state.preferences.selectionToolbarOrder.reverse();
+    expect(manager.getState().preferences.selectionToolbarOrder).toEqual(expected);
+    manager.dispose();
+    create();
+    expect(manager.getState().preferences.selectionToolbarOrder).toEqual(expected);
+  });
+
+  test('a saved retired skin falls back to the brand and is absent from the skin menu', () => {
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true, skin: 'qianqian', contextHints: false });
+    create();
+    expect(manager.getState().preferences).toMatchObject({ skin: DEFAULT_COMPANION_SKIN, contextHints: false });
+    expect(orb().bounds).toMatchObject(DesktopCompanionSize.BrandOrb);
+    const skins = menu().find(item => item.label === 'desktopCompanionChangeSkin')!.submenu as MenuItemConstructorOptions[];
+    expect(skins.map(item => item.label)).toEqual([
+      'desktopCompanionSkinLobster', 'desktopCompanionSkinRuanruanxia', 'desktopCompanionSkinXingxingxing',
+      'desktopCompanionSkinShaee', 'desktopCompanionSkinZhangduoduo', 'desktopCompanionSkinJingyiming',
+      'desktopCompanionSkinLiuliuyu', 'desktopCompanionSkinDanpapa', 'desktopCompanionSkinQingqingpiao',
+    ]);
+    expect(skins[0].checked).toBe(true);
+  });
+
+  test('the brand mark fits its orb, and switching skins keeps the orb centered', () => {
     values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
     values.set(DesktopCompanionStoreKey.Position, { x: 600, y: 400 });
     create();
     const center = () => ({ x: orb().bounds.x + orb().bounds.width / 2, y: orb().bounds.y + orb().bounds.height / 2 });
     expect(orb().bounds).toMatchObject(DesktopCompanionSize.BrandOrb);
+    expect(DesktopCompanionSize.BrandMark).toBe(40);
+    expect(orb().bounds.width).toBeGreaterThan(DesktopCompanionSize.BrandMark + 8);
     const start = center();
-    manager.setPreferences({ skin: 'qianqian' });
+    manager.setPreferences({ skin: 'ruanruanxia' });
     expect(orb().bounds).toMatchObject(DesktopCompanionSize.Orb);
     expect(center()).toEqual(start);
     manager.setPreferences({ skin: 'lobster' });
     expect(orb().bounds).toMatchObject(DesktopCompanionSize.BrandOrb);
     expect(center()).toEqual(start);
+  });
+
+  test('the context menu keeps desktop actions and settings without task or feature-switch entries', () => {
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    create();
+    expect(menu().filter(item => item.type !== 'separator').map(item => item.label)).toEqual([
+      'desktopCompanionOpenApp', 'desktopCompanionOpenPanel', 'desktopCompanionScreenshot',
+      'desktopCompanionChangeSkin', 'desktopCompanionSnoozeToday', 'desktopCompanionSettings',
+    ]);
+    clickMenu('desktopCompanionOpenPanel');
+    expect(manager.getState().panelVisible).toBe(true);
+    clickMenu('desktopCompanionOpenApp');
+    expect(manager.getState().panelVisible).toBe(false);
+    expect(openMain).toHaveBeenCalledWith(null);
+    clickMenu('desktopCompanionSnoozeToday');
+    expect(manager.getState().snooze?.mode).toBe(DesktopCompanionSnoozeMode.Quiet);
+    clickMenu('desktopCompanionWake');
+    expect(manager.getState().snooze).toBeNull();
+    clickMenu('desktopCompanionSettings');
+    expect(openSettings).toHaveBeenCalledOnce();
+  });
+
+  test('a screenshot opens the panel with the crop and keeps the unsent prompt and attachments', async () => {
+    const attachment = { path: '/tmp/screenshot.png', name: 'Screenshot.png', isImage: true };
+    vi.spyOn(CompanionScreenshotController.prototype, 'capture').mockResolvedValue(attachment);
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    create();
+    invoke(DesktopCompanionIpc.SetDraft, {
+      prompt: 'Explain this', workingDirectory: '/tasks', attachments: [{ path: '/tasks/a.pdf', name: 'a.pdf' }],
+    });
+    await clickMenu('desktopCompanionScreenshot');
+    expect(manager.getState()).toMatchObject({
+      panelVisible: true, sessionId: null,
+      draft: { prompt: 'Explain this', workingDirectory: '/tasks', attachments: [{ path: '/tasks/a.pdf' }, attachment] },
+    });
+    expect(openMain).not.toHaveBeenCalled();
+  });
+
+  test('canceling capture keeps the draft and restores the panel, and a second click cannot start another capture', async () => {
+    let finish!: (value: null) => void;
+    const capture = vi.spyOn(CompanionScreenshotController.prototype, 'capture').mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    create();
+    manager.togglePanel();
+    invoke(DesktopCompanionIpc.SetDraft, { prompt: 'Keep this', attachments: [] });
+    const draft = manager.getState().draft;
+    const pending = clickMenu('desktopCompanionScreenshot');
+    await clickMenu('desktopCompanionScreenshot');
+    manager.togglePanel();
+    expect(capture).toHaveBeenCalledOnce();
+    expect(manager.getState().panelVisible).toBe(false);
+    finish(null);
+    await pending;
+    expect(manager.getState().draft).toEqual(draft);
+    expect(manager.getState().panelVisible).toBe(true);
+  });
+
+  test('capture failure restores the panel and explains the failure', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(CompanionScreenshotController.prototype, 'capture').mockRejectedValue(new Error('Permission denied'));
+    create();
+    manager.togglePanel();
+    await clickMenu('desktopCompanionScreenshot');
+    expect(manager.getState().panelVisible).toBe(true);
+    expect(dialog.showMessageBox).toHaveBeenCalledWith({ type: 'error', message: 'desktopCompanionScreenshotFailed' });
+  });
+
+  test('a full draft does not start a screenshot that would silently lose an attachment', async () => {
+    const capture = vi.spyOn(CompanionScreenshotController.prototype, 'capture');
+    create();
+    invoke(DesktopCompanionIpc.SetDraft, {
+      attachments: Array.from({ length: 20 }, (_, index) => ({ path: `/tmp/${index}.png`, name: `${index}.png` })),
+    });
+    await clickMenu('desktopCompanionScreenshot');
+    expect(capture).not.toHaveBeenCalled();
+    expect(manager.getState().draft.attachments).toHaveLength(20);
+    expect(dialog.showMessageBox).toHaveBeenCalledWith({ type: 'info', message: 'desktopCompanionScreenshotFull' });
+  });
+
+  test('identifies only the live composer web contents across window recreation', () => {
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    create();
+    expect(manager.isComposerWebContents(main.webContents)).toBe(false);
+    expect(manager.isComposerWebContents(orb().webContents)).toBe(false);
+
+    manager.togglePanel();
+    const panel = mocks.windows.at(-1)!;
+    expect(manager.isComposerWebContents(panel.webContents)).toBe(true);
+    expect(manager.isComposerWebContents(new BrowserWindow().webContents)).toBe(false);
+
+    manager.hidePanel();
+    panel.destroy();
+    expect(manager.isComposerWebContents(panel.webContents)).toBe(false);
+    manager.togglePanel();
+    const recreated = mocks.windows.at(-1)!;
+    expect(manager.isComposerWebContents(panel.webContents)).toBe(false);
+    expect(manager.isComposerWebContents(recreated.webContents)).toBe(true);
+
+    manager.dispose();
+    expect(manager.isComposerWebContents(recreated.webContents)).toBe(false);
   });
 
   test('hiding the panel flushes unsent materials and keeps the window alive', () => {
@@ -300,6 +544,61 @@ describe('desktop companion lifecycle', () => {
       prompt: 'Summarize this document', attachments: [{ path: '/tasks/notes.pdf' }],
     });
     expect(mocks.windows[1].destroyed).toBe(false);
+  });
+
+  test('clicking outside dismisses the panel and reopening reuses the draft and window', () => {
+    vi.useFakeTimers();
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows[1];
+    invoke(DesktopCompanionIpc.SetDraft, { prompt: 'Keep my draft', attachments: [{ path: '/tmp/a.pdf', name: 'a.pdf' }] });
+    panel.blur();
+    vi.advanceTimersByTime(200);
+    expect(manager.getState().panelVisible).toBe(false);
+    expect(panel.visible).toBe(false);
+    expect(values.get(DesktopCompanionStoreKey.Draft)).toMatchObject({ prompt: 'Keep my draft', attachments: [{ path: '/tmp/a.pdf' }] });
+    manager.togglePanel();
+    expect(mocks.windows).toHaveLength(2);
+    expect(panel.visible).toBe(true);
+    expect(panel.focused).toBe(true);
+  });
+
+  test('a native file sheet keeps the panel open and outside dismissal resumes after it closes', () => {
+    vi.useFakeTimers();
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows[1];
+    panel.blur();
+    panel.emit('sheet-begin');
+    vi.advanceTimersByTime(200);
+    expect(manager.getState().panelVisible).toBe(true);
+    panel.emit('sheet-end');
+    panel.focus();
+    panel.blur();
+    vi.advanceTimersByTime(200);
+    expect(manager.getState().panelVisible).toBe(false);
+  });
+
+  test('a native modal or a brief focus handoff does not dismiss the panel', () => {
+    vi.useFakeTimers();
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows[1];
+    panel.enabled = false;
+    panel.blur();
+    vi.advanceTimersByTime(200);
+    expect(manager.getState().panelVisible).toBe(true);
+    panel.enabled = true;
+    panel.focus();
+    panel.blur();
+    panel.focus();
+    vi.advanceTimersByTime(200);
+    expect(manager.getState().panelVisible).toBe(true);
+    panel.blur();
+    manager.hidePanel();
+    manager.togglePanel();
+    vi.advanceTimersByTime(200);
+    expect(manager.getState().panelVisible).toBe(true);
   });
 
   test('an occupied shortcut keeps the working shortcut and can still disable the companion', () => {
@@ -449,11 +748,12 @@ describe('stage: hints and drops', () => {
     fileDrag.emit(FileDragEvent.Start, { paths: ['/tmp/a.pdf'] });
     invoke(DesktopCompanionIpc.StageCommand, { type: DesktopCompanionStageCommandType.DropStarted, sessionId: 'session-9' });
     expect(manager.getState().sessionId).toBe('session-9');
-    // The status strip takes the drop zone's place so the task can be followed.
-    expect(manager.getState().stage).toMatchObject({ kind: DesktopCompanionStageKind.Task, sessionId: 'session-9' });
+    expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
+    expect(manager.getState().result).toMatchObject({ visible: true });
+    expect(manager.getState().result.recentTasks[0].sessionId).toBe('session-9');
   });
 
-  test('a task sent from the composer hides it; the orb follows the task and its strip opens the result', () => {
+  test('a task sent from the composer shows an inactive bubble which opens its task in the main window', () => {
     values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
     create();
     manager.togglePanel();
@@ -471,11 +771,293 @@ describe('stage: hints and drops', () => {
     invoke(DesktopCompanionIpc.TaskStarted, 'session-7', panel.webContents);
     expect(manager.getState().panelVisible).toBe(false);
     expect(manager.getState().sessionId).toBe('session-7');
-    expect(manager.getState().stage).toMatchObject({ kind: DesktopCompanionStageKind.Task, sessionId: 'session-7' });
-    invoke(DesktopCompanionIpc.StageCommand, { type: DesktopCompanionStageCommandType.TaskOpen });
-    expect(openMain).toHaveBeenCalledWith('session-7');
-    expect(manager.getState().sessionId).toBeNull();
+    const result = mocks.windows.at(-1);
+    expect(manager.getState().result).toMatchObject({ visible: true });
+    expect(result.focused).toBe(false);
+    expect(result.focusable).toBe(false);
+    const windowCount = mocks.windows.length;
+    invoke(CompanionResultIpc.Open, 'session-7', result.webContents);
+    expect(openMain).toHaveBeenCalledExactlyOnceWith('session-7');
+    expect(manager.getState().sessionId).toBe('session-7');
+    expect(manager.getState().result.visible).toBe(false);
+    expect(manager.getState().result.recentTasks).toEqual([{ sessionId: 'session-7', viewedAt: 0 }]);
     expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
+    expect(result.visible).toBe(false);
+    expect(result.focused).toBe(false);
+    expect(result.focusable).toBe(false);
+    invoke(CompanionResultIpc.Open, undefined, result.webContents);
+    expect(manager.getState().result).toMatchObject({ visible: true });
+    expect(result.focusable).toBe(true);
+    expect(result.focused).toBe(true);
+    expect(mocks.windows).toHaveLength(windowCount);
+  });
+
+  test('recent tasks survive reopening and manager restart without enabling the orb', () => {
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows.at(-1);
+    invoke(DesktopCompanionIpc.TaskStarted, 'first', panel.webContents);
+    invoke(DesktopCompanionIpc.TaskStarted, 'second', panel.webContents);
+    invoke(CompanionResultIpc.Open, 'first');
+    expect(manager.getState().preferences.enabled).toBe(false);
+    expect(openMain).toHaveBeenCalledExactlyOnceWith('first');
+    manager.markSessionViewed('first');
+    manager.dispose();
+    create();
+    expect(manager.getState().result.recentTasks).toEqual([
+      { sessionId: 'second', viewedAt: 0 }, { sessionId: 'first', viewedAt: 1000 },
+    ]);
+    invoke(CompanionResultIpc.Open);
+    expect(manager.getState().result).toMatchObject({ visible: true });
+    expect(invoke(CompanionResultIpc.Recent).map((task: CompanionTaskInfo) => task.id)).toEqual(['second']);
+  });
+
+  test('opening a task waits for the main-window read before dismissing its unread result permanently', () => {
+    values.set(DesktopCompanionStoreKey.Session, 'task');
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    create();
+    invoke(CompanionResultIpc.Open);
+    const result = mocks.windows.at(-1);
+    invoke(CompanionResultIpc.Open, 'task', result.webContents);
+    expect(openMain).toHaveBeenCalledExactlyOnceWith('task');
+    expect(manager.getState().result.visible).toBe(false);
+    expect(invoke(CompanionResultIpc.Recent)).toHaveLength(1);
+
+    manager.markSessionViewed('task');
+    expect(invoke(CompanionResultIpc.Recent)).toEqual([]);
+    ipcMain.emit(DesktopCompanionIpc.TaskUpdated, { sender: orb().webContents, senderFrame: orb().webContents.mainFrame });
+    expect(manager.getState().result.visible).toBe(false);
+    manager.dispose();
+    create();
+    invoke(CompanionResultIpc.Open);
+    expect(manager.getState().result.visible).toBe(false);
+    expect(invoke(CompanionResultIpc.Recent)).toEqual([]);
+  });
+
+  test.each([CoworkSessionStatusValue.Running, CoworkSessionStatusValue.Completed])('closing a %s card removes only its floating record and keeps other cards open', status => {
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    values.set(DesktopCompanionStoreKey.Session, 'closed');
+    values.set(COMPANION_RECENT_TASKS_KEY, [{ sessionId: 'closed', viewedAt: 0 }, { sessionId: 'keep', viewedAt: 0 }]);
+    create();
+    getTaskInfo.mockImplementation(id => ({ id, title: id, status, updatedAt: 1000 }));
+    invoke(CompanionResultIpc.Open);
+    const result = mocks.windows.at(-1);
+    invoke(CompanionResultIpc.Dismiss, 'closed', result.webContents);
+
+    expect(invoke(CompanionResultIpc.Recent).map((task: CompanionTaskInfo) => task.id)).toEqual(['keep']);
+    expect(values.get(COMPANION_RECENT_TASKS_KEY)).toEqual([{ sessionId: 'keep', viewedAt: 0 }]);
+    expect(manager.getState().result.visible).toBe(true);
+    expect(result.visible).toBe(true);
+    expect(manager.getState().sessionId).toBe('closed');
+    expect(getTaskInfo('closed')?.status).toBe(status);
+    expect(openMain).not.toHaveBeenCalled();
+
+    // Later task updates, reopening the list and restarting must not restore the closed card.
+    ipcMain.emit(DesktopCompanionIpc.TaskUpdated, { sender: orb().webContents, senderFrame: orb().webContents.mainFrame });
+    invoke(CompanionResultIpc.Hide, undefined, result.webContents);
+    invoke(CompanionResultIpc.Open);
+    expect(invoke(CompanionResultIpc.Recent).map((task: CompanionTaskInfo) => task.id)).toEqual(['keep']);
+    manager.dispose();
+    create();
+    expect(manager.getState().result.recentTasks).toEqual([{ sessionId: 'keep', viewedAt: 0 }]);
+  });
+
+  test('closing the last card hides the empty surface without migrating the old task back after restart', () => {
+    values.set(DesktopCompanionStoreKey.Session, 'last');
+    create();
+    invoke(CompanionResultIpc.Open);
+    const result = mocks.windows.at(-1);
+    invoke(CompanionResultIpc.Dismiss, 'last', result.webContents);
+    expect(manager.getState().result).toMatchObject({ visible: false, recentTasks: [] });
+    expect(values.get(COMPANION_RECENT_TASKS_KEY)).toEqual([]);
+    expect(result.visible).toBe(false);
+    expect(getTaskInfo('last')).not.toBeNull();
+    manager.dispose();
+    create();
+    invoke(CompanionResultIpc.Open);
+    expect(manager.getState().result).toMatchObject({ visible: false, recentTasks: [] });
+  });
+
+  test('invalid or repeated dismissals leave the other floating records unchanged', () => {
+    values.set(COMPANION_RECENT_TASKS_KEY, [{ sessionId: 'keep', viewedAt: 0 }]);
+    create();
+    invoke(CompanionResultIpc.Open);
+    const result = mocks.windows.at(-1);
+    for (const id of ['already-closed', '', null, 42, {}]) invoke(CompanionResultIpc.Dismiss, id, result.webContents);
+    expect(manager.getState().result).toMatchObject({ visible: true, recentTasks: [{ sessionId: 'keep', viewedAt: 0 }] });
+  });
+
+  test('a newly running turn and its unread completion reappear after an earlier result was read', () => {
+    values.set(COMPANION_RECENT_TASKS_KEY, [{ sessionId: 'task', viewedAt: 1000 }]);
+    create();
+    expect(invoke(CompanionResultIpc.Recent)).toEqual([]);
+    getTaskInfo.mockReturnValue({ id: 'task', title: 'Task', status: CoworkSessionStatusValue.Running, updatedAt: 1000 });
+    expect(invoke(CompanionResultIpc.Recent)).toHaveLength(1);
+    getTaskInfo.mockReturnValue({ id: 'task', title: 'Task', status: CoworkSessionStatusValue.Completed, updatedAt: 2000 });
+    expect(invoke(CompanionResultIpc.Recent)).toMatchObject([{ id: 'task', viewedAt: 1000, updatedAt: 2000 }]);
+  });
+
+  test('reading in the main window removes the result and hides an empty activity card', () => {
+    values.set(COMPANION_RECENT_TASKS_KEY, [{ sessionId: 'task', viewedAt: 0 }, { sessionId: 'running', viewedAt: 0 }]);
+    create();
+    getTaskInfo.mockImplementation(id => ({ id, title: id, updatedAt: 1000,
+      status: id === 'running' ? CoworkSessionStatusValue.Running : CoworkSessionStatusValue.Completed }));
+    invoke(CompanionResultIpc.Open);
+    manager.markSessionViewed('task');
+    manager.markSessionViewed('running');
+    expect(invoke(CompanionResultIpc.Recent).map((task: CompanionTaskInfo) => task.id)).toEqual(['running']);
+    expect(manager.getState().result.visible).toBe(true);
+    getTaskInfo.mockImplementation(id => ({ id, title: id, updatedAt: 2000, status: CoworkSessionStatusValue.Completed }));
+    manager.markSessionViewed('task');
+    manager.markSessionViewed('running');
+    expect(manager.getState().result.visible).toBe(false);
+    expect(invoke(CompanionResultIpc.Recent)).toEqual([]);
+  });
+
+  test('keeps the activity list compact when a task opens in the main window', () => {
+    values.set(COMPANION_RECENT_TASKS_KEY, [{ sessionId: 'first', viewedAt: 0 }, { sessionId: 'second', viewedAt: 0 }]);
+    create();
+    invoke(CompanionResultIpc.Open);
+    const result = mocks.windows.at(-1);
+    expect(result.bounds.width).toBe(DesktopCompanionSize.ResultCompactWidth);
+    invoke(CompanionResultIpc.Open, 'first', result.webContents);
+    expect(openMain).toHaveBeenCalledExactlyOnceWith('first');
+    expect(result.visible).toBe(false);
+    expect(result.bounds.width).toBe(DesktopCompanionSize.ResultCompactWidth);
+    manager.markSessionViewed('first');
+    invoke(CompanionResultIpc.Open, undefined, result.webContents);
+    expect(result.bounds.width).toBe(DesktopCompanionSize.ResultCompactWidth);
+    expect(invoke(CompanionResultIpc.Recent).map((task: CompanionTaskInfo) => task.id)).toEqual(['second']);
+    ipcMain.emit(DesktopCompanionIpc.ResizeSurface, { sender: result.webContents, senderFrame: result.webContents.mainFrame }, { width: 900, height: 170 });
+    expect(result.bounds.width).toBe(DesktopCompanionSize.ResultCompactWidth);
+  });
+
+  test('recent tasks are bounded, deduplicated, and remove deleted sessions', () => {
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows.at(-1);
+    for (let index = 0; index < COMPANION_RECENT_TASK_LIMIT + 2; index++) {
+      invoke(DesktopCompanionIpc.TaskStarted, `session-${index}`, panel.webContents);
+    }
+    invoke(DesktopCompanionIpc.TaskStarted, 'session-5', panel.webContents);
+    expect(manager.getState().result.recentTasks).toHaveLength(COMPANION_RECENT_TASK_LIMIT);
+    expect(manager.getState().result.recentTasks[0].sessionId).toBe('session-5');
+    getTaskInfo.mockImplementation(id => id === 'session-5' ? null : { id, title: id, status: 'completed', updatedAt: 1000 });
+    expect(invoke(CompanionResultIpc.Recent)).toHaveLength(COMPANION_RECENT_TASK_LIMIT - 1);
+    expect(values.get(COMPANION_RECENT_TASKS_KEY)).not.toContainEqual({ sessionId: 'session-5', viewedAt: 0 });
+    invoke(CompanionResultIpc.Open, 'not-recorded');
+    expect(manager.getState().result.visible).toBe(false);
+  });
+
+  test('migrates the previously followed task and keeps new results unread until the main window reads them', () => {
+    values.set(DesktopCompanionStoreKey.Session, 'previous');
+    create();
+    expect(manager.getState().result.recentTasks).toEqual([{ sessionId: 'previous', viewedAt: 0 }]);
+    invoke(CompanionResultIpc.Open, 'previous');
+    expect(manager.getState().result.recentTasks[0].viewedAt).toBe(0);
+    manager.markSessionViewed('previous');
+    expect(manager.getState().result.recentTasks[0].viewedAt).toBe(1000);
+    getTaskInfo.mockReturnValue({ id: 'previous', title: 'Previous', status: CoworkSessionStatusValue.Completed, updatedAt: 2000 });
+    invoke(CompanionResultIpc.Open, 'previous');
+    manager.markSessionViewed('another');
+    expect(invoke(CompanionResultIpc.Recent)).toMatchObject([{ id: 'previous', viewedAt: 1000, updatedAt: 2000 }]);
+    manager.markSessionViewed('previous');
+    expect(manager.getState().result.recentTasks[0].viewedAt).toBe(2000);
+  });
+
+  test.each(Object.values(CoworkSessionStatusValue))('opens the clicked %s task instead of the currently followed task', status => {
+    values.set(DesktopCompanionStoreKey.Session, 'latest');
+    values.set(COMPANION_RECENT_TASKS_KEY, [{ sessionId: 'latest', viewedAt: 0 }, { sessionId: 'clicked', viewedAt: 0 }]);
+    create();
+    getTaskInfo.mockImplementation(id => ({ id, title: id, status, updatedAt: 1000 }));
+    manager.togglePanel();
+    const panel = mocks.windows.at(-1);
+    invoke(CompanionResultIpc.Open);
+    const result = mocks.windows.at(-1);
+    const windowCount = mocks.windows.length;
+    invoke(CompanionResultIpc.Open, 'clicked', result.webContents);
+    expect(openMain).toHaveBeenCalledExactlyOnceWith('clicked');
+    expect(manager.getState().sessionId).toBe('latest');
+    expect(manager.getState().result.visible).toBe(false);
+    expect(panel.visible).toBe(false);
+    expect(result.visible).toBe(false);
+    expect(mocks.windows).toHaveLength(windowCount);
+    expect(manager.getState().result.recentTasks).toHaveLength(2);
+  });
+
+  test('another task finishing keeps the compact task list without opening the main window', () => {
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    values.set(COMPANION_RECENT_TASKS_KEY, [{ sessionId: 'first', viewedAt: 0 }, { sessionId: 'second', viewedAt: 0 }]);
+    values.set(DesktopCompanionStoreKey.Session, 'second');
+    create();
+    invoke(CompanionResultIpc.Open);
+    const result = mocks.windows.at(-1);
+    invoke(CompanionResultIpc.Pin, true, result.webContents);
+    ipcMain.emit(DesktopCompanionIpc.TaskUpdated, { sender: orb().webContents, senderFrame: orb().webContents.mainFrame });
+    expect(manager.getState().result).toMatchObject({ visible: true, pinned: true });
+    expect(openMain).not.toHaveBeenCalled();
+  });
+
+  test('task news stays quiet when the pet is snoozed', () => {
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    values.set(DesktopCompanionStoreKey.Session, 'task');
+    create();
+    clickMenu('desktopCompanionSnoozeToday');
+    ipcMain.emit(DesktopCompanionIpc.TaskUpdated, { sender: orb().webContents, senderFrame: orb().webContents.mainFrame });
+    expect(manager.getState().result.visible).toBe(false);
+    expect(manager.getState().result.recentTasks).toEqual([{ sessionId: 'task', viewedAt: 0 }]);
+  });
+
+  test('result pin, click-through and window bounds remain usable on repeated opens', () => {
+    vi.useFakeTimers();
+    values.set(DesktopCompanionStoreKey.Session, 'task');
+    create();
+    invoke(CompanionResultIpc.Open);
+    const result = mocks.windows.at(-1);
+    expect(result.ignoreMouse).toBe(false);
+    invoke(CompanionResultIpc.PassThrough, false, result.webContents);
+    invoke(CompanionResultIpc.Open);
+    expect(result.ignoreMouse).toBe(false);
+    invoke(CompanionResultIpc.Pin, true, result.webContents);
+    result.blur();
+    vi.advanceTimersByTime(150);
+    expect(manager.getState().result.visible).toBe(true);
+    ipcMain.emit(DesktopCompanionIpc.ResizeSurface, { sender: result.webContents, senderFrame: result.webContents.mainFrame }, { width: 9999, height: 9999 });
+    expect(result.bounds.width).toBe(DesktopCompanionSize.ResultCompactWidth);
+    expect(result.bounds.height).toBe(DesktopCompanionSize.Result.height);
+    expect(result.bounds.x).toBeGreaterThanOrEqual(0);
+    expect(result.bounds.y + result.bounds.height).toBeLessThanOrEqual(900);
+    invoke(CompanionResultIpc.Pin, false, result.webContents);
+    result.blur();
+    vi.advanceTimersByTime(150);
+    expect(manager.getState().result.visible).toBe(false);
+    invoke(CompanionResultIpc.Open);
+    expect(result.ignoreMouse).toBe(false);
+    result.emit('will-move');
+    expect(manager.getState().result.pinned).toBe(true);
+    expect(mocks.windows.at(-1)).toBe(result);
+  });
+
+  test('ignores invalid or deleted task shortcuts without opening a window', () => {
+    values.set(COMPANION_RECENT_TASKS_KEY, [{ sessionId: 'deleted', viewedAt: 0 }]);
+    create();
+    getTaskInfo.mockReturnValue(null);
+    const windowCount = mocks.windows.length;
+    for (const id of ['deleted', 'not-recorded', '', null, 42, {}]) invoke(CompanionResultIpc.Open, id);
+    expect(openMain).not.toHaveBeenCalled();
+    expect(manager.getState().result.visible).toBe(false);
+    expect(manager.getState().result.recentTasks).toEqual([]);
+    expect(mocks.windows).toHaveLength(windowCount);
+  });
+
+  test('result IPC rejects foreign windows, child frames, and result-only commands from main', () => {
+    create();
+    const unknown = new BrowserWindow();
+    expect(() => invoke(CompanionResultIpc.Open, undefined, unknown.webContents)).toThrow('Unknown desktop companion IPC sender');
+    expect(() => invoke(CompanionResultIpc.Pin, true)).toThrow('Invalid companion result IPC sender');
+    expect(() => invoke(CompanionResultIpc.Dismiss, 'task')).toThrow('Invalid companion result IPC sender');
+    expect(() => invoke(CompanionResultIpc.Dismiss, 'task', unknown.webContents)).toThrow('Unknown desktop companion IPC sender');
+    expect(() => mocks.handlers.get(CompanionResultIpc.Recent)!({ sender: main.webContents, senderFrame: {} })).toThrow('Invalid companion result IPC sender');
   });
 
   test('the composer card sits beside the orb and moves to its other side when the orb crosses the screen', () => {
@@ -506,16 +1088,18 @@ describe('stage: hints and drops', () => {
     vi.mocked(screen.getCursorScreenPoint).mockRestore();
   });
 
-  test('news about the task brings its strip back, and only the composer lets clicks through its window', () => {
+  test('task news restores compact bubbles without taking focus or covering the composer', () => {
     values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
     create();
     manager.togglePanel();
     const panel = mocks.windows.at(-1);
     invoke(DesktopCompanionIpc.TaskStarted, 'session-8', panel.webContents);
-    invoke(DesktopCompanionIpc.StageCommand, { type: DesktopCompanionStageCommandType.TaskDismiss });
-    expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
+    const result = mocks.windows.at(-1);
+    invoke(CompanionResultIpc.Hide, undefined, result.webContents);
+    expect(manager.getState().result.visible).toBe(false);
     ipcMain.emit(DesktopCompanionIpc.TaskUpdated, { sender: orb().webContents, senderFrame: orb().webContents.mainFrame });
-    expect(manager.getState().stage).toMatchObject({ kind: DesktopCompanionStageKind.Task, sessionId: 'session-8' });
+    expect(manager.getState().result).toMatchObject({ visible: true });
+    expect(result.focused).toBe(false);
     ipcMain.emit(DesktopCompanionIpc.PanelPassThrough, { sender: orb().webContents, senderFrame: orb().webContents.mainFrame }, true);
     expect(panel.ignoreMouse).toBe(false);
     ipcMain.emit(DesktopCompanionIpc.PanelPassThrough, { sender: panel.webContents, senderFrame: panel.webContents.mainFrame }, true);
@@ -524,6 +1108,10 @@ describe('stage: hints and drops', () => {
     manager.togglePanel();
     expect(panel.ignoreMouse).toBe(false);
     expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
+    expect(manager.getState().result.visible).toBe(false);
+    ipcMain.emit(DesktopCompanionIpc.TaskUpdated, { sender: orb().webContents, senderFrame: orb().webContents.mainFrame });
+    expect(manager.getState().panelVisible).toBe(true);
+    expect(manager.getState().result.visible).toBe(false);
   });
 
   test('LobsterAI itself coming to the front keeps the context of the app the user came from', () => {

@@ -9,6 +9,8 @@ export function useCompanionSession(sessionId: string | null, visible: boolean) 
   const [pending, setPending] = useState<Record<string, string>>({});
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const clearStreamError = useCallback(() => setStreamError(null), []);
   const loadRef = useRef<() => void>(() => undefined);
   const refresh = useCallback(() => loadRef.current(), []);
 
@@ -46,6 +48,7 @@ export function useCompanionSession(sessionId: string | null, visible: boolean) 
     const api = window.electron.cowork;
     setSession(previous => previous?.id === sessionId ? previous : null);
     setFailed(false);
+    setStreamError(null);
     if (!sessionId) { setLoading(false); return; }
     const load = async () => {
       const request = ++fetchId;
@@ -83,11 +86,16 @@ export function useCompanionSession(sessionId: string | null, visible: boolean) 
       }),
       api.onStreamSessionStatus(data => {
         if (data.sessionId !== sessionId) return;
+        if (data.status === CoworkSessionStatusValue.Running) setStreamError(null);
         setSession(previous => previous?.id === sessionId ? { ...previous, status: data.status } : previous);
         if (data.status !== CoworkSessionStatusValue.Running) void load();
       }),
       api.onStreamComplete(data => { if (data.sessionId === sessionId) void load(); }),
-      api.onStreamError(data => { if (data.sessionId === sessionId) void load(); }),
+      api.onStreamError(data => {
+        if (data.sessionId !== sessionId) return;
+        setStreamError(data.error);
+        void load();
+      }),
       api.onSessionsChanged(() => { void load(); }),
     ];
     loadRef.current = () => { void load(); };
@@ -96,5 +104,5 @@ export function useCompanionSession(sessionId: string | null, visible: boolean) 
     return () => { active = false; loadRef.current = () => undefined; unsubscribe.forEach(stop => stop()); };
   }, [sessionId]);
   useEffect(() => { if (visible) refresh(); }, [visible, refresh]);
-  return { session: session?.id === sessionId ? session : null, pending: Object.values(pending).some(id => id === sessionId), failed, loading, refresh };
+  return { session: session?.id === sessionId ? session : null, pending: Object.values(pending).some(id => id === sessionId), failed, loading, refresh, streamError, clearStreamError };
 }

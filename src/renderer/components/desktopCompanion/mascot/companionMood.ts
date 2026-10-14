@@ -1,9 +1,8 @@
 import { CoworkSessionStatusValue } from '../../../types/cowork';
 
-/** What the character is feeling; drives eyes, antennae, extras, and badges. */
+/** The companion's current state; drives animations, badges, and labels. */
 export const CompanionMood = {
   Idle: 'idle',
-  Happy: 'happy',
   Idea: 'idea',
   Curious: 'curious',
   Catch: 'catch',
@@ -40,11 +39,6 @@ export function companionMood(input: CompanionMoodInput): CompanionMood {
   if (input.status === CoworkSessionStatusValue.Running) return CompanionMood.Working;
   if (input.hintShowing) return CompanionMood.Idea;
   return CompanionMood.Idle;
-}
-
-/** Nothing to report: the character may fade back until the pointer comes by. */
-export function moodCanRest(mood: CompanionMood): boolean {
-  return mood === CompanionMood.Idle || mood === CompanionMood.Snooze;
 }
 
 /** Tooltip/label key for the current mood. */

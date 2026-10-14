@@ -1,12 +1,14 @@
 import {
   type BrowserWindow,
   clipboard,
+  dialog,
   globalShortcut,
   ipcMain,
   Menu,
   type MenuItemConstructorOptions,
   type Rectangle,
   screen,
+  type WebContents,
 } from 'electron';
 import fs from 'fs';
 import path from 'path';
@@ -49,25 +51,29 @@ import {
 import {
   clampCompanionBounds,
   type CompanionComposerLayout,
-  companionGaze,
   type CompanionPoint,
   companionStageOpensLeft,
   resolveCompanionBounds,
   resolveCompanionComposerLayout,
 } from '../../shared/desktopCompanion/geometry';
 import { companionHintCopyKeys, type CompanionHintTopic } from '../../shared/desktopCompanion/hintPolicy';
-import { isSpeechActive, SpeechCommand } from '../../shared/desktopCompanion/languageTools';
+import { isSpeechActive, LanguageTool } from '../../shared/desktopCompanion/languageTools';
+import type { CompanionTaskInfo } from '../../shared/desktopCompanion/results';
+import { normalizeCompanionToolbarOrder } from '../../shared/desktopCompanion/selectionToolbar';
 import { COMPANION_SKINS, companionOrbSize, normalizeCompanionSkin } from '../../shared/desktopCompanion/skins';
 import { t } from '../i18n';
 import { CompanionHintsController } from './companionHints';
+import { CompanionResultsController } from './companionResults';
+import { CompanionScreenshotController } from './companionScreenshot';
 import { CompanionSelectionController, type SelectionHookModule } from './companionSelection';
 import { CompanionStageController } from './companionStage';
-import { type CompanionWindowEnvironment, createCompanionWindow } from './companionWindow';
+import { type CompanionWindowEnvironment, createCompanionWindow, dismissCompanionPanelOnBlur } from './companionWindow';
 import { CompanionFileDragMonitor, FileDragEvent, type FileDragMonitor, type FileDragStart } from './fileDragMonitor';
 import { CompanionForegroundMonitor, type ForegroundAppMonitor } from './foregroundAppMonitor';
 import type { CompanionLanguageClient } from './languageToolClient';
 import { CompanionLanguageToolsController } from './languageToolsController';
 import { CompanionQuickAnswerService } from './quickAnswerService';
+import { getCompanionSelectionApps } from './selectionApps';
 
 const MAX_SNOOZE_TIMER_MS = 24 * 60 * 60_000;
 
@@ -90,6 +96,7 @@ interface DesktopCompanionOptions {
   rendererDirectory: string;
   devServerUrl?: string;
   getMainWindow(): BrowserWindow | null;
+  getTaskInfo(sessionId: string): CompanionTaskInfo | null;
   openMain(sessionId?: string | null): void;
   openSettings?(): void;
   onPreferencesChanged(): void;
@@ -105,6 +112,7 @@ export function normalizeCompanionPreferences(value: unknown): DesktopCompanionP
     selectionToolbar: stored.selectionToolbar !== false,
     dragAssist: stored.dragAssist !== false,
     contextHints: stored.contextHints !== false,
+    selectionToolbarOrder: normalizeCompanionToolbarOrder(stored.selectionToolbarOrder),
     selectionExcludedApps: Array.isArray(stored.selectionExcludedApps)
       ? stored.selectionExcludedApps.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
         .map(item => item.trim().slice(0, 200)).slice(0, 100)
@@ -169,13 +177,12 @@ export class DesktopCompanionManager {
   private shortcutUnavailable = false;
   private registeredShortcut = '';
   private disposing = false;
+  private capturing = false;
   private fileDragActive = false;
   private foregroundAppId: string | null = null;
   private dragOrigin: { cursor: CompanionPoint; position: CompanionPoint } | null = null;
   private draftSaveTimer: ReturnType<typeof setTimeout> | undefined;
   private snoozeTimer: ReturnType<typeof setTimeout> | undefined;
-  private gazeTimer: ReturnType<typeof setInterval> | undefined;
-  private lastGaze = '';
   private readonly env: CompanionWindowEnvironment;
   private readonly foreground: ForegroundAppMonitor;
   private readonly fileDrag: FileDragMonitor;
@@ -184,6 +191,8 @@ export class DesktopCompanionManager {
   private readonly hints: CompanionHintsController;
   private readonly selection: CompanionSelectionController;
   private readonly languageTools: CompanionLanguageToolsController;
+  private readonly screenshot: CompanionScreenshotController;
+  private readonly results: CompanionResultsController;
 
   constructor(private readonly options: DesktopCompanionOptions) {
     const { store } = options;
@@ -203,6 +212,18 @@ export class DesktopCompanionManager {
     this.foreground = services.foreground ?? new CompanionForegroundMonitor();
     this.fileDrag = services.fileDrag ?? new CompanionFileDragMonitor();
     this.quickAnswer = services.quickAnswer ?? new CompanionQuickAnswerService();
+    this.screenshot = new CompanionScreenshotController(this.env);
+    this.results = new CompanionResultsController({
+      store,
+      getTaskInfo: id => options.getTaskInfo(id),
+      getOrbBounds: () => this.orbBounds(),
+      createWindow: () => this.createWindow(DesktopCompanionSurface.Result, true),
+      assertSender: id => this.assertSender(id),
+      beforeOpen: () => { this.hidePanel(); this.stage.clear(); this.selection.hide(); },
+      openMain: sessionId => this.options.openMain(sessionId),
+      isCapturing: () => this.capturing,
+      publish: () => this.publish(),
+    }, this.sessionId);
     this.stage = new CompanionStageController({
       getOrbBounds: () => this.orbBounds(),
       createWindow: (surface, focusable) => this.createWindow(surface, focusable),
@@ -216,13 +237,13 @@ export class DesktopCompanionManager {
     });
     this.hints = new CompanionHintsController({
       store,
-      isEnabled: () => this.preferences.enabled && this.preferences.contextHints && !this.snooze,
+      isEnabled: () => this.preferences.enabled && this.preferences.contextHints && !this.snooze && !this.capturing,
       isQuiet: category => this.isBusy(category),
       showHint: (topic, variant) => this.showHint(topic, variant),
     });
     this.selection = new CompanionSelectionController({
       preferences: () => this.preferences,
-      isAvailable: () => this.isPresent(),
+      isAvailable: () => this.isPresent() && !this.capturing,
       createWindow: (surface, focusable) => this.createWindow(surface, focusable),
       setPreferences: patch => { this.setPreferences(patch); },
       publish: () => this.publish(),
@@ -250,12 +271,21 @@ export class DesktopCompanionManager {
     this.applyActivity();
   }
 
+  isComposerWebContents(webContents: WebContents): boolean {
+    return !!this.panel && !this.panel.isDestroyed() && this.panel.webContents === webContents;
+  }
+
   getState(): DesktopCompanionState {
     const category = this.foregroundAppId ? categorizeCompanionApp(this.foregroundAppId) : null;
     return {
+      result: this.results.state,
       revision: this.revision,
       speechStatus: this.languageTools.speechStatus,
-      preferences: { ...this.preferences, selectionExcludedApps: [...this.preferences.selectionExcludedApps] },
+      preferences: {
+        ...this.preferences,
+        selectionExcludedApps: [...this.preferences.selectionExcludedApps],
+        selectionToolbarOrder: [...this.preferences.selectionToolbarOrder],
+      },
       panelVisible: this.panelVisible,
       sessionId: this.sessionId,
       draft: { ...this.draft, attachments: [...this.draft.attachments] },
@@ -282,6 +312,9 @@ export class DesktopCompanionManager {
     if (typeof patch?.selectionToolbar === 'boolean') next.selectionToolbar = patch.selectionToolbar;
     if (typeof patch?.dragAssist === 'boolean') next.dragAssist = patch.dragAssist;
     if (typeof patch?.contextHints === 'boolean') next.contextHints = patch.contextHints;
+    if (Array.isArray(patch?.selectionToolbarOrder)) {
+      next.selectionToolbarOrder = normalizeCompanionToolbarOrder(patch.selectionToolbarOrder);
+    }
     if (Array.isArray(patch?.selectionExcludedApps)) {
       next.selectionExcludedApps = normalizeCompanionPreferences({ selectionExcludedApps: patch.selectionExcludedApps }).selectionExcludedApps;
     }
@@ -307,6 +340,7 @@ export class DesktopCompanionManager {
   }
 
   togglePanel(): void {
+    if (this.capturing) return;
     if (this.panelVisible) this.hidePanel();
     else this.showPanel();
   }
@@ -342,10 +376,10 @@ export class DesktopCompanionManager {
 
   dispose(): void {
     this.disposing = true;
+    this.screenshot.dispose();
     this.flushDraft();
     if (this.registeredShortcut) globalShortcut.unregister(this.registeredShortcut);
     clearTimeout(this.snoozeTimer);
-    this.stopGaze();
     screen.removeListener('display-removed', this.reposition);
     screen.removeListener('display-metrics-changed', this.reposition);
     for (const channel of [
@@ -363,6 +397,7 @@ export class DesktopCompanionManager {
     this.stage.dispose();
     this.quickAnswer.dispose();
     this.languageTools.dispose();
+    this.results.dispose();
     this.orb?.destroy();
     this.panel?.destroy();
     this.orb = null;
@@ -385,6 +420,7 @@ export class DesktopCompanionManager {
 
   private isBusy(category: CompanionAppCategory): boolean {
     return this.panelVisible
+      || this.results.state.visible
       || this.stage.stage.kind !== DesktopCompanionStageKind.None
       || this.fileDragActive
       || isCompanionQuietCategory(category)
@@ -393,7 +429,7 @@ export class DesktopCompanionManager {
 
   /** Reconciles windows and system monitors with preferences and snooze. */
   private applyActivity(): void {
-    if (this.disposing) return;
+    if (this.disposing || this.capturing) return;
     const present = this.isPresent();
     if (present) this.showOrb();
     else this.hideOrb();
@@ -401,7 +437,7 @@ export class DesktopCompanionManager {
     else this.foreground.stop();
     if (present && this.preferences.dragAssist && !this.snooze) this.fileDrag.start();
     else this.fileDrag.stop();
-    if (!present || this.snooze) this.stage.clear();
+    if (!present || this.snooze) { this.stage.clear(); this.results.hide(); }
     this.selection.sync();
   }
 
@@ -467,32 +503,11 @@ export class DesktopCompanionManager {
     } else if (!this.orb.webContents.isLoadingMainFrame() && !this.orb.isVisible()) {
       this.orb.showInactive();
     }
-    this.startGaze();
   }
 
   private hideOrb(): void {
-    this.stopGaze();
     if (this.orb && !this.orb.isDestroyed()) this.orb.destroy();
     this.orb = null;
-  }
-
-  private startGaze(): void {
-    if (this.gazeTimer) return;
-    this.gazeTimer = setInterval(() => {
-      const bounds = this.orbBounds();
-      if (!bounds || !this.orb || this.orb.isDestroyed() || !this.orb.isVisible()) return;
-      const gaze = companionGaze(bounds, screen.getCursorScreenPoint());
-      const key = `${gaze.x},${gaze.y}`;
-      if (key === this.lastGaze) return;
-      this.lastGaze = key;
-      this.orb.webContents.send(DesktopCompanionIpc.Gaze, gaze);
-    }, DesktopCompanionTiming.GazeIntervalMs);
-  }
-
-  private stopGaze(): void {
-    clearInterval(this.gazeTimer);
-    this.gazeTimer = undefined;
-    this.lastGaze = '';
   }
 
   private savePosition(point: CompanionPoint): void {
@@ -527,6 +542,7 @@ export class DesktopCompanionManager {
     }
     this.stage.reposition();
     this.positionPanel();
+    this.results.reposition();
   }
 
   private reposition = (): void => {
@@ -540,11 +556,14 @@ export class DesktopCompanionManager {
     }
     this.stage.reposition();
     this.positionPanel();
+    this.results.reposition();
+    this.publish();
   };
 
   // ── Panel ─────────────────────────────────────────────────
 
   private showPanel(): void {
+    this.results.hide();
     const stageKind = this.stage.stage.kind;
     if (stageKind === DesktopCompanionStageKind.Hint || stageKind === DesktopCompanionStageKind.Task) this.stage.clear();
     if (!this.panelVisible) {
@@ -553,6 +572,7 @@ export class DesktopCompanionManager {
     }
     if (!this.panel || this.panel.isDestroyed()) {
       const win = this.createWindow(DesktopCompanionSurface.Panel, true, this.panelLayout().bounds);
+      dismissCompanionPanelOnBlur(win, () => this.hidePanel());
       win.on('close', event => {
         if (this.disposing) return;
         event.preventDefault();
@@ -599,16 +619,24 @@ export class DesktopCompanionManager {
     this.positionPanel();
   }
 
-  /** The orb follows a task it just started, and its status strip comes out unless the composer is open. */
+  /** Follow the task and show compact activity beside the pet. */
   private followTask(sessionId: string): void {
+    this.results.record(sessionId);
     this.selectSession(sessionId);
-    if (!this.panelVisible) this.stage.showTask(sessionId);
+    this.showTaskActivity();
   }
 
-  /** Results are read in the main window; the orb stops following the task once it is opened there. */
+  markSessionViewed(sessionId: string): void { this.results.markSessionViewed(sessionId); }
+
+  private showTaskActivity(): void {
+    if (!this.isPresent() || this.snooze || this.capturing || this.panelVisible || this.stage.stage.kind === DesktopCompanionStageKind.Drop
+      || this.selection.browserWindow?.isVisible() || this.languageTools.browserWindow?.isVisible()) return;
+    this.results.notify();
+  }
+
+  /** The status strip opens the corresponding task in the main window. */
   private openTask(sessionId: string): void {
-    this.selectSession(null);
-    this.options.openMain(sessionId);
+    this.results.open(sessionId);
   }
 
   private positionPanel(): void {
@@ -633,6 +661,38 @@ export class DesktopCompanionManager {
     const files = [...new Map([...this.draft.attachments, ...attachments].map(file => [file.path, file])).values()].slice(0, 20);
     this.setDraft({ ...this.draft, attachments: files });
     this.showPanel();
+  }
+
+  private async askScreenshot(): Promise<void> {
+    if (this.capturing || this.disposing) return;
+    if (this.draft.attachments.length >= 20) {
+      await dialog.showMessageBox({ type: 'info', message: t('desktopCompanionScreenshotFull') });
+      return;
+    }
+    this.capturing = true;
+    const restorePanel = this.panelVisible;
+    this.hidePanel();
+    this.stage.clear();
+    this.fileDrag.stop();
+    this.selection.sync();
+    let attachment: DesktopCompanionAttachment | null = null;
+    let failed = false;
+    try {
+      attachment = await this.screenshot.capture(this.companionWindows());
+    } catch (error) {
+      failed = true;
+      console.error('[DesktopCompanion] Screenshot failed', error);
+    } finally {
+      this.capturing = false;
+      if (!this.disposing) {
+        this.applyActivity();
+        if (attachment) this.openPanelWithAttachments([attachment]);
+        else if (restorePanel) this.showPanel();
+      }
+    }
+    if (failed && !this.disposing) {
+      await dialog.showMessageBox({ type: 'error', message: t('desktopCompanionScreenshotFailed') });
+    }
   }
 
   private setDraft(value: unknown): void {
@@ -718,7 +778,7 @@ export class DesktopCompanionManager {
   }
 
   private companionWindows(): Array<BrowserWindow | null> {
-    return [this.orb, this.panel, this.stage.browserWindow, this.selection.browserWindow, this.languageTools.browserWindow];
+    return [this.orb, this.panel, this.stage.browserWindow, this.selection.browserWindow, this.languageTools.browserWindow, this.results.browserWindow];
   }
 
   private publish(): void {
@@ -731,21 +791,19 @@ export class DesktopCompanionManager {
 
   private assertSender(senderId: number): void {
     const allowed = [this.options.getMainWindow()?.webContents.id, this.orb?.webContents.id, this.panel?.webContents.id,
-      this.stage.webContentsId, this.selection.webContentsId, this.languageTools.webContentsId];
+      this.stage.webContentsId, this.selection.webContentsId, this.languageTools.webContentsId, this.results.webContentsId];
     if (!allowed.some(id => id !== undefined && id !== null && id === senderId)) throw new Error('Unknown desktop companion IPC sender');
   }
 
   private showContextMenu(): void {
-    const toggle = (label: string, key: 'selectionToolbar' | 'dragAssist' | 'contextHints'): MenuItemConstructorOptions => ({
-      label, type: 'checkbox', checked: this.preferences[key], click: () => this.setPreferences({ [key]: !this.preferences[key] }),
-    });
     const template: MenuItemConstructorOptions[] = [
-      { label: t('desktopCompanionOpenPanel'), click: () => this.showPanel() },
-      ...(isSpeechActive(this.languageTools.speechStatus) ? [
-        { label: t('desktopToolsStop'), click: () => this.languageTools.command(SpeechCommand.Stop) },
-      ] : []),
       { label: t('desktopCompanionOpenApp'), click: () => { this.hidePanel(); this.options.openMain(this.sessionId); } },
+      { label: t('desktopCompanionOpenPanel'), click: () => this.showPanel() },
+      ...(isSpeechActive(this.languageTools.speechStatus)
+        ? [{ label: t('desktopToolsPlayback'), click: () => this.languageTools.open({ tool: LanguageTool.Tts }) }]
+        : []),
       { type: 'separator' },
+      { label: t('desktopCompanionScreenshot'), click: () => this.askScreenshot() },
       {
         label: t('desktopCompanionChangeSkin'),
         submenu: COMPANION_SKINS.map(skin => ({
@@ -753,17 +811,11 @@ export class DesktopCompanionManager {
           click: () => this.setPreferences({ skin: skin.id }),
         })),
       },
-      toggle(t('desktopCompanionSelection'), 'selectionToolbar'),
-      toggle(t('desktopCompanionDragAssist'), 'dragAssist'),
-      toggle(t('desktopCompanionHints'), 'contextHints'),
       { type: 'separator' },
       this.snooze
         ? { label: t('desktopCompanionWake'), click: () => this.wake() }
         : { label: t('desktopCompanionSnoozeToday'), click: () => this.snoozeFor(DesktopCompanionSnoozeMode.Quiet) },
-      { label: t('desktopCompanionSnoozeHour'), click: () => this.snoozeFor(DesktopCompanionSnoozeMode.Hidden) },
       ...(this.options.openSettings ? [{ label: t('desktopCompanionSettings'), click: () => this.options.openSettings?.() }] : []),
-      { type: 'separator' },
-      { label: t('desktopCompanionDisable'), click: () => this.setPreferences({ enabled: false }) },
     ];
     Menu.buildFromTemplate(template).popup({ window: this.panelVisible ? this.panel ?? undefined : this.orb ?? undefined });
   }
@@ -778,10 +830,11 @@ export class DesktopCompanionManager {
     };
     handle(DesktopCompanionIpc.GetState, () => this.getState());
     handle(DesktopCompanionIpc.SetPreferences, value => this.setPreferences(value as Partial<DesktopCompanionPreferences>));
+    handle(DesktopCompanionIpc.GetSelectionExcludedApps, () => getCompanionSelectionApps(this.preferences.selectionExcludedApps));
     handle(DesktopCompanionIpc.SetDraft, value => { this.setDraft(value); return this.getState(); });
     handle(DesktopCompanionIpc.SelectSession, value => { this.selectSession(value); return this.getState(); });
     handle(DesktopCompanionIpc.TaskStarted, (value, sender) => {
-      if (!this.panel || this.panel.isDestroyed() || sender.id !== this.panel.webContents.id) return;
+      if (sender.id !== this.panel?.webContents.id) return;
       if (typeof value !== 'string' || !value) return;
       this.hidePanel();
       this.followTask(value.slice(0, 200));
@@ -790,6 +843,7 @@ export class DesktopCompanionManager {
     handle(DesktopCompanionIpc.HidePanel, () => this.hidePanel());
     handle(DesktopCompanionIpc.OpenMain, (value, sender) => {
       if (sender.id === this.selection.webContentsId) this.selection.hide();
+      if (sender.id === this.results.webContentsId) this.results.hide();
       this.hidePanel();
       this.options.openMain(typeof value === 'string' ? value : null);
     });
@@ -817,7 +871,7 @@ export class DesktopCompanionManager {
     });
     on(DesktopCompanionIpc.TaskUpdated, (_value, senderId) => {
       if (senderId !== this.orb?.webContents.id) return;
-      if (this.sessionId && !this.panelVisible) this.stage.showTask(this.sessionId);
+      if (this.sessionId) this.showTaskActivity();
     });
     on(DesktopCompanionIpc.PanelPassThrough, (value, senderId) => {
       if (!this.panel || this.panel.isDestroyed() || senderId !== this.panel.webContents.id) return;
@@ -837,6 +891,7 @@ export class DesktopCompanionManager {
       else if (senderId === this.stage.webContentsId) this.stage.setContentSize(size);
       else if (senderId === this.selection.webContentsId) this.selection.setContentSize(size);
       else if (senderId === this.languageTools.webContentsId) this.languageTools.setContentSize(size);
+      else if (senderId === this.results.webContentsId) this.results.setContentSize(size);
     });
   }
 }

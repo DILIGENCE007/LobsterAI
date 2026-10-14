@@ -1,10 +1,8 @@
 import { DEFAULT_COMPANION_SKIN, DesktopCompanionSize } from './constants';
 
 export const CompanionSkinKind = {
-  /** The app icon's lobster on a disc; moods show only as a ring and badges. */
+  /** The app icon's lobster on a disc; task status appears in a small badge. */
   Brand: 'brand',
-  /** 钳钳, drawn in code, whose face, claws and antennae show its mood. */
-  Mascot: 'mascot',
   Image: 'image',
 } as const;
 export type CompanionSkinKind = typeof CompanionSkinKind[keyof typeof CompanionSkinKind];
@@ -15,13 +13,12 @@ export interface CompanionSkin {
   kind: CompanionSkinKind;
   /** Relative to the companion page; null unless the kind is image. */
   asset: string | null;
-  /** Accent used for the working ring and selection highlights. */
+  /** Accent used for skin selection highlights. */
   accent: string;
 }
 
 export const COMPANION_SKINS: readonly CompanionSkin[] = [
   { id: DEFAULT_COMPANION_SKIN, nameKey: 'desktopCompanionSkinLobster', kind: CompanionSkinKind.Brand, asset: null, accent: '#F2482A' },
-  { id: 'qianqian', nameKey: 'desktopCompanionSkinQianqian', kind: CompanionSkinKind.Mascot, asset: null, accent: '#F2482A' },
   { id: 'ruanruanxia', nameKey: 'desktopCompanionSkinRuanruanxia', kind: CompanionSkinKind.Image, asset: './desktop-companion/skins/ruanruanxia.webp', accent: '#EE3B2F' },
   { id: 'xingxingxing', nameKey: 'desktopCompanionSkinXingxingxing', kind: CompanionSkinKind.Image, asset: './desktop-companion/skins/xingxingxing.webp', accent: '#F4A62A' },
   { id: 'shaee', nameKey: 'desktopCompanionSkinShaee', kind: CompanionSkinKind.Image, asset: './desktop-companion/skins/shaee.webp', accent: '#2F8BEA' },
