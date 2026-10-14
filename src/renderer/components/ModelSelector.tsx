@@ -21,6 +21,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { ModelPresetId } from '../../shared/modelPresets/constants';
 import { getProviderIcon, ProviderIconId } from '../providers/uiRegistry';
 import { authService } from '../services/auth';
+import { getPortalPricingUrl } from '../services/endpoints';
 import { i18nService } from '../services/i18n';
 import { modelPresetName } from '../services/modelPresets';
 import {
@@ -147,6 +148,7 @@ export const ModelAccessPromptKind = {
   AgenticNotReady: 'agentic_not_ready',
   Login: 'login',
   Subscribe: 'subscribe',
+  SubscriptionPriority: 'subscription_priority',
 } as const;
 export type ModelAccessPromptKind = typeof ModelAccessPromptKind[keyof typeof ModelAccessPromptKind];
 
@@ -178,7 +180,8 @@ export const ModelAccessPromptModal: React.FC<ModelAccessPromptModalProps> = ({
   const resolvedDescriptionKey = descriptionKey ?? (
     agenticNotReadyPrompt
       ? 'serverModelAgenticNotReady'
-      : loginPrompt ? 'modelSelectorLoginDesc' : 'modelSelectorSubscribeDesc'
+      : loginPrompt ? 'modelSelectorLoginDesc'
+        : promptKind === ModelAccessPromptKind.SubscriptionPriority ? 'modelSubscriptionPriorityHint' : 'modelSelectorSubscribeDesc'
   );
   const resolvedPrimaryButtonKey = primaryButtonKey ?? (
     agenticNotReadyPrompt
@@ -187,7 +190,8 @@ export const ModelAccessPromptModal: React.FC<ModelAccessPromptModalProps> = ({
   );
 
   const openSubscriptionPage = async () => {
-    const pricingUrl = purchaseOffer.getPricingUrl();
+    const pricingUrl = promptKind === ModelAccessPromptKind.SubscriptionPriority
+      ? getPortalPricingUrl(undefined, { tab: 'subscription' }) : purchaseOffer.getPricingUrl();
     if (!pricingUrl) return;
     onClose();
     await window.electron.shell.openExternal(pricingUrl);
@@ -413,9 +417,11 @@ export function hasModelHoverDetails(
     | 'supportsImage'
     | 'supportsThinking'
     | 'thinkingConfig'
+    | 'subscriptionPriority'
   >,
 ): boolean {
-  return !!model.description
+  return !!model.subscriptionPriority
+    || !!model.description
     || !!model.costMultiplier
     || !!model.supportsImage
     || !!model.supportsThinking
@@ -569,6 +575,26 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       className: `${existingClassName}${MODEL_ICON_CLASS_NAME}`,
     });
   };
+
+  // Refresh access and campaign metadata whenever the picker opens.
+  React.useEffect(() => {
+    if (isOpen && isLoggedIn) void authService.refreshServerModels();
+  }, [isOpen, isLoggedIn]);
+
+  // Refresh at campaign boundaries while the picker remains open.
+  React.useEffect(() => {
+    if (!isOpen || !isLoggedIn) return;
+    const now = Date.now();
+    const nextBoundary = availableModels.flatMap(model => model.limitedFree
+      ? [model.limitedFreeStartAt, model.limitedFreeEndAt] : [])
+      .map(value => value ? Date.parse(value) : NaN)
+      .filter(value => Number.isFinite(value) && value > now)
+      .sort((a, b) => a - b)[0];
+    if (nextBoundary == null) return;
+    const timer = window.setTimeout(() => { void authService.refreshServerModels(); },
+      Math.min(nextBoundary - now + 100, 2_147_483_647));
+    return () => window.clearTimeout(timer);
+  }, [availableModels, isOpen, isLoggedIn]);
 
   // 点击外部区域关闭下拉框
   React.useEffect(() => {
@@ -788,7 +814,8 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       return;
     }
     if (model && model.accessible === false) {
-      setRestrictedPrompt(isLoggedIn ? ModelAccessPromptKind.Subscribe : ModelAccessPromptKind.Login);
+      setRestrictedPrompt(!isLoggedIn ? ModelAccessPromptKind.Login
+        : model.subscriptionPriority ? ModelAccessPromptKind.SubscriptionPriority : ModelAccessPromptKind.Subscribe);
       setHoveredModel(null);
       setIsOpen(false);
       return;
@@ -1065,7 +1092,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     const thinkingLevelLabel = hasThinkingProtocol && model.thinkingConfig
       ? thinkingLabelForModel(model)
       : null;
-    const showCostMultiplier = model.costMultiplier != null && (model.costMultiplier > 0 || !!model.presetId);
+    const showCostMultiplier = model.costMultiplier != null && (model.costMultiplier > 0 || !!model.presetId || model.limitedFreeActive === true);
 
     // Layout: the name (with its tags) takes all remaining width; the thinking
     // level and multiplier sit in a right-aligned column next to a fixed status
@@ -1102,6 +1129,16 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
           </span>
           {model.presetId && restricted && model.restrictionHint && (
             <span className="min-w-0 truncate text-[10px] text-secondary" title={model.restrictionHint}>{model.restrictionHint}</span>
+          )}
+          {model.limitedFreeActive && (
+            <span className="shrink-0 rounded-full bg-red-500/10 px-1.5 py-0.5 text-[10px] leading-none text-red-600 dark:text-red-400">
+              {i18nService.t('modelLimitedFreeBadge')}
+            </span>
+          )}
+          {model.subscriptionPriority && (
+            <span className="shrink-0 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] leading-none text-amber-700 dark:text-amber-300" title={i18nService.t('modelSubscriptionPriorityHint')}>
+              {i18nService.t('modelSubscriptionPriorityBadge')}
+            </span>
           )}
           {model.supportsImage && (
             <span className={MODEL_TAG_CLASS_NAME}>
@@ -1193,6 +1230,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         className="w-[220px] rounded-xl border border-border bg-surface p-3 shadow-popover pointer-events-auto"
       >
         <div className="text-[13px] font-semibold text-foreground leading-5">{hoveredModel.presetId ? modelPresetName(hoveredModel.presetId) : hoveredModel.name}</div>
+        {hoveredModel.subscriptionPriority && (
+          <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300 leading-4">{i18nService.t('modelSubscriptionPriorityHint')}</div>
+        )}
         {hoveredModel.presetId && hoveredModel.accessible === false && hoveredModel.restrictionHint && (
           <div className="mt-1 text-[11px] text-secondary leading-4">{hoveredModel.restrictionHint}</div>
         )}

@@ -86,6 +86,11 @@ export interface PricingCatalogBaseModel {
 }
 
 export interface PricingCatalogTextModel extends PricingCatalogBaseModel {
+  limitedFree?: boolean;
+  limitedFreeActive?: boolean;
+  limitedFreeStartAt?: string | null;
+  limitedFreeEndAt?: string | null;
+  subscriptionPriority?: boolean;
   supportsImage?: boolean;
   supportsThinking?: boolean;
   thinkingConfig?: ModelThinkingConfig;
@@ -130,6 +135,11 @@ export interface AvailableServerModelEntry {
   moreModel?: boolean;
   accessible?: boolean;
   restrictionHint?: string;
+  limitedFree?: boolean;
+  limitedFreeActive?: boolean;
+  limitedFreeStartAt?: string | null;
+  limitedFreeEndAt?: string | null;
+  subscriptionPriority?: boolean;
 }
 
 const readString = (value: unknown): string => (
@@ -213,7 +223,7 @@ export function mapPricingCatalogTextModelsToServerModels(
       || readString(model.provider)
       || 'LobsterAI';
     const contextWindow = readPositiveNumber(model.contextWindow);
-    const costMultiplier = readPositiveNumber(model.costMultiplier);
+    const costMultiplier = model.limitedFreeActive ? 0 : readPositiveNumber(model.costMultiplier);
     const thinkingConfig = model.supportsThinking === true
       ? parseModelThinkingConfig(model.thinkingConfig)
       : undefined;
@@ -230,6 +240,11 @@ export function mapPricingCatalogTextModelsToServerModels(
       description: readString(model.description) || undefined,
       costMultiplier,
       contextWindow,
+      limitedFree: model.limitedFree,
+      limitedFreeActive: model.limitedFreeActive,
+      limitedFreeStartAt: model.limitedFreeStartAt,
+      limitedFreeEndAt: model.limitedFreeEndAt,
+      subscriptionPriority: model.subscriptionPriority,
       moreModel: model.moreModel === true,
       accessible: false,
     }];
@@ -272,6 +287,11 @@ export function mapAvailableServerModelsToModels(
       explicitContextCache: model.explicitContextCache ?? false,
       description: model.description,
       costMultiplier: model.costMultiplier,
+      limitedFree: model.limitedFree,
+      limitedFreeActive: model.limitedFreeActive,
+      limitedFreeStartAt: model.limitedFreeStartAt,
+      limitedFreeEndAt: model.limitedFreeEndAt,
+      subscriptionPriority: model.subscriptionPriority,
       moreModel: model.moreModel === true,
       accessible: model.accessible ?? true,
       restrictionHint: model.restrictionHint ?? undefined,
