@@ -2980,7 +2980,7 @@ test('sessions.changed start reports an IM prompt once across lifecycle and Acti
     conversationState: 'new_task',
     isMainAgent: true,
     platform: 'weixin',
-  });
+  }, session.id);
   expect(observedStatuses).toEqual(['running']);
   expect(adapter.activeTurns.has(session.id)).toBe(false);
 
@@ -3082,7 +3082,7 @@ test('IM prompt submit analytics reports each channel run once with routing cont
     conversationState: 'new_task',
     isMainAgent: false,
     platform: 'feishu',
-  });
+  }, session.id);
 
   session.messages.push({
     id: 'assistant-1',
@@ -3099,7 +3099,7 @@ test('IM prompt submit analytics reports each channel run once with routing cont
     conversationState: 'continue_session',
     isMainAgent: false,
     platform: 'feishu',
-  });
+  }, session.id);
 });
 
 test('IM prompt submit analytics keeps its run deduplication memory bounded', () => {
@@ -6127,15 +6127,17 @@ test('chat error replaces generic LLM failure using safe OpenClaw metadata', () 
   ]);
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const sessionKey = `agent:main:lobsterai:${session.id}`;
+  // Run IDs are opaque correlation keys; auth failures are represented by the metadata below.
+  const runId = 'b398b8c7-4e10-4018-a080-8094c142eec0';
   const errorSpy = vi.fn();
 
   session.status = 'running';
   adapter.on('error', errorSpy);
-  adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-minimax-oauth'));
+  adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, runId));
 
   adapter.handleChatEvent({
     state: 'error',
-    runId: 'run-minimax-oauth',
+    runId,
     sessionKey,
     errorMessage: 'LLM request failed.',
     provider: 'minimax-portal',

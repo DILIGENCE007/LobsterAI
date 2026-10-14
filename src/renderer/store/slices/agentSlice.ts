@@ -16,6 +16,7 @@ interface AgentSummary {
   sortOrder?: number | null;
   isDefault: boolean;
   source: 'custom' | 'preset';
+  presetId?: string;
   skillIds: string[];
   subagentAllowAgentIds: string[];
 }

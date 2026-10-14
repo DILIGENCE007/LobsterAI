@@ -3,6 +3,7 @@ import { SpeechStatus } from '../../../shared/desktopCompanion/languageTools';
 export interface SpeechPlayback { status: SpeechStatus; index: number; completed: number; total: number }
 export interface SpeechAudio {
   src: string;
+  defaultPlaybackRate: number;
   playbackRate: number;
   onended: ((event: Event) => unknown) | null;
   onerror: OnErrorEventHandler;
@@ -49,7 +50,11 @@ export class SpeechQueue {
     if (this.hasSource) this.play();
     else this.pump();
   }
-  setRate(rate: number): void { this.audio.playbackRate = rate; }
+  setRate(rate: number): void {
+    // Loading another segment resets playbackRate to the element's default rate.
+    this.audio.defaultPlaybackRate = rate;
+    this.audio.playbackRate = rate;
+  }
   stop(): void {
     this.generation += 1;
     this.hasSource = false;

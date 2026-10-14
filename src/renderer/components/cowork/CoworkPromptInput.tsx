@@ -62,6 +62,7 @@ import {
 } from '../../services/logReporter';
 import { getOnboardingErrorCode, reportOnboardingAction } from '../../services/onboardingAnalytics';
 import { resolveLocalizedText, skillService } from '../../services/skill';
+import { getDraftAnalytics } from '../../services/usageAnalytics';
 import { RootState } from '../../store';
 import { selectDraftPrompts } from '../../store/selectors/coworkSelectors';
 import {
@@ -834,6 +835,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       agentId: currentAgentId,
       isMainAgent: currentAgentId === 'main',
       agentSource: currentAgent?.source,
+      presetId: currentAgent?.presetId || undefined,
+      ...getDraftAnalytics(currentAgentId),
       agentSkillCount: currentAgent?.skillIds.length ?? 0,
       hasWorkingDirectory: workingDirectory.trim().length > 0,
       isPlanMode,
@@ -843,6 +846,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   }, [
     currentAgent?.skillIds.length,
     currentAgent?.source,
+    currentAgent?.presetId,
     currentAgentId,
     currentSession,
     isPlanMode,
@@ -880,6 +884,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       conversationState: promptAnalyticsConversationState,
       params: {
         agentId: currentAgentId,
+        presetId: currentAgent?.presetId || undefined,
+        ...getDraftAnalytics(currentAgentId),
         isMainAgent: currentAgentId === 'main',
         hasWorkingDirectory: workingDirectory.trim().length > 0,
         isPlanMode,
@@ -888,6 +894,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     });
   }, [
     currentAgentId,
+    currentAgent?.presetId,
     isPlanMode,
     promptAnalyticsConversationState,
     promptAnalyticsSurface,

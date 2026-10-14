@@ -17,6 +17,7 @@ import { clearCurrentSession } from '../store/slices/coworkSlice';
 import { clearAgentSelectedModel } from '../store/slices/modelSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../store/slices/skillSlice';
 import type { Agent, PresetAgent } from '../types/agent';
+import { resetDraftAnalytics } from './usageAnalytics';
 
 const syncActiveSkillsForCurrentAgent = (agentId: string, skillIds: string[]): void => {
   if (store.getState().agent.currentAgentId !== agentId) {
@@ -62,6 +63,7 @@ class AgentService {
           sortOrder: a.sortOrder ?? null,
           isDefault: a.isDefault,
           source: a.source,
+          presetId: a.presetId,
           skillIds: a.skillIds ?? [],
           subagentAllowAgentIds: a.subagentAllowAgentIds ?? [],
         }));
@@ -104,6 +106,7 @@ class AgentService {
           sortOrder: agent.sortOrder ?? null,
           isDefault: agent.isDefault,
           source: agent.source,
+          presetId: agent.presetId,
           skillIds: agent.skillIds ?? [],
           subagentAllowAgentIds: agent.subagentAllowAgentIds ?? [],
         }));
@@ -187,6 +190,7 @@ class AgentService {
         sortOrder: agent.sortOrder ?? null,
         isDefault: agent.isDefault,
         source: agent.source,
+        presetId: agent.presetId,
         skillIds: agent.skillIds ?? [],
         subagentAllowAgentIds: agent.subagentAllowAgentIds ?? [],
       }));
@@ -277,6 +281,7 @@ class AgentService {
           sortOrder: agent.sortOrder ?? null,
           isDefault: agent.isDefault,
           source: agent.source,
+          presetId: agent.presetId,
           skillIds: agent.skillIds ?? [],
           subagentAllowAgentIds: agent.subagentAllowAgentIds ?? [],
         }));
@@ -290,6 +295,7 @@ class AgentService {
   }
 
   switchAgent(agentId: string, options: SwitchAgentOptions = {}): void {
+    resetDraftAnalytics();
     store.dispatch(setCurrentAgentId(agentId));
     store.dispatch(clearCurrentSession(options.targetSessionId
       ? { sessionNavigationTargetId: options.targetSessionId }

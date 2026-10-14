@@ -23,6 +23,7 @@ import {
 import { OpenClawConfigImpact } from '../libs/openclawConfigImpact';
 import type { ResolvedMcpServer } from '../libs/openclawConfigSync';
 import { resolveLocalDesktopCoworkSessionIdByOpenClawSessionKey } from '../libs/openclawLocalSessionResolver';
+import { applyPythonEncodingDefaults } from '../libs/pythonEncodingEnv';
 import { appendPythonRuntimeToEnv } from '../libs/pythonRuntime';
 import { resolveStdioCommand } from '../libs/resolveStdioCommand';
 import type { SqliteStore } from '../sqliteStore';
@@ -37,15 +38,19 @@ const getPackagedNpmBinDir = (): string => (app.isPackaged
   ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'npm', 'bin')
   : '');
 
-/** Env the node/npx shims need; MCP children only inherit a short allowlist. */
-function buildMcpShimEnv(): Record<string, string> {
-  const shimEnv: Record<string, string> = {
+/** Runtime env omitted by the MCP inheritance allowlist; server overrides win. */
+function buildMcpShimEnv(...overrides: (Record<string, string> | undefined)[]): Record<string, string> {
+  let shimEnv: Record<string, string> = {
     LOBSTERAI_ELECTRON_PATH: getElectronNodeRuntimePath(),
   };
   const npmBinDir = getPackagedNpmBinDir();
   if (npmBinDir) {
     shimEnv.LOBSTERAI_NPM_BIN_DIR = npmBinDir;
   }
+  for (const override of overrides) {
+    shimEnv = { ...shimEnv, ...override };
+  }
+  applyPythonEncodingDefaults(shimEnv, { sources: [process.env, ...overrides] });
   return shimEnv;
 }
 
@@ -339,14 +344,14 @@ export class McpRuntime {
       launch = {
         command: readyResolution.command,
         args: readyResolution.args || [],
-        env: { ...buildMcpShimEnv(), ...(readyResolution.env || {}), ...(server.env || {}) },
+        env: buildMcpShimEnv(readyResolution.env, server.env),
       };
     } else {
       const resolvedCommand = await resolveStdioCommand(server);
       launch = {
         command: resolvedCommand.command,
         args: resolvedCommand.args,
-        env: { ...buildMcpShimEnv(), ...(resolvedCommand.env || {}) },
+        env: buildMcpShimEnv(resolvedCommand.env),
       };
     }
 
@@ -384,7 +389,7 @@ export class McpRuntime {
         transportType: 'stdio',
         command: r.command,
         args: r.args,
-        env: { ...buildMcpShimEnv(), ...(r.env || {}) },
+        env: buildMcpShimEnv(r.env),
         ...passthroughFields(server),
       });
     };
@@ -401,7 +406,7 @@ export class McpRuntime {
               transportType: 'stdio',
               command: readyResolution.command,
               args: readyResolution.args || [],
-              env: { ...buildMcpShimEnv(), ...(readyResolution.env || {}), ...(server.env || {}) },
+              env: buildMcpShimEnv(readyResolution.env, server.env),
               ...passthroughFields(server),
             });
             continue;

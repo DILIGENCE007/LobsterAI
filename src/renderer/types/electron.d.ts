@@ -10,6 +10,7 @@ import type {
   ActivitySlotResponse,
 } from '../../shared/activity/constants';
 import type { ExpertCatalog } from '../../shared/agent/presets';
+import type { UsageContext } from '../../shared/analytics/usage';
 import type { AppUpdateActiveWorkloads, AppUpdateCheckResult, AppUpdateRuntimeState } from '../../shared/appUpdate/constants';
 import type { MarkdownFileBridge } from '../../shared/artifactPreview/markdownEditing';
 import type { ReviewScopeRequest } from '../../shared/artifactPreview/reviewScopes';
@@ -999,6 +1000,7 @@ interface IElectronAPI {
   };
   cowork: {
     startSession: (options: {
+      analytics?: UsageContext;
       prompt: string;
       cwd?: string;
       systemPrompt?: string;
@@ -1024,6 +1026,7 @@ interface IElectronAPI {
       engineStatus?: OpenClawEngineStatus;
     }>;
     continueSession: (options: {
+      analytics?: UsageContext;
       sessionId: string;
       prompt: string;
       systemPrompt?: string;

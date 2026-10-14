@@ -1,9 +1,11 @@
 import { ArrowUpRightIcon, CheckIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import { ExpertUiEvent } from '@shared/agent/presets';
+import { UsageEntry, UsageStage } from '@shared/analytics/usage';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
 import { i18nService } from '../../services/i18n';
+import { reportExpertJourney } from '../../services/usageAnalytics';
 import type { RootState } from '../../store';
 import { getAgentDisplayName, usesManagedPresetAvatar } from '../../utils/agentDisplay';
 import AgentAvatarIcon from '../agent/AgentAvatarIcon';
@@ -26,17 +28,25 @@ const ExpertPickerMenuItem: React.FC<ExpertPickerMenuItemProps> = ({ disabled, m
   const buttonRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const shownRef = useRef(false);
   const { agents, currentAgentId } = useSelector((state: RootState) => state.agent);
   const t = (key: string) => i18nService.t(key);
   const matching = agents.filter(agent => agent.enabled && `${getAgentDisplayName(agent)} ${agent.description}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   const show = (focusSearch = false) => {
     if (disabled) return;
+    if (!shownRef.current) {
+      shownRef.current = true;
+      reportExpertJourney(UsageStage.View, { entry: UsageEntry.Picker, installedCount: agents.filter(agent => agent.enabled).length });
+    }
     menuItem.onOpenChange(true);
     if (focusSearch) requestAnimationFrame(() => searchRef.current?.focus());
   };
 
   useEffect(() => {
-    if (!menuItem.open) setQuery('');
+    if (!menuItem.open) {
+      setQuery('');
+      shownRef.current = false;
+    }
   }, [menuItem.open]);
 
   useLayoutEffect(() => {

@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { parseExpertCatalog, parseExpertStoreManifest } from '../../shared/agent/expertCatalogValidation';
 import type { ExpertCatalog, ExpertStoreManifest } from '../../shared/agent/presets';
+import { usageFailureCode, type UsageParams } from '../../shared/analytics/usage';
 
 const MAX_CATALOG_BYTES = 4 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 32 * 1024;
@@ -49,6 +50,7 @@ interface ExpertStoreOptions {
   cacheDirectory: string;
   fetchText?: typeof fetchExpertStoreText;
   now?: () => number;
+  onLoad?: (fields: UsageParams) => void;
 }
 
 interface StoreEntry {
@@ -94,6 +96,8 @@ export class ExpertStore {
   }
 
   private async load(endpoint: string, entry: StoreEntry): Promise<ExpertCatalog> {
+    const startedAt = this.now();
+    let phase: ExpertCatalogLoadPhase = ExpertCatalogLoadPhase.Manifest;
     const cachePath = path.join(this.options.cacheDirectory, `${createHash('sha256').update(endpoint).digest('hex')}.json`);
     if (!entry.cached) {
       try {
@@ -114,7 +118,9 @@ export class ExpertStore {
       const value = response?.data?.value;
       const manifest = parseExpertStoreManifest(typeof value === 'string' ? JSON.parse(value) : value);
       if (entry.cached?.manifest.sha256 !== manifest.sha256 || entry.cached.manifest.version !== manifest.version) {
+        phase = ExpertCatalogLoadPhase.Catalog;
         const content = await this.fetchText(manifest.catalogUrl, MAX_CATALOG_BYTES);
+        phase = ExpertCatalogLoadPhase.Validation;
         const catalog = validateContent(manifest, content);
         const cached = { endpoint, manifest, content };
         // Keep the previous valid file if download, parsing or persistence fails.
@@ -129,12 +135,22 @@ export class ExpertStore {
         entry.cached = cached;
       }
       entry.refreshAfter = this.now() + REFRESH_INTERVAL_MS;
+      this.reportLoad({ outcome: 'succeeded', catalogVersion: entry.catalog?.version, durationMs: this.now() - startedAt, cacheFallback: false });
       return entry.catalog!;
     } catch (error) {
+      this.reportLoad({ outcome: 'failed', failureStage: phase, failureCode: usageFailureCode(error),
+        cacheFallback: Boolean(entry.catalog), catalogVersion: entry.catalog?.version, durationMs: this.now() - startedAt });
       if (!entry.catalog) throw error;
       entry.refreshAfter = this.now() + RETRY_INTERVAL_MS;
       console.warn('[ExpertStore] Using cached catalog after refresh failure:', error);
       return entry.catalog;
     }
   }
+
+  private reportLoad(fields: UsageParams): void {
+    try { this.options.onLoad?.(fields); } catch { /* Reporting must not affect catalog availability. */ }
+  }
 }
+
+const ExpertCatalogLoadPhase = { Manifest: 'manifest', Catalog: 'catalog', Validation: 'validation' } as const;
+type ExpertCatalogLoadPhase = typeof ExpertCatalogLoadPhase[keyof typeof ExpertCatalogLoadPhase];

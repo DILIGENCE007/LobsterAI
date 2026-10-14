@@ -1,3 +1,4 @@
+import type { UsageContext } from '../../shared/analytics/usage';
 import type { CoworkBrowserAnnotationMessageBatch } from '../../shared/cowork/browserAnnotations';
 import type {
   CoworkContextUsageFailureReason,
@@ -422,6 +423,7 @@ export interface SubagentSessionSummary {
 
 // Start session options
 export interface CoworkStartOptions {
+  analytics?: UsageContext;
   prompt: string;
   cwd?: string;
   systemPrompt?: string;
@@ -443,6 +445,7 @@ export interface CoworkStartOptions {
 
 // Continue session options
 export interface CoworkContinueOptions {
+  analytics?: UsageContext;
   sessionId: string;
   prompt: string;
   systemPrompt?: string;
