@@ -8,6 +8,7 @@ import {
   resolveCompanionBounds,
   resolveCompanionCardBounds,
   resolveCompanionComposerLayout,
+  resolveCompanionLoginLayout,
   resolveCompanionStageBounds,
   resolveCompanionToolbarBounds,
   resolveCompanionToolbarMenuBounds,
@@ -85,6 +86,53 @@ describe('surfaces around the orb', () => {
       expect(cardBottom).toBeGreaterThan(area.y + area.height / 2 + card.height / 2);
       expect(cardBottom).toBeLessThan(area.y + area.height);
       expect(bounds.width).toBe(card.width + room.side);
+    });
+  });
+
+  describe('login page', () => {
+    const gap = DesktopCompanionSize.Gap;
+    const size = DesktopCompanionSize.ComposerLogin;
+
+    test.each([DesktopCompanionSize.BrandOrb, DesktopCompanionSize.Orb])(
+      'leaves the whole %j orb clear at both screen edges', orbSize => {
+        const right = { ...orbSize, x: area.width - orbSize.width, y: 700 };
+        const left = { ...orbSize, x: area.x, y: area.y };
+        const before = resolveCompanionLoginLayout(right, area);
+        const after = resolveCompanionLoginLayout(left, area);
+        expect(before.placement).toBe(DesktopCompanionPanelPlacement.Left);
+        expect(before.bounds).toMatchObject(size);
+        expect(before.bounds.x + before.bounds.width).toBe(right.x - gap);
+        expect(after.placement).toBe(DesktopCompanionPanelPlacement.Right);
+        expect(after.bounds).toMatchObject(size);
+        expect(after.bounds.x).toBe(left.x + left.width + gap);
+        expect(after.bounds.y).toBe(area.y);
+      },
+    );
+
+    test.each([700, 100])('uses vertical room for a full-size welcome page near the middle at y=%i', y => {
+      const middle = { ...orb, x: 700, y };
+      const { bounds } = resolveCompanionLoginLayout(middle, area);
+      expect(bounds).toMatchObject(size);
+      expect(bounds.y + bounds.height <= middle.y - gap || bounds.y >= middle.y + middle.height + gap).toBe(true);
+      expect(bounds).toEqual(clampCompanionBounds(bounds, area));
+    });
+
+    test.each([0, -916])('shrinks within the free side on a small display starting at x=%i', x => {
+      const small = { x, y: 25, width: 916, height: 431 };
+      for (const offset of [0, 430, 816]) {
+        const anchor = { ...DesktopCompanionSize.BrandOrb, x: x + offset, y: 350 };
+        const { bounds } = resolveCompanionLoginLayout(anchor, small);
+        expect(bounds).toEqual(clampCompanionBounds(bounds, small));
+        expect(bounds.height).toBe(size.height);
+        expect(bounds.x + bounds.width <= anchor.x - gap || bounds.x >= anchor.x + anchor.width + gap).toBe(true);
+      }
+    });
+
+    test('keeps the shortcut-only welcome page centered without an orb', () => {
+      const layout = resolveCompanionLoginLayout(null, area);
+      expect(layout.placement).toBe(DesktopCompanionPanelPlacement.Center);
+      expect(layout.bounds).toMatchObject(size);
+      expect(layout.bounds.x + layout.bounds.width / 2).toBe(area.x + area.width / 2);
     });
   });
 

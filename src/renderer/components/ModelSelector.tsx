@@ -47,6 +47,8 @@ interface ModelSelectorProps {
   value?: Model | null;
   /** Controlled mode callback. `null` means the user picked "default". */
   onChange?: (model: Model | null, meta: ModelSelectorChangeMeta) => void;
+  /** Reuse the host composer's login flow when a plan model requires sign-in. */
+  onLoginRequired?: () => void;
   /** Show a "default" option at the top of the dropdown (controlled mode only). */
   defaultLabel?: string;
   /** Disable interaction while the selected model is being persisted. */
@@ -437,6 +439,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   dropdownDirection = 'auto',
   value,
   onChange,
+  onLoginRequired,
   defaultLabel,
   disabled = false,
   compact = false,
@@ -761,6 +764,14 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     });
   };
 
+  const handleLoginRequired = () => {
+    if (onLoginRequired) {
+      onLoginRequired();
+      return;
+    }
+    setRestrictedPrompt(ModelAccessPromptKind.Login);
+  };
+
   const handleModelSelect = (model: Model | null) => {
     if (disabled) return;
     if (isModelAgenticBlocked(model)) {
@@ -770,7 +781,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       return;
     }
     if (model && model.accessible === false) {
-      setRestrictedPrompt(isLoggedIn ? ModelAccessPromptKind.Subscribe : ModelAccessPromptKind.Login);
+      if (isLoggedIn) {
+        setRestrictedPrompt(ModelAccessPromptKind.Subscribe);
+      } else {
+        handleLoginRequired();
+      }
       setHoveredModel(null);
       setIsOpen(false);
       return;
@@ -927,7 +942,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
             <button
               type="button"
               disabled={disabled}
-              onClick={() => setRestrictedPrompt(ModelAccessPromptKind.Login)}
+              onClick={handleLoginRequired}
               className={`flex min-w-0 items-center overflow-hidden text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-wait disabled:opacity-70 ${triggerClassName}`}
             >
               <LockClosedIcon className={`${triggerIconClassName} shrink-0`} />

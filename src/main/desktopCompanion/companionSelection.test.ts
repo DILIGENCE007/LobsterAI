@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import {
+  COMPANION_COPY_MAX_BYTES,
   CompanionCapability,
   DEFAULT_DESKTOP_COMPANION_PREFERENCES,
   DesktopCompanionIpc,
@@ -133,6 +134,49 @@ beforeEach(() => {
 });
 
 describe('selection toolbar', () => {
+  test.each([33_890, 250_000, COMPANION_COPY_MAX_BYTES])('preserves all %i characters of selected JSON for copying', length => {
+    const controller = create();
+    const prefix = '{"payload":"';
+    const suffix = '","tail":"complete"}';
+    const text = prefix + 'x'.repeat(length - prefix.length - suffix.length) + suffix;
+    select(text);
+    expect(sentSelection()?.text.length).toBe(length);
+    expect(sentSelection()?.text).toBe(text);
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
+    expect(sentSelection()?.text).toBe(text);
+    controller.dispose();
+  });
+
+  test.each(['x'.repeat(COMPANION_COPY_MAX_BYTES + 1), '字'.repeat(Math.ceil(COMPANION_COPY_MAX_BYTES / 3))])(
+    'replaces an oversized selection with a notice and recovers on the next selection', text => {
+      const controller = create();
+      select(text);
+      expect(sentSelection()).toMatchObject({ text: '', tooLarge: true, actions: [], mode: DesktopCompanionSelectionMode.Toolbar });
+      controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
+      expect(sentSelection()).toMatchObject({ mode: DesktopCompanionSelectionMode.Toolbar, action: null });
+      select('a smaller selection');
+      expect(sentSelection()).toMatchObject({ text: 'a smaller selection', tooLarge: false });
+      controller.dispose();
+    },
+  );
+
+  test('preserves selected whitespace and Unicode verbatim', () => {
+    const controller = create();
+    const text = ' \t\r\n  {"message":"完整内容 🦞"}\r\n\t ';
+    select(text);
+    expect(sentSelection()?.text).toBe(text);
+    controller.dispose();
+  });
+
+  test('ignores selections containing only whitespace', () => {
+    const controller = create();
+    select(' \t\r\n ');
+    vi.advanceTimersByTime(200);
+    expect(sentSelection()).toBeUndefined();
+    expect(win.visible).toBe(false);
+    controller.dispose();
+  });
+
   test('reserves menu space before showing the toolbar and keeps the window still when toggling more', () => {
     const controller = create();
     select('ambient co-worker', 'com.microsoft.Word', 450);

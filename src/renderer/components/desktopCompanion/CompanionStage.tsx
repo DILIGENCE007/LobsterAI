@@ -1,17 +1,5 @@
-import {
-  ChartBarIcon,
-  ChartPieIcon,
-  ChatBubbleLeftRightIcon,
-  DocumentMagnifyingGlassIcon,
-  DocumentTextIcon,
-  FolderOpenIcon,
-  LanguageIcon,
-  ListBulletIcon,
-  MicrophoneIcon,
-  PhotoIcon,
-  XMarkIcon,
-} from '@heroicons/react/24/outline';
-import React, { type ComponentType, type SVGProps, useEffect, useRef, useState } from 'react';
+import { PaperClipIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import React, { useEffect, useRef, useState } from 'react';
 
 import {
   type DesktopCompanionStage,
@@ -30,25 +18,10 @@ import { COMPANION_WELCOME_TOPIC, companionHintCopyKeys } from '../../../shared/
 import { i18nService } from '../../services/i18n';
 import { CompanionPhase, companionPhase } from './companionPresentation';
 import { fileKindsFromDataTransfer, filesToAttachments, hasFiles, startCompanionTask } from './companionTasks';
-import CompanionCharacter from './mascot/CompanionCharacter';
-import { CompanionMood } from './mascot/companionMood';
 import { useCompanionSession } from './useCompanionSession';
 import { useMeasuredSurface } from './useMeasuredSurface';
 
 const t = (key: string) => i18nService.t(key);
-
-const DROP_ICONS: Record<CompanionDropAction, ComponentType<SVGProps<SVGSVGElement>>> = {
-  [CompanionDropAction.Digest]: DocumentTextIcon,
-  [CompanionDropAction.Translate]: LanguageIcon,
-  [CompanionDropAction.Analyze]: ChartBarIcon,
-  [CompanionDropAction.Chart]: ChartPieIcon,
-  [CompanionDropAction.Outline]: ListBulletIcon,
-  [CompanionDropAction.Script]: MicrophoneIcon,
-  [CompanionDropAction.Ocr]: DocumentMagnifyingGlassIcon,
-  [CompanionDropAction.Describe]: PhotoIcon,
-  [CompanionDropAction.Organize]: FolderOpenIcon,
-  [CompanionDropAction.Ask]: ChatBubbleLeftRightIcon,
-};
 
 type HintStage = Extract<DesktopCompanionStage, { kind: typeof DesktopCompanionStageKind.Hint }>;
 type DropStage = Extract<DesktopCompanionStage, { kind: typeof DesktopCompanionStageKind.Drop }>;
@@ -130,47 +103,59 @@ function TaskStrip({ stage }: { stage: TaskStage }) {
 const StartStatus = { Idle: 'idle', Starting: 'starting', Failed: 'failed' } as const;
 type StartStatus = typeof StartStatus[keyof typeof StartStatus];
 
-function DropZone({ stage, skin }: { stage: DropStage; skin: string }) {
+function DropZone({ stage }: { stage: DropStage }) {
   const api = window.electron.desktopCompanion;
   const depth = useRef(0);
+  const received = useRef(false);
+  const dismissTimer = useRef<ReturnType<typeof setTimeout>>();
   const [hoverKinds, setHoverKinds] = useState<CompanionFileKind[]>([]);
   const [active, setActive] = useState<CompanionDropAction | null>(null);
   const [status, setStatus] = useState<StartStatus>(StartStatus.Idle);
   const kinds = stage.kinds.length ? stage.kinds : hoverKinds;
   const actions = companionDropActions(kinds);
   const first = stage.files[0];
+  useEffect(() => () => clearTimeout(dismissTimer.current), []);
 
   const run = async (event: React.DragEvent, action: CompanionDropAction) => {
     event.preventDefault();
     event.stopPropagation();
+    if (received.current || !hasFiles(event.dataTransfer)) return;
+    received.current = true;
     depth.current = 0;
     setActive(null);
-    const attachments = await filesToAttachments(Array.from(event.dataTransfer.files));
-    if (!attachments.length) { void api.stageCommand({ type: DesktopCompanionStageCommandType.DropCancel }); return; }
-    if (action === CompanionDropAction.Ask) {
-      void api.stageCommand({ type: DesktopCompanionStageCommandType.DropAsk, attachments });
-      return;
-    }
     setStatus(StartStatus.Starting);
-    const result = await startCompanionTask({ prompt: t(companionDropCopyKeys(action).prompt), attachments });
-    if ('sessionId' in result) {
-      void api.stageCommand({ type: DesktopCompanionStageCommandType.DropStarted, sessionId: result.sessionId });
-      return;
+    // Keep the strip steady while the drop is being resolved, even after mouse-up.
+    void api.stageCommand({ type: DesktopCompanionStageCommandType.StageHover, hovering: true });
+    try {
+      const attachments = await filesToAttachments(Array.from(event.dataTransfer.files));
+      if (!attachments.length) { void api.stageCommand({ type: DesktopCompanionStageCommandType.DropCancel }); return; }
+      if (action === CompanionDropAction.Ask) {
+        void api.stageCommand({ type: DesktopCompanionStageCommandType.DropAsk, attachments });
+        return;
+      }
+      const result = await startCompanionTask({ prompt: t(companionDropCopyKeys(action).prompt), attachments });
+      if ('sessionId' in result) {
+        void api.stageCommand({ type: DesktopCompanionStageCommandType.DropStarted, sessionId: result.sessionId });
+        return;
+      }
+    } catch (error) {
+      console.error('[DesktopCompanion] Failed to handle file drop', error);
     }
     setStatus(StartStatus.Failed);
-    setTimeout(() => { void api.stageCommand({ type: DesktopCompanionStageCommandType.DropCancel }); }, 2_400);
+    dismissTimer.current = setTimeout(() => { void api.stageCommand({ type: DesktopCompanionStageCommandType.DropCancel }); }, 2_400);
   };
 
-  const title = status === StartStatus.Starting
+  const hint = status === StartStatus.Starting
     ? t('desktopCompanionDropStarting')
-    : status === StartStatus.Failed ? t('desktopCompanionDropFailed') : first ? t('desktopCompanionDropTitle') : t('desktopCompanionDropTitleIdle');
+    : status === StartStatus.Failed ? t('desktopCompanionDropFailed') : t('desktopCompanionDropTitle');
 
   return (
     <div
       className="stage-drop"
       data-status={status}
+      aria-busy={status === StartStatus.Starting}
       onDragEnter={event => {
-        if (!hasFiles(event.dataTransfer)) return;
+        if (received.current || !hasFiles(event.dataTransfer)) return;
         event.preventDefault();
         depth.current += 1;
         if (depth.current === 1) {
@@ -180,42 +165,42 @@ function DropZone({ stage, skin }: { stage: DropStage; skin: string }) {
       }}
       onDragOver={event => { if (hasFiles(event.dataTransfer)) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }}
       onDragLeave={() => {
+        if (received.current) return;
         depth.current = Math.max(0, depth.current - 1);
         if (depth.current === 0) {
           setActive(null);
           void api.stageCommand({ type: DesktopCompanionStageCommandType.StageHover, hovering: false });
         }
       }}
-      // Dropping between the tiles still does the most likely thing.
-      onDrop={event => { void run(event, actions[0]); }}
+      // The neutral area attaches files for a question; only a named action runs a task.
+      onDrop={event => { void run(event, CompanionDropAction.Ask); }}
     >
       <header className="drop-header">
-        <CompanionCharacter skin={skin} mood={CompanionMood.Catch} size={24} showBadge={false} />
-        <strong>{title}</strong>
-        {first && (
-          <span className="drop-file" title={stage.files.map(file => file.name).join('\n')}>
-            <span className="drop-file-name">{first.name}</span>
-            {stage.files.length > 1 && <span className="drop-file-more">+{stage.files.length - 1}</span>}
-          </span>
-        )}
+        <span className="drop-file" title={stage.files.map(file => file.name).join('\n')}>
+          <PaperClipIcon aria-hidden="true" />
+          <span className="drop-file-name">{first?.name ?? t('desktopCompanionDropTitleIdle')}</span>
+          {stage.files.length > 1 && <span className="drop-file-more">+{stage.files.length - 1}</span>}
+        </span>
+        <span className="drop-hint" role="status">{hint}</span>
       </header>
-      <div className="drop-tiles">
+      <div className="drop-actions" role="group" aria-label={t('desktopCompanionDropTitleIdle')}>
         {actions.map(action => {
-          const Icon = DROP_ICONS[action];
           const keys = companionDropCopyKeys(action);
           return (
             <div
               key={action}
-              className="drop-tile"
+              className="drop-action"
               data-active={active === action}
-              data-ask={action === CompanionDropAction.Ask}
-              onDragEnter={() => setActive(action)}
-              onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; setActive(action); }}
+              title={t(keys.detail)}
+              onDragEnter={event => { if (!received.current && hasFiles(event.dataTransfer)) setActive(action); }}
+              onDragOver={event => {
+                if (received.current || !hasFiles(event.dataTransfer)) return;
+                event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; setActive(action);
+              }}
+              onDragLeave={() => setActive(current => current === action ? null : current)}
               onDrop={event => { void run(event, action); }}
             >
-              <Icon />
-              <strong>{t(keys.title)}</strong>
-              <span>{t(keys.detail)}</span>
+              {t(keys.title)}
             </div>
           );
         })}
@@ -233,7 +218,7 @@ export default function CompanionStage({ state }: { state: DesktopCompanionState
     <div className="stage-surface" data-side={state.stageSide} data-kind={stage.kind}>
       <div className="stage-card" ref={cardRef} key={stage.id}>
         {stage.kind === DesktopCompanionStageKind.Hint && <HintBubble stage={stage} />}
-        {stage.kind === DesktopCompanionStageKind.Drop && <DropZone stage={stage} skin={state.preferences.skin} />}
+        {stage.kind === DesktopCompanionStageKind.Drop && <DropZone stage={stage} />}
         {stage.kind === DesktopCompanionStageKind.Task && <TaskStrip stage={stage} />}
       </div>
     </div>

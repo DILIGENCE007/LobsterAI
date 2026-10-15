@@ -10,6 +10,7 @@ import { i18nService } from '../../services/i18n';
 import { CompanionPhase, companionPhase } from './companionPresentation';
 import CompanionTaskFollowUp from './CompanionTaskFollowUp';
 import { SelectionError, SelectionThinking, StopGlyph } from './SelectionCard';
+import { CompanionFollowUpPhase, useCompanionFollowUp } from './useCompanionFollowUp';
 import { useCompanionRecentTasks } from './useCompanionRecentTasks';
 import { useMeasuredSurface } from './useMeasuredSurface';
 import { usePointerPassThrough } from './usePointerPassThrough';
@@ -28,11 +29,16 @@ function TaskBubble({ task, expanded, onRefresh, onFollowUp, onCloseFollowUp }: 
   const [stopping, setStopping] = useState(false);
   const [closing, setClosing] = useState(false);
   const [actionFailed, setActionFailed] = useState(false);
+  const followUpSubmission = useCompanionFollowUp(task.id, onRefresh);
+  const activity = followUpSubmission.activity;
+  const steering = activity?.phase === CompanionFollowUpPhase.Steering;
+  const followUpExpanded = expanded && !steering;
+  const title = activity?.prompt ?? task.title;
   const phase = companionPhase(task, false);
-  const running = phase.value === CompanionPhase.Running;
+  const running = Boolean(activity) || phase.value === CompanionPhase.Running;
   const StatusIcon = phase.value === CompanionPhase.Completed ? CheckCircleIcon
     : phase.value === CompanionPhase.Error ? ExclamationCircleIcon : PauseCircleIcon;
-  const preview = running ? t('desktopCompanionAnswerThinking')
+  const preview = steering ? t('desktopCompanionAnswerSteering') : running ? t('desktopCompanionAnswerThinking')
     : phase.value === CompanionPhase.Completed && task.preview ? task.preview : t(phase.key);
   const stop = async () => {
     setStopping(true);
@@ -74,18 +80,18 @@ function TaskBubble({ task, expanded, onRefresh, onFollowUp, onCloseFollowUp }: 
     }
   };
   return (
-    <section className="sel-card result-task-item" data-running={running} data-expanded={expanded}>
-      <button type="button" className="result-close" disabled={closing}
+    <section className="sel-card result-task-item" data-running={running} data-expanded={followUpExpanded}>
+      <button type="button" className="result-close" disabled={closing || steering}
         title={t('desktopCompanionResultDismiss')} aria-label={`${t('desktopCompanionResultDismiss')}: ${task.title}`}
         onClick={() => { void close(); }}><XMarkIcon aria-hidden="true" /></button>
       <button type="button" className="result-task"
-        title={`${task.title} · ${t(phase.key)} · ${t('desktopCompanionResultOpenMain')}`}
-        aria-label={`${task.title} · ${t(phase.key)} · ${t('desktopCompanionResultOpenMain')}`}
+        title={`${title} · ${running ? preview : t(phase.key)} · ${t('desktopCompanionResultOpenMain')}`}
+        aria-label={`${title} · ${running ? preview : t(phase.key)} · ${t('desktopCompanionResultOpenMain')}`}
         onClick={() => { void api.openResult(task.id); }}>
         <span className="result-task-copy" data-stacked={running || actionFailed}>
           {running || actionFailed ? <>
-            <strong className="result-task-heading">{task.title}</strong>
-            <span className="result-task-preview" role={actionFailed ? 'alert' : undefined}>
+            <strong className="result-task-heading">{title}</strong>
+            <span className="result-task-preview" role={actionFailed ? 'alert' : 'status'}>
               {actionFailed ? t('desktopCompanionRequestFailed') : preview}
             </span>
           </> : <>
@@ -96,14 +102,16 @@ function TaskBubble({ task, expanded, onRefresh, onFollowUp, onCloseFollowUp }: 
       </button>
       <div className="result-task-actions">
         <button type="button" className="result-follow-up-button"
+          disabled={steering}
           title={t('desktopCompanionResultFollowUp')} aria-label={`${t('desktopCompanionResultFollowUp')}: ${task.title}`}
-          aria-expanded={expanded}
+          aria-expanded={followUpExpanded}
           onClick={() => { void followUp(); }}><ArrowTurnDownLeftIcon aria-hidden="true" /></button>
-        {running && <button type="button" className="result-stop" disabled={stopping}
+        {running && <button type="button" className="result-stop" disabled={stopping || steering}
           title={t('desktopCompanionStop')} aria-label={t('desktopCompanionStop')}
           onClick={() => { void stop(); }}><StopGlyph /></button>}
       </div>
-      <CompanionTaskFollowUp task={task} expanded={expanded} onClose={onCloseFollowUp}
+      <CompanionTaskFollowUp expanded={followUpExpanded} pending={steering} onClose={onCloseFollowUp}
+        onSubmit={followUpSubmission.submit}
         onSubmitted={() => { onCloseFollowUp(); onRefresh(); }} />
     </section>
   );

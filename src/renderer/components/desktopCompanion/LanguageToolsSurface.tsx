@@ -45,13 +45,14 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
   const followUp = useTranslationFollowUp(`${input?.id ?? ''}:${tools.translationKey}`, input?.text ?? '', translation);
   const [pinned, setPinned] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState('');
   const [handoffError, setHandoffError] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
   useMeasuredSurface(rootRef, !!input, input?.id);
   usePointerPassThrough(input?.id, api.setLanguageToolPassThrough);
 
-  useEffect(() => { setPinned(false); setCopied(false); setHandoffError(false); }, [input?.id]);
+  useEffect(() => { setPinned(false); setCopied(false); setCopyError(''); setHandoffError(false); }, [input?.id]);
   // Dragging the card pins it in the main process.
   useEffect(() => api.onLanguageToolPinned(value => setPinned(value)), [api]);
   useEffect(() => {
@@ -96,9 +97,12 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
     } catch { setHandoffError(true); }
   };
   const copy = () => {
-    void api.copyText(translation).then(() => {
+    setCopied(false);
+    setCopyError('');
+    void api.copyText(translation).then(result => {
+      if (!result.success) { setCopyError(result.error); return; }
       setCopied(true); setTimeout(() => setCopied(false), 1_400);
-    });
+    }).catch(() => setCopyError(t('desktopCompanionCopyFailed')));
   };
   const playLabel = t(canReplay ? 'desktopToolsReplay'
     : playback.status === SpeechStatus.Idle ? 'desktopToolsReadAloud' : canResume ? 'desktopToolsResume' : 'desktopToolsPause');
@@ -132,6 +136,7 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
         )}
 
         <div className="sel-scroll" ref={conversationRef}>
+          {copyError && <SelectionError message={copyError} />}
           {!isTranslation && <SourceQuote key={input.id} text={source} lines={4} />}
 
           {isTranslation && (

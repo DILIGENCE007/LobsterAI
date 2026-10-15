@@ -57,4 +57,5 @@ sandbox/
 openspec/
 .superpowers/
 .diagram/
+output
 logs/

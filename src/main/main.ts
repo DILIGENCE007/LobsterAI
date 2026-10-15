@@ -5933,10 +5933,10 @@ if (!gotTheLock) {
     }
   };
 
-  const emitAuthSessionChanged = (event: AuthSessionChangedEvent): void => {
+  const emitAuthSessionChanged = (event: AuthSessionChangedEvent, excludedWebContentsId?: number): void => {
     desktopCompanionManager?.resetLanguageTools();
     for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) {
+      if (!window.isDestroyed() && window.webContents.id !== excludedWebContentsId) {
         window.webContents.send(AuthIpcChannel.SessionChanged, event);
       }
     }
@@ -7829,15 +7829,18 @@ if (!gotTheLock) {
     }
 
     if (options.notifyRenderer) {
+      const isUserLogout = options.reason === AuthSessionChangeReason.UserLogout;
       emitAuthSessionChanged({
-        status: AuthSessionStatus.Expired,
+        status: isUserLogout ? AuthSessionStatus.Unauthenticated : AuthSessionStatus.Expired,
         reason: options.reason,
       });
-      emitAuthLifecycleEvent({
-        eventType: AuthLifecycleEventType.TerminalExpired,
-        outcome: AuthSessionStatus.Expired,
-        reason: options.reason,
-      });
+      if (!isUserLogout) {
+        emitAuthLifecycleEvent({
+          eventType: AuthLifecycleEventType.TerminalExpired,
+          outcome: AuthSessionStatus.Expired,
+          reason: options.reason,
+        });
+      }
     }
   };
 
@@ -8030,7 +8033,19 @@ if (!gotTheLock) {
       );
       const quota = normalizeQuota(body.data.quota);
       const purchaseOffer = await activateLowCreditPurchaseOffer();
+      if (
+        authAccountGeneration !== exchangeAccountGeneration
+        || authExchangeIntentSequence !== exchangeIntent.intentId
+      ) {
+        return { success: false, error: t('authAccountChanged') };
+      }
       syncOpenClawConfigIfAuthQuotaGateChanged(startingQuotaGateState);
+      // The initiating renderer applies the exchange result; other windows
+      // must refresh their own auth stores without consuming the OAuth code.
+      emitAuthSessionChanged({
+        status: AuthSessionStatus.Authenticated,
+        reason: AuthSessionChangeReason.UserLogin,
+      }, _event.sender.id);
       return {
         success: true,
         user: body.data.user,
@@ -8414,7 +8429,7 @@ if (!gotTheLock) {
     const logoutBody = JSON.stringify(withKeyfromBody({}));
     clearLocalAuthSession({
       reason: AuthSessionChangeReason.UserLogout,
-      notifyRenderer: false,
+      notifyRenderer: true,
     });
     console.log('[Auth] cleared local login state and scheduled server model config refresh');
 

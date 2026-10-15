@@ -99,7 +99,7 @@ export default function CompanionComposer() {
     window.addEventListener('app:showToast', onToast);
     const stops = [
       api.onChanged(setCompanion),
-      window.electron.auth.onSessionChanged(() => { void authService.refreshAuthState({ clearOnFailure: false }); }),
+      window.electron.auth.onSessionChanged(event => { void authService.handleSessionChanged(event); }),
     ];
     return () => {
       active = false;
@@ -274,6 +274,7 @@ export default function CompanionComposer() {
             workingDirectory={start.workingDirectory}
             showModelSelector
             showAgentSelector
+            onLoginPromptVisibilityChange={api.setPanelLoginVisible}
             onManageSkills={openMain}
             onManageKits={openMain}
             onGoalCommand={command => submit(command)}

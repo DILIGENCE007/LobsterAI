@@ -458,6 +458,7 @@ interface CoworkPromptInputProps {
   /** When true, hides attachment/skill buttons but keeps the input box visible (disabled) */
   remoteManaged?: boolean;
   showNewUserWelcomeLoginOverlay?: boolean;
+  onLoginPromptVisibilityChange?: (visible: boolean) => void;
   /**
    * A narrow card such as the desktop companion's quick panel: the kit and
    * media pickers move into the add menu, with folder, agent and model controls
@@ -501,6 +502,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       canSteer = false,
       remoteManaged = false,
       showNewUserWelcomeLoginOverlay = false,
+      onLoginPromptVisibilityChange,
       narrow = false,
     } = props;
     const dispatch = useDispatch();
@@ -803,6 +805,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     setShowChatLoginExperiencePrompt(false);
     setChatLoginExperiencePending(false);
   }, [isLoggedIn]);
+
+  useEffect(() => {
+    onLoginPromptVisibilityChange?.(showChatLoginExperiencePrompt);
+    return () => onLoginPromptVisibilityChange?.(false);
+  }, [onLoginPromptVisibilityChange, showChatLoginExperiencePrompt]);
 
   const {
     handleVoiceInput,
@@ -1807,11 +1814,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       if (
         accessPrompt === ModelAccessPromptKind.Login
         && !isLoggedIn
-        && !hasAccessibleUserModel
+        && (narrow || !hasAccessibleUserModel)
       ) {
         logPromptModelSelection(
           'debug',
-          'showing chat login experience prompt because submit requires login and no custom model is configured',
+          'showing chat login experience prompt because submit requires login',
         );
         setShowChatLoginExperiencePrompt(true);
         return;
@@ -2016,7 +2023,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     resetGoalInput(false);
     draftStartedAnalyticsRef.current = false;
     inputSourceOverrideRef.current = null;
-  }, [value, steerInputActive, steerValue, isVoiceRecording, stopVoiceRecordingAndRecognize, goalInputActive, goalInputMode, resetGoalInput, isStreaming, canSteer, remoteManaged, disabled, submitDisabled, isPatchingModel, onSubmit, onGoalCommand, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, browserAnnotationBatches, showFolderSelector, workingDirectory, dispatch, draftKey, selectedTextSnippets, pendingSteers.length, resolveSubmitModelAccessPrompt, isLoggedIn, hasAccessibleUserModel, isPlanMode, planConfirmation, reportPromptControl, getPromptCapabilityAnalyticsParams, getPromptContextAnalyticsParams, getPromptInputSource, goal, sessionId, preparePromptPayload, modelSupportsImage, queuedMediaSelection, authOwnerAccountKey, authAccountGeneration, effectiveModelIsAvailable, modelSelectionRefreshPending, effectiveSelectedModel?.id, effectiveSelectedModel?.providerKey]);
+  }, [value, steerInputActive, steerValue, isVoiceRecording, stopVoiceRecordingAndRecognize, goalInputActive, goalInputMode, resetGoalInput, isStreaming, canSteer, remoteManaged, disabled, submitDisabled, isPatchingModel, onSubmit, onGoalCommand, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, browserAnnotationBatches, showFolderSelector, workingDirectory, dispatch, draftKey, selectedTextSnippets, pendingSteers.length, resolveSubmitModelAccessPrompt, isLoggedIn, hasAccessibleUserModel, narrow, isPlanMode, planConfirmation, reportPromptControl, getPromptCapabilityAnalyticsParams, getPromptContextAnalyticsParams, getPromptInputSource, goal, sessionId, preparePromptPayload, modelSupportsImage, queuedMediaSelection, authOwnerAccountKey, authAccountGeneration, effectiveModelIsAvailable, modelSelectionRefreshPending, effectiveSelectedModel?.id, effectiveSelectedModel?.providerKey]);
   handleSubmitRef.current = handleSubmit;
 
   const handleSelectSkill = useCallback((skill: Skill) => {
@@ -2971,6 +2978,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       <ModelSelector
         compact={useHomeContextLayout}
         iconOnly={narrow}
+        onLoginRequired={narrow ? () => setShowChatLoginExperiencePrompt(true) : undefined}
         dropdownDirection="up"
         alignDropdownToTriggerEnd={useHomeContextLayout}
         portal={showReadOnlyContext}
@@ -4043,6 +4051,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   rows: narrow ? 1 : 2,
                   placeholder: textareaPlaceholder,
                   style: { minHeight: `${minHeight}px` },
+                  wrapperClassName: narrow ? 'relative w-full overflow-hidden rounded-t-2xl' : undefined,
                 })}
                 {mentionPickerOpen && (
                   <MediaMentionPicker

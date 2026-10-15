@@ -13,6 +13,7 @@ interface CaptureFrame {
   window: BrowserWindow;
   bounds: Rectangle;
   image: NativeImage;
+  preview?: string;
 }
 
 /** A one-shot capture. Only the crop is saved; full-screen frames live in memory until selection ends. */
@@ -22,6 +23,7 @@ export class CompanionScreenshotController {
   private active = false;
   private disposed = false;
   private loadTimer: ReturnType<typeof setTimeout> | undefined;
+  private timing: { started: number; captured: number; prepared: number } | null = null;
 
   constructor(private readonly env: CompanionWindowEnvironment) {
     const handle = (channel: string, callback: (frame: CaptureFrame, value: unknown) => unknown) => {
@@ -31,12 +33,27 @@ export class CompanionScreenshotController {
         return callback(frame, value);
       });
     };
-    handle(CompanionScreenshotIpc.GetFrame, frame => frame.image.toDataURL());
+    // Only the overlay uses JPEG. Keep the original pixels for the lossless PNG crop,
+    // and encode at most once even if the renderer requests the frame again.
+    handle(CompanionScreenshotIpc.GetFrame, frame => frame.preview
+      ??= `data:image/jpeg;base64,${frame.image.toJPEG(90).toString('base64')}`);
     handle(CompanionScreenshotIpc.Ready, frame => {
       frame.window.showInactive();
       const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
       if (display.bounds.x === frame.bounds.x && display.bounds.y === frame.bounds.y) frame.window.focus();
-      if ([...this.frames.values()].every(item => item.window.isVisible())) clearTimeout(this.loadTimer);
+      if ([...this.frames.values()].every(item => item.window.isVisible())) {
+        clearTimeout(this.loadTimer);
+        if (this.timing) {
+          const { started, captured, prepared } = this.timing;
+          console.debug('[DesktopCompanion] Screenshot overlay ready', {
+            captureMs: Math.round(captured - started),
+            prepareMs: Math.round(prepared - captured),
+            overlayMs: Math.round(performance.now() - prepared),
+            totalMs: Math.round(performance.now() - started),
+          });
+          this.timing = null;
+        }
+      }
     });
     handle(CompanionScreenshotIpc.Finish, (frame, value) => {
       if (value === null) { this.finish(null); return; }
@@ -49,6 +66,7 @@ export class CompanionScreenshotController {
   async capture(companions: Array<BrowserWindow | null>): Promise<DesktopCompanionAttachment | null> {
     if (this.active || this.disposed) return null;
     this.active = true;
+    const started = performance.now();
     const visible = companions.filter((win): win is BrowserWindow => !!win && !win.isDestroyed() && win.isVisible());
     let canceled = false;
     const cancel = () => { canceled = true; this.finish(null); };
@@ -67,6 +85,7 @@ export class CompanionScreenshotController {
           height: Math.ceil(Math.max(...displays.map(display => display.size.height * display.scaleFactor))),
         },
       });
+      const captured = performance.now();
       if (this.disposed || canceled) return null;
       if (!sources.length || !displays.length) throw new Error('No screens available for capture');
       if (process.platform === 'darwin') {
@@ -79,9 +98,11 @@ export class CompanionScreenshotController {
         const source = sources.find(item => item.display_id === String(display.id))
           ?? (displays.length === 1 && sources.length === 1 && !sources[0].display_id ? sources[0] : undefined);
         if (!source || source.thumbnail.isEmpty()) throw new Error('No screenshot available for display');
-        // Normalize NativeImage to a single scale before mapping logical selection coordinates.
-        return { bounds: display.bounds, image: nativeImage.createFromBuffer(source.thumbnail.toPNG()) };
+        // Normalize to one scale without a full-screen PNG encode/decode on the main thread.
+        const image = nativeImage.createFromBitmap(source.thumbnail.toBitmap(), source.thumbnail.getSize(1));
+        return { bounds: display.bounds, image };
       });
+      this.timing = { started, captured, prepared: performance.now() };
       const image = await new Promise<NativeImage | null>((resolve, reject) => {
         this.pending = { resolve, reject };
         this.loadTimer = setTimeout(() => this.fail(new Error('Screenshot overlay timed out')), 15_000);
@@ -107,6 +128,7 @@ export class CompanionScreenshotController {
       return { path: filePath, name: `${t('desktopCompanionScreenshotName')}.png`, isImage: true };
     } finally {
       this.pending = null;
+      this.timing = null;
       clearTimeout(this.loadTimer);
       this.closeFrames();
       screen.removeListener('display-removed', cancel);
