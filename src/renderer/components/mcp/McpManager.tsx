@@ -64,6 +64,7 @@ const OAUTH_ERROR_MESSAGE_KEYS: Partial<Record<McpOAuthErrorCode, string>> = {
   [McpOAuthErrorCode.CallbackUnavailable]: 'mcpOAuthCallbackUnavailable',
   [McpOAuthErrorCode.Timeout]: 'mcpOAuthSignInTimeout',
   [McpOAuthErrorCode.RuntimeUnavailable]: 'mcpOAuthRuntimeUnavailable',
+  [McpOAuthErrorCode.ServerNotLoaded]: 'mcpOAuthServerNotLoaded',
 };
 
 type RegistryGroupItem = Extract<McpInstalledItem, { kind: 'registryGroup' }>;

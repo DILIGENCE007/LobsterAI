@@ -113,6 +113,7 @@ OpenClaw（v2026.8.1）已经内置了完整的 MCP OAuth 支持：
 - 登录完成前网关已经尝试过连接并失败：OpenClaw 约 5 秒后会重试拉取工具目录，所以登录后马上发起的第一轮对话可能还没有该服务的工具，稍等即可。
 - 服务名包含非 ASCII 字符：`safeServerKey` 会转成 `mcp-<hash>`，CLI 与 `openclaw.json` 使用同一个键，令牌按服务名 + URL 识别，改名或改 URL 后需要重新登录。
 - 授权链接只接受 http/https，防止恶意服务让应用打开 `file:` 或自定义协议链接。
+- 还没有配置模型时，LobsterAI 只写入不含 MCP 服务的最简 `openclaw.json`，CLI 会报 “No MCP server named …”。登录前先检查服务是否已在 `mcp.servers` 中，不在则返回 `server_not_loaded`，提示用户先配置模型；CLI 返回同样的报错时也归到这个错误码。
 
 ## 6. 验收标准
 

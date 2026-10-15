@@ -9,6 +9,7 @@ import { McpOAuthErrorCode, McpOAuthState } from '../../shared/mcp/auth';
 import {
   buildMcpOAuthCliInvocation,
   extractMcpAuthorizationUrl,
+  isMcpServerInOpenClawConfig,
   type McpOAuthCliContext,
   McpOAuthCliError,
   type McpOAuthSpawn,
@@ -157,6 +158,17 @@ describe('runMcpOAuthLogin', () => {
     expect((error as McpOAuthCliError).message).toContain('not configured with auth');
   });
 
+  test('reports a server missing from openclaw.json as not loaded', async () => {
+    const { spawnImpl } = fakeSpawn(
+      [],
+      1,
+      'No MCP server named "lynxce" in /x/openclaw.json. Run openclaw mcp list to see configured servers.',
+    );
+    await expect(
+      runMcpOAuthLogin({ context, serverKey: 'lynxce', openExternal: async () => {}, spawnImpl }),
+    ).rejects.toMatchObject({ code: McpOAuthErrorCode.ServerNotLoaded });
+  });
+
   test('rejects a second concurrent login for the same server', async () => {
     const { spawnImpl } = fakeSpawn(['MCP OAuth credentials saved for "lynxce".'], 0);
     const first = runMcpOAuthLogin({ context, serverKey: 'lynxce', openExternal: async () => {}, spawnImpl });
@@ -169,6 +181,22 @@ describe('runMcpOAuthLogin', () => {
   test('reports a missing runtime before spawning anything', () => {
     fs.rmSync(path.join(runtimeRoot, 'openclaw.mjs'));
     expect(() => buildMcpOAuthCliInvocation(context, ['status', '--json'])).toThrow(McpOAuthCliError);
+  });
+});
+
+describe('isMcpServerInOpenClawConfig', () => {
+  test('checks mcp.servers and lets the CLI handle unreadable configs', () => {
+    const configPath = path.join(runtimeRoot, 'openclaw.json');
+    fs.writeFileSync(configPath, JSON.stringify({ mcp: { servers: { lynxce: { url: 'https://x', auth: 'oauth' } } } }));
+    expect(isMcpServerInOpenClawConfig(configPath, 'lynxce')).toBe(true);
+    expect(isMcpServerInOpenClawConfig(configPath, 'other')).toBe(false);
+
+    // LobsterAI's minimal config (no model configured yet) has no mcp section.
+    fs.writeFileSync(configPath, JSON.stringify({ gateway: {}, plugins: {} }));
+    expect(isMcpServerInOpenClawConfig(configPath, 'lynxce')).toBe(false);
+
+    fs.writeFileSync(configPath, '{ not json');
+    expect(isMcpServerInOpenClawConfig(configPath, 'lynxce')).toBe(true);
   });
 });
 

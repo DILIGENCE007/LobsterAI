@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 
 import { McpOAuthErrorCode, McpOAuthState } from '../../shared/mcp/auth';
@@ -122,6 +123,26 @@ export function parseMcpOAuthStatusOutput(stdout: string): Record<string, McpOAu
   return states;
 }
 
+/**
+ * Whether openclaw.json lists `serverKey` under `mcp.servers`. LobsterAI writes a
+ * minimal config without MCP servers until a model is configured, and the CLI
+ * then fails with a bare "No MCP server named ..." error. An unreadable config
+ * returns true so the CLI can report the real problem.
+ */
+export function isMcpServerInOpenClawConfig(configPath: string, serverKey: string): boolean {
+  let config: unknown;
+  try {
+    config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  } catch {
+    return true;
+  }
+  const servers = (config as { mcp?: { servers?: unknown } } | null)?.mcp?.servers;
+  return Boolean(servers && typeof servers === 'object' && Object.prototype.hasOwnProperty.call(servers, serverKey));
+}
+
+const SERVER_NOT_LOADED_MESSAGE =
+  'OpenClaw has not loaded this MCP server yet. Configure a model first, then sign in again.';
+
 function tail(text: string): string {
   const trimmed = text.trim();
   return trimmed.length > OUTPUT_TAIL_LIMIT ? trimmed.slice(-OUTPUT_TAIL_LIMIT) : trimmed;
@@ -174,6 +195,10 @@ function runCli(
 
 const activeLogins = new Set<string>();
 
+export function createServerNotLoadedError(): McpOAuthCliError {
+  return new McpOAuthCliError(McpOAuthErrorCode.ServerNotLoaded, SERVER_NOT_LOADED_MESSAGE);
+}
+
 /**
  * Runs `openclaw mcp login <serverKey>`, opening the authorization URL in the
  * system browser as soon as the CLI prints it. Resolves once OpenClaw has
@@ -219,6 +244,9 @@ export async function runMcpOAuthLogin(params: {
       );
     }
     if (result.code !== 0) {
+      if (/no mcp server named/i.test(`${result.stderr}\n${result.stdout}`)) {
+        throw new McpOAuthCliError(McpOAuthErrorCode.ServerNotLoaded, SERVER_NOT_LOADED_MESSAGE);
+      }
       throw new McpOAuthCliError(
         McpOAuthErrorCode.Failed,
         tail(result.stderr) || tail(result.stdout) || `openclaw mcp login exited with code ${result.code}`,

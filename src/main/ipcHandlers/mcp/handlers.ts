@@ -18,6 +18,8 @@ import { normalizeMcpServerUrlInput } from '../../../shared/mcp/url';
 import { OpenClawConfigImpact } from '../../libs/openclawConfigImpact';
 import { safeServerKey } from '../../libs/openclawConfigSync';
 import {
+  createServerNotLoadedError,
+  isMcpServerInOpenClawConfig,
   type McpOAuthCliContext,
   McpOAuthCliError,
   readMcpOAuthStatuses,
@@ -454,7 +456,11 @@ export function registerMcpHandlers(deps: McpHandlerDeps): void {
     try {
       // The CLI reads openclaw.json, so make sure the latest `auth: "oauth"` entry is written first.
       await syncOpenClawConfig({ reason: 'mcp-oauth-login', expectedImpact: OpenClawConfigImpact.Sync });
-      await runMcpOAuthLogin({ context, serverKey: safeServerKey(server.name), openExternal: openAuthorizationUrl });
+      const serverKey = safeServerKey(server.name);
+      if (!isMcpServerInOpenClawConfig(context.configPath, serverKey)) {
+        throw createServerNotLoadedError();
+      }
+      await runMcpOAuthLogin({ context, serverKey, openExternal: openAuthorizationUrl });
       return { success: true, state: McpOAuthState.Authorized };
     } catch (error) {
       console.warn('[MCP] OAuth sign-in failed:', error instanceof Error ? error.message : error);
