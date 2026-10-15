@@ -12,6 +12,7 @@ export const LanguageToolCode = {
   DailyLimit: 42503, RateLimit: 42504, Duplicate: 42505, Upstream: 42506,
 } as const;
 export const LANGUAGE_TRANSLATION_MAX_CHARS = 5_000;
+export const LANGUAGE_TOOL_DEVICE_HEADER = 'X-Lobster-Device-Id';
 export const LANGUAGE_TTS_MAX_CHARS = 100_000;
 export const LanguageToolsIpc = {
   Open: 'desktop-tools:open', Input: 'desktop-tools:input', GetInput: 'desktop-tools:get-input',
@@ -35,7 +36,7 @@ export interface LanguageToolQuota {
   usedCharacters: number; limitCharacters: number | null; remainingCharacters: number | null; resetsAt: string;
 }
 export interface LanguageToolQuotas {
-  tools: Record<LanguageTool, LanguageToolQuota>; translationMaxCharacters: number; ttsMaxCharacters: number;
+  tools: Partial<Record<LanguageTool, LanguageToolQuota>>; translationMaxCharacters: number; ttsMaxCharacters: number;
 }
 export interface LanguageToolResult { success: boolean; code?: number; data?: LanguageToolQuotas }
 export type LanguageToolEvent = { requestId: string } & (
@@ -49,7 +50,7 @@ export interface LanguageToolsBridge {
   getLanguageToolInput(): Promise<LanguageToolInput | null>;
   startLanguageTool(request: LanguageToolRequest): Promise<LanguageToolResult>;
   abortLanguageTool(requestId: string): Promise<void>;
-  getLanguageToolQuota(): Promise<LanguageToolResult>;
+  getLanguageToolQuota(tool: LanguageTool): Promise<LanguageToolResult>;
   hideLanguageTool(): Promise<void>;
   closeLanguageTool(): Promise<void>;
   pinLanguageTool(pinned: boolean): Promise<void>;

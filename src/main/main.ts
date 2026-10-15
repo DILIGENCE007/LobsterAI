@@ -14085,7 +14085,10 @@ if (!gotTheLock) {
     getServerApiBaseUrl,
   });
 
-  const desktopLanguageClient = new CompanionLanguageClient({ fetchWithAuth, getServerApiBaseUrl, getSessionKey: getAuthSessionKey });
+  const desktopLanguageClient = new CompanionLanguageClient({
+    fetchWithAuth, fetchAnonymous: (url, options) => net.fetch(url, options),
+    getInstallationId: getOrCreateInstallationId, getServerApiBaseUrl, getSessionKey: getAuthSessionKey,
+  });
 
   registerSiteIpcHandlers({
     fetchWithAuth: (url, options) => {

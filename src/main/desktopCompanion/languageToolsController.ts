@@ -66,7 +66,7 @@ export class CompanionLanguageToolsController {
       }) ?? { success: false, code: LanguageToolCode.Unavailable };
     }, true);
     handle(LanguageToolsIpc.Abort, value => { if (typeof value === 'string') this.client?.abort(value); }, true);
-    handle(LanguageToolsIpc.Quota, () => this.client?.quota() ?? { success: false, code: LanguageToolCode.Unavailable });
+    handle(LanguageToolsIpc.Quota, value => this.client?.quota(value as LanguageTool) ?? { success: false, code: LanguageToolCode.Unavailable });
     handle(LanguageToolsIpc.SpeechStatus, value => {
       if (!this.input || !this.window?.isVisible() || !Object.values(SpeechStatus).includes(value as SpeechStatus)) return;
       this.status = value as SpeechStatus;

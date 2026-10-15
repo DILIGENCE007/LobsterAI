@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 
-import { LanguageTool, LanguageToolCode, type LanguageToolEvent, LanguageToolEventType, TranslationTarget } from '../../shared/desktopCompanion/languageTools';
+import { LANGUAGE_TOOL_DEVICE_HEADER, LanguageTool, LanguageToolCode, type LanguageToolEvent, LanguageToolEventType, TranslationTarget } from '../../shared/desktopCompanion/languageTools';
 import { CompanionLanguageClient } from './languageToolClient';
 
 const request = { requestId: '00000000-1111-2222-3333-444444444444', tool: LanguageTool.Translate,
@@ -10,10 +10,14 @@ const delta = `event: delta\ndata: ${JSON.stringify({ text: '你好', language: 
 const done = 'event: done\ndata: {}\n\n';
 const drain = () => new Promise(resolve => setTimeout(resolve, 15));
 
-describe('authenticated desktop language tools', () => {
-  test.each([LanguageTool.Translate, LanguageTool.Tts])('requires a session before any %s request', tool => {
+const deviceId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+const deviceDeps = { getInstallationId: () => deviceId, fetchAnonymous: vi.fn() };
+
+describe('desktop language tools', () => {
+  test('requires a session before any TTS request', () => {
+    const tool = LanguageTool.Tts;
     const fetchWithAuth = vi.fn();
-    const client = new CompanionLanguageClient({ fetchWithAuth, getSessionKey: () => null, getServerApiBaseUrl: () => 'http://localhost' });
+    const client = new CompanionLanguageClient({ ...deviceDeps, fetchWithAuth, getSessionKey: () => null, getServerApiBaseUrl: () => 'http://localhost' });
     expect(client.start({ ...request, tool }, vi.fn())).toEqual({ success: false, code: LanguageToolCode.Unauthorized });
     expect(fetchWithAuth).not.toHaveBeenCalled();
   });
@@ -23,7 +27,7 @@ describe('authenticated desktop language tools', () => {
     const fetchWithAuth = vi.fn(async () => new Response(new ReadableStream({
       start(controller) { for (const byte of bytes) controller.enqueue(new Uint8Array([byte])); controller.close(); },
     }), { headers: { 'content-type': 'text/event-stream' } }));
-    const client = new CompanionLanguageClient({ fetchWithAuth, getSessionKey: () => 'user1', getServerApiBaseUrl: () => 'http://127.0.0.1:18878' });
+    const client = new CompanionLanguageClient({ ...deviceDeps, fetchWithAuth, getSessionKey: () => 'user1', getServerApiBaseUrl: () => 'http://127.0.0.1:18878' });
     const events: LanguageToolEvent[] = [];
     expect(client.start(request, event => events.push(event)).success).toBe(true);
     await drain();
@@ -37,7 +41,7 @@ describe('authenticated desktop language tools', () => {
       [Response.json({ code: LanguageToolCode.DailyLimit }), LanguageToolCode.DailyLimit],
       [sse(delta), LanguageToolCode.Upstream],
     ] as const) {
-      const client = new CompanionLanguageClient({ fetchWithAuth: async () => response, getSessionKey: () => 'user1', getServerApiBaseUrl: () => 'http://localhost' });
+      const client = new CompanionLanguageClient({ ...deviceDeps, fetchWithAuth: async () => response, getSessionKey: () => 'user1', getServerApiBaseUrl: () => 'http://localhost' });
       const events: LanguageToolEvent[] = [];
       client.start(request, event => events.push(event));
       await drain();
@@ -49,7 +53,7 @@ describe('authenticated desktop language tools', () => {
     for (const switchAccount of [true, false]) {
       let session = 'user1';
       let release!: (response: Response) => void;
-      const client = new CompanionLanguageClient({ fetchWithAuth: () => new Promise(resolve => { release = resolve; }),
+      const client = new CompanionLanguageClient({ ...deviceDeps, fetchWithAuth: () => new Promise(resolve => { release = resolve; }),
         getSessionKey: () => session, getServerApiBaseUrl: () => 'http://localhost' });
       const send = vi.fn();
       client.start(request, send);
@@ -59,4 +63,61 @@ describe('authenticated desktop language tools', () => {
       expect(send).not.toHaveBeenCalled();
     }
   });
+});
+
+
+test('guest translation sends the persistent UUID and omits cookies without invoking auth', async () => {
+  const fetchAnonymous = vi.fn(async () => sse(delta + done));
+  const fetchWithAuth = vi.fn();
+  const client = new CompanionLanguageClient({ ...deviceDeps, fetchAnonymous, fetchWithAuth,
+    getSessionKey: () => null, getServerApiBaseUrl: () => 'http://localhost' });
+  const events: LanguageToolEvent[] = [];
+  expect(client.start(request, event => events.push(event)).success).toBe(true);
+  await drain();
+  expect(events.map(event => event.type)).toEqual([LanguageToolEventType.Delta, LanguageToolEventType.Done]);
+  expect(fetchAnonymous).toHaveBeenCalledWith(expect.stringContaining('/translate'), expect.objectContaining({
+    credentials: 'omit', headers: expect.objectContaining({ [LANGUAGE_TOOL_DEVICE_HEADER]: deviceId }),
+  }));
+  expect(fetchWithAuth).not.toHaveBeenCalled();
+});
+
+test('authenticated rejection never falls back to anonymous transport', async () => {
+  const fetchAnonymous = vi.fn();
+  const fetchWithAuth = vi.fn(async () => Response.json({ code: LanguageToolCode.Unauthorized }, { status: 401 }));
+  const client = new CompanionLanguageClient({ ...deviceDeps, fetchAnonymous, fetchWithAuth,
+    getSessionKey: () => 'user1', getServerApiBaseUrl: () => 'http://localhost' });
+  const send = vi.fn(); client.start(request, send); await drain();
+  expect(send).toHaveBeenCalledWith(expect.objectContaining({ code: LanguageToolCode.Unauthorized }));
+  expect(fetchWithAuth).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+    headers: expect.objectContaining({ [LANGUAGE_TOOL_DEVICE_HEADER]: deviceId }),
+  }));
+  expect(fetchAnonymous).not.toHaveBeenCalled();
+});
+
+test('guest quota is translation-only and older servers report unavailable', async () => {
+  const fetchAnonymous = vi.fn(async () => Response.json({ code: 0, data: { tools: { translate: { limitRequests: 1000 } } } }));
+  const client = new CompanionLanguageClient({ ...deviceDeps, fetchAnonymous, fetchWithAuth: vi.fn(),
+    getSessionKey: () => null, getServerApiBaseUrl: () => 'http://localhost' });
+  expect(await client.quota(LanguageTool.Translate)).toMatchObject({ success: true });
+  expect(fetchAnonymous).toHaveBeenCalledWith('http://localhost/api/desktop-tools/translate/quota', expect.objectContaining({
+    headers: { [LANGUAGE_TOOL_DEVICE_HEADER]: deviceId }, credentials: 'omit',
+  }));
+  expect(await client.quota(LanguageTool.Tts)).toEqual({ success: false, code: LanguageToolCode.Unauthorized });
+  fetchAnonymous.mockImplementation(async () => Response.json({ code: LanguageToolCode.Unauthorized }, { status: 401 }));
+  expect(await client.quota(LanguageTool.Translate)).toEqual({ success: false, code: LanguageToolCode.Unavailable });
+});
+
+test('missing persistent device fails before dispatch and guest results are discarded after login', async () => {
+  const fetchAnonymous = vi.fn();
+  const client = new CompanionLanguageClient({ ...deviceDeps, fetchAnonymous, fetchWithAuth: vi.fn(),
+    getInstallationId: () => null, getSessionKey: () => null, getServerApiBaseUrl: () => 'http://localhost' });
+  expect(client.start(request, vi.fn())).toEqual({ success: false, code: LanguageToolCode.Unavailable });
+  expect(fetchAnonymous).not.toHaveBeenCalled();
+  let session: string | null = null;
+  let release!: (response: Response) => void;
+  const delayed = new CompanionLanguageClient({ ...deviceDeps, fetchWithAuth: vi.fn(),
+    fetchAnonymous: () => new Promise(resolve => { release = resolve; }),
+    getSessionKey: () => session, getServerApiBaseUrl: () => 'http://localhost' });
+  const send = vi.fn(); delayed.start(request, send); session = 'user1'; release(sse(delta + done));
+  await drain(); expect(send).not.toHaveBeenCalled();
 });
