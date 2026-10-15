@@ -74,6 +74,7 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
   const source = input.text;
   const isTranslation = input.tool === LanguageTool.Translate;
   const loginRequired = tools.error === LanguageToolCode.Unauthorized || followUp.loginRequired;
+  const translationLoginRequired = tools.error === LanguageToolCode.Unauthorized && tools.errorTool === LanguageTool.Translate;
   const speechVisible = !isTranslation || playback.status !== SpeechStatus.Idle;
   const speechActive = playback.status !== SpeechStatus.Idle;
   const speechLoading = playback.status === SpeechStatus.Loading;
@@ -120,7 +121,7 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
             <span className="lt-lang">{t('desktopToolsDetectLanguage')}</span>
             <ArrowRightIcon className="lt-arrow" aria-hidden="true" />
             <label className="lt-lang lt-select">
-              <select aria-label={t('desktopToolsTarget')} value={tools.target} disabled={loginRequired}
+              <select aria-label={t('desktopToolsTarget')} value={tools.target} disabled={translationLoginRequired}
                 onChange={event => tools.translate(event.target.value as TranslationTarget)}>
                 <option value={TranslationTarget.Chinese}>{t('desktopToolsChinese')}</option>
                 <option value={TranslationTarget.English}>{t('desktopToolsEnglish')}</option>
@@ -141,9 +142,11 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
             </div>
           )}
 
-          {loginRequired ? <SelectionLoginRequired /> : tools.error !== null && (
+          {loginRequired && <SelectionLoginRequired />}
+          {tools.error !== null && tools.error !== LanguageToolCode.Unauthorized && (
             <SelectionError
-              message={t(ERROR_KEYS[tools.error] ?? 'desktopToolsUpstream')}
+              message={t(tools.error === LanguageToolCode.DailyLimit && tools.errorTool === LanguageTool.Translate
+                ? 'desktopToolsTranslationDailyLimit' : ERROR_KEYS[tools.error] ?? 'desktopToolsUpstream')}
               action={<button type="button" onClick={tools.retry}>{t('desktopCompanionAnswerRetry')}</button>}
             />
           )}
@@ -206,7 +209,7 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
           </section>
         )}
 
-        {isTranslation && !loginRequired && (translating || (translation && !followUp.streaming)) && (
+        {isTranslation && !translationLoginRequired && (translating || (translation && !followUp.streaming)) && (
           <div className="sel-actions">
             {translating ? (
               <button type="button" className="sel-action" onClick={tools.stopTranslation}>

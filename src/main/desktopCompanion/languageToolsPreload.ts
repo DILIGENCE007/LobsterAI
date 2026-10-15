@@ -16,7 +16,7 @@ export function createLanguageToolsBridge(): LanguageToolsBridge {
     getLanguageToolInput: () => ipcRenderer.invoke(LanguageToolsIpc.GetInput),
     startLanguageTool: request => ipcRenderer.invoke(LanguageToolsIpc.Start, request),
     abortLanguageTool: id => ipcRenderer.invoke(LanguageToolsIpc.Abort, id),
-    getLanguageToolQuota: () => ipcRenderer.invoke(LanguageToolsIpc.Quota),
+    getLanguageToolQuota: tool => ipcRenderer.invoke(LanguageToolsIpc.Quota, tool),
     hideLanguageTool: () => ipcRenderer.invoke(LanguageToolsIpc.Hide),
     closeLanguageTool: () => ipcRenderer.invoke(LanguageToolsIpc.Close),
     pinLanguageTool: pinned => ipcRenderer.invoke(LanguageToolsIpc.Pin, pinned),
