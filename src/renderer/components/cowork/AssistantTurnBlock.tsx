@@ -61,6 +61,7 @@ import {
   formatTurnDuration,
   getActivityIndicatorStatusText,
   getActivityLiveStatusText,
+  getAssistantMessageDisplayText,
   getConsolidatedItemKey,
   getContextCompactionMessageLabel,
   getMediaCompletionDisplayText,
@@ -684,6 +685,28 @@ const AssistantTurnBlock: React.FC<{
     ? null
     : getCoworkTurnUsage(turn.userMessage?.metadata) ?? turn.inheritedTurnUsage?.turnUsage;
   const turnUsageMessageId = turn.userMessage?.id ?? turn.inheritedTurnUsage?.userMessageId;
+  const turnUsageSlot = showCopyButtons && turnUsage && turnUsageMessageId ? (
+    <TurnUsageChip
+      userMessageId={turnUsageMessageId}
+      turnUsage={turnUsage}
+      durationMs={processDurationMs}
+    />
+  ) : null;
+  // Show usage only with the final visible text reply.
+  let turnUsageReplyId: string | null = null;
+  for (let index = consolidatedItems.length - 1; index >= 0; index--) {
+    const item = consolidatedItems[index];
+    if (item.type === 'tool_group' || item.type === 'media_polling_group') break;
+    if (item.type !== 'assistant' || item.message.metadata?.isThinking
+      || isDuplicateGeneratedVideoAssistantMessage(item.message, videoPathArtifacts)) continue;
+    const hasInlineImage = artifacts?.some(artifact => artifact.type === 'image' && artifact.messageId === item.message.id);
+    if (hasInlineImage && !item.message.content.replace(/\s*MEDIA\s*/gi, '').trim()) continue;
+    const content = mapDisplayText ? mapDisplayText(item.message.content) : item.message.content;
+    if (hasText(getAssistantMessageDisplayText(content))) {
+      turnUsageReplyId = item.message.id;
+      break;
+    }
+  }
 
   const renderSystemMessage = (message: CoworkMessage) => {
     if (message.id === hiddenSystemMessageId) {
@@ -855,6 +878,13 @@ const AssistantTurnBlock: React.FC<{
         );
       }
 
+      const hasToolGroupAfter = consolidatedItems
+        .slice(index + 1)
+        .some(laterItem => laterItem.type === 'tool_group' || laterItem.type === 'media_polling_group');
+      const isLastAssistant = showCopyButtons && !hasToolGroupAfter;
+      const hasAssistantAfter = consolidatedItems
+        .slice(index + 1)
+        .some(laterItem => laterItem.type === 'assistant');
       if (isDuplicateGeneratedVideoAssistantMessage(item.message, videoPathArtifacts)) {
         return null;
       }
@@ -865,17 +895,11 @@ const AssistantTurnBlock: React.FC<{
       );
       if (imageArtifacts && imageArtifacts.length > 0 && !item.message.content.replace(/\s*MEDIA\s*/gi, '').trim()) {
         return (
-          <MediaImageInline key={item.message.id} artifacts={imageArtifacts} />
+          <div key={item.message.id}>
+            <MediaImageInline artifacts={imageArtifacts} />
+          </div>
         );
       }
-
-      const hasToolGroupAfter = consolidatedItems
-        .slice(index + 1)
-        .some(laterItem => laterItem.type === 'tool_group' || laterItem.type === 'media_polling_group');
-      const isLastAssistant = showCopyButtons && !hasToolGroupAfter;
-      const hasAssistantAfter = consolidatedItems
-        .slice(index + 1)
-        .some(laterItem => laterItem.type === 'assistant');
 
       return (
         <AssistantMessageItem
@@ -887,13 +911,7 @@ const AssistantTurnBlock: React.FC<{
           onFork={isLastAssistant ? onForkMessage : undefined}
           turnMetadata={isLastAssistant ? (item.message.metadata as CoworkMessageMetadata) : undefined}
           completedGoal={isLastAssistant && !hasAssistantAfter ? completedGoal : null}
-          turnUsageSlot={isLastAssistant && !hasAssistantAfter && turnUsage && turnUsageMessageId ? (
-            <TurnUsageChip
-              userMessageId={turnUsageMessageId}
-              turnUsage={turnUsage}
-              durationMs={processDurationMs}
-            />
-          ) : undefined}
+          turnUsageSlot={item.message.id === turnUsageReplyId ? turnUsageSlot : null}
           planConfirmationMessageId={planConfirmationMessageId}
           onConfirmPlan={onConfirmPlan}
           onAdjustPlan={onAdjustPlan}

@@ -512,6 +512,8 @@ export interface CoworkMessageMetadata {
   llmTrace?: CoworkLlmTrace;
   /** User messages: credits and tokens the turn consumed on LobsterAI models. */
   turnUsage?: CoworkTurnUsage;
+  /** Server media task IDs created by this turn; prices are read from the server. */
+  turnMediaTaskIds?: string[];
   [key: string]: unknown;
 }
 

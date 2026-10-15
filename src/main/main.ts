@@ -4417,6 +4417,7 @@ const resolveGeneratedMediaAssetMimeType = (mediaType: 'image' | 'video', url: s
 interface MediaTaskTracker {
   taskId: string;
   sessionId: string;
+  userMessageId?: string;
   mediaType: 'image' | 'video';
   model: string;
   ownerAccountKey: string;
@@ -4754,8 +4755,16 @@ const markMediaTaskHandledByStatusPolling = (
   mediaTasksHandledByStatusPolling.add(getMediaStatusPollKey(sessionId, ownerAccountKey, taskId));
   const tracker = pendingMediaTasks.get(taskId);
   if (tracker?.ownerAccountKey === ownerAccountKey) {
+    refreshMediaTaskTurnUsage(tracker);
     pendingMediaTasks.delete(taskId);
   }
+};
+
+const refreshMediaTaskTurnUsage = (tracker: MediaTaskTracker): void => {
+  if (!tracker.userMessageId) return;
+  void coworkTurnUsageService?.refresh(tracker.sessionId, tracker.userMessageId).catch((error) => {
+    console.warn('[TurnUsage] failed to refresh completed media task usage.', error);
+  });
 };
 
 const isMediaTaskHandledByStatusPolling = (
@@ -6136,6 +6145,8 @@ if (!gotTheLock) {
     const action = (args.action as string) || 'generate';
     const serverBaseUrl = getServerApiBaseUrl();
     const sessionId = extractSessionIdFromKey(request.context.sessionKey);
+    const turnUserMessageId = sessionId && action === 'generate'
+      ? getCoworkStore().getLatestUserMessage(sessionId)?.id : undefined;
     const requestAccountScope = resolveMediaTurnAccountScopeForSession(sessionId);
     const isRequestAccountCurrent = (): boolean => (
       requestAccountScope !== null
@@ -6720,6 +6731,9 @@ if (!gotTheLock) {
       const modelSelectionReason = typeof task.modelSelectionReason === 'string' && task.modelSelectionReason.trim()
         ? task.modelSelectionReason.trim()
         : happyHorse11Selection?.reason;
+      if (sessionId && turnUserMessageId && isRequestAccountCurrent()) {
+        coworkTurnUsageService?.recordMediaTask(sessionId, turnUserMessageId, task.taskId);
+      }
       console.log('[MediaGeneration] server accepted generate request:', serializeForLog({
         mediaType,
         taskId: task.taskId,
@@ -6800,6 +6814,7 @@ if (!gotTheLock) {
           registerMediaTaskForPolling({
             taskId: String(task.taskId),
             sessionId,
+            userMessageId: turnUserMessageId,
             mediaType,
             model: upstreamModel || outputModel,
             ownerAccountKey: requestAccountScope.ownerAccountKey,
@@ -7068,6 +7083,7 @@ if (!gotTheLock) {
             continue;
           }
           tasksToRemove.set(taskId, tracker);
+          refreshMediaTaskTurnUsage(tracker);
           notifyAuthQuotaChanged();
         }
       } catch (error) {
