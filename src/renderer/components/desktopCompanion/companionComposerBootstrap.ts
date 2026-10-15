@@ -18,7 +18,7 @@ export async function bootstrapCompanionComposer(): Promise<void> {
   await i18nService.initialize();
   await Promise.all([coworkService.loadConfig(), agentService.loadAgents()]);
   // Signed-in users also get the server's models and quota.
-  void authService.refreshAuthState({ clearOnFailure: false });
+  void authService.refreshAuthState({ clearOnFailure: true });
 }
 
 /** Picks up settings changed in the main window since the composer was last open. */
@@ -29,4 +29,6 @@ export async function refreshCompanionComposer(): Promise<void> {
   synchronizeCompanionTheme();
   i18nService.setLanguage(config.language, { persist: false });
   await Promise.all([coworkService.loadConfig(), agentService.loadAgents()]);
+  // Recover if the panel missed a login/logout event while loading or hidden.
+  void authService.refreshAuthState({ clearOnFailure: true });
 }

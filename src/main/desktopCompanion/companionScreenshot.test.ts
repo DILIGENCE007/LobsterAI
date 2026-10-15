@@ -1,14 +1,16 @@
-import { BrowserWindow, desktopCapturer, screen, systemPreferences } from 'electron';
+import { BrowserWindow, desktopCapturer, nativeImage, screen, systemPreferences } from 'electron';
 import fs from 'fs/promises';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { DesktopCompanionSurface } from '../../shared/desktopCompanion/constants';
 import { CompanionScreenshotIpc } from '../../shared/desktopCompanion/screenshot';
 import { CompanionScreenshotController } from './companionScreenshot';
 
 const mocks = vi.hoisted(() => ({
   handlers: new Map<string, (event: any, value?: unknown) => any>(),
   windows: [] as any[],
-  image: { isEmpty: () => false, toPNG: () => Buffer.from('screen'), toDataURL: () => 'data:image/png;base64,screen',
+  image: { isEmpty: () => false, toPNG: vi.fn(() => Buffer.from('screen')),
+    toBitmap: vi.fn(() => Buffer.from('pixels')), toJPEG: vi.fn(() => Buffer.from('preview')),
     getSize: () => ({ width: 2880, height: 1800 }), crop: vi.fn(() => ({ toPNG: () => Buffer.from('crop') })) },
 }));
 vi.mock('electron', async () => {
@@ -28,7 +30,8 @@ vi.mock('electron', async () => {
     setMenu() {}
     setAlwaysOnTop() {}
     setVisibleOnAllWorkspaces() {}
-    loadFile() { return Promise.resolve(); }
+    loadFile = vi.fn(() => Promise.resolve());
+    loadURL = vi.fn(() => Promise.resolve());
     destroy() { this.destroyed = true; this.visible = false; this.emit('closed'); }
   }
   const display = { id: 2, bounds: { x: -1440, y: 0, width: 1440, height: 900 }, size: { width: 1440, height: 900 }, scaleFactor: 2 };
@@ -37,7 +40,7 @@ vi.mock('electron', async () => {
     BrowserWindow: Window,
     ipcMain: { handle: (channel: string, handler: any) => mocks.handlers.set(channel, handler), removeHandler: (channel: string) => mocks.handlers.delete(channel) },
     screen: Object.assign(new EventEmitter(), { getAllDisplays: () => [display], getCursorScreenPoint: () => ({ x: -600, y: 100 }), getDisplayNearestPoint: () => display }),
-    nativeImage: { createFromBuffer: () => mocks.image },
+    nativeImage: { createFromBitmap: vi.fn(() => mocks.image) },
     desktopCapturer: { getSources: vi.fn() },
     systemPreferences: { getMediaAccessStatus: vi.fn(() => 'granted') },
   };
@@ -77,7 +80,7 @@ describe('desktop screenshot capture', () => {
     const { result, overlay } = await start();
     expect(orb.isVisible()).toBe(false);
     expect(overlay.visible).toBe(false);
-    expect(invoke(CompanionScreenshotIpc.GetFrame)).toBe('data:image/png;base64,screen');
+    expect(invoke(CompanionScreenshotIpc.GetFrame)).toBe(`data:image/jpeg;base64,${Buffer.from('preview').toString('base64')}`);
     invoke(CompanionScreenshotIpc.Ready);
     expect(overlay.visible).toBe(true);
     invoke(CompanionScreenshotIpc.Finish, { x: 100, y: 50, width: 200, height: 100 });
@@ -86,6 +89,36 @@ describe('desktop screenshot capture', () => {
     expect(fs.writeFile).toHaveBeenCalledWith(expect.any(String), Buffer.from('crop'), { mode: 0o600 });
     expect(overlay.destroyed).toBe(true);
     expect(orb.isVisible()).toBe(true);
+  });
+
+  test('preparing the overlay avoids full-screen PNG encoding and caches the preview only for this capture', async () => {
+    const { result, overlay } = await start();
+    expect(overlay.loadFile).toHaveBeenCalledWith('/dist/companion-screenshot.html', { query: { surface: DesktopCompanionSurface.Screenshot } });
+    expect(nativeImage.createFromBitmap).toHaveBeenCalledWith(Buffer.from('pixels'), { width: 2880, height: 1800 });
+    const firstPreview = invoke(CompanionScreenshotIpc.GetFrame);
+    expect(invoke(CompanionScreenshotIpc.GetFrame)).toBe(firstPreview);
+    expect(mocks.image.toJPEG).toHaveBeenCalledTimes(1);
+    expect(mocks.image.toPNG).not.toHaveBeenCalled();
+    invoke(CompanionScreenshotIpc.Finish, null);
+    await result;
+
+    mocks.image.toJPEG.mockReturnValueOnce(Buffer.from('new screen'));
+    const next = await start();
+    expect(invoke(CompanionScreenshotIpc.GetFrame)).not.toBe(firstPreview);
+    expect(mocks.image.toJPEG).toHaveBeenCalledTimes(2);
+    invoke(CompanionScreenshotIpc.Finish, null);
+    await next.result;
+  });
+
+  test('development uses the dedicated screenshot page too', async () => {
+    controller.dispose();
+    controller = new CompanionScreenshotController({
+      preloadPath: '/preload.js', rendererDirectory: '/dist', title: 'Companion', devServerUrl: 'http://localhost:5175',
+    });
+    const { result, overlay } = await start();
+    expect(overlay.loadURL).toHaveBeenCalledWith(`http://localhost:5175/companion-screenshot.html?surface=${DesktopCompanionSurface.Screenshot}`);
+    invoke(CompanionScreenshotIpc.Finish, null);
+    await result;
   });
 
   test.each(['escape', 'cancel', 'display-change', 'close'])('%s cancels without saving a file', async reason => {

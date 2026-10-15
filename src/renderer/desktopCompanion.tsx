@@ -6,7 +6,6 @@ import ReactDOM from 'react-dom/client';
 import { DesktopCompanionSurface } from '../shared/desktopCompanion/constants';
 import CompanionOrb from './components/desktopCompanion/CompanionOrb';
 import CompanionResultSurface from './components/desktopCompanion/CompanionResultSurface';
-import CompanionScreenshot from './components/desktopCompanion/CompanionScreenshot';
 import CompanionStage from './components/desktopCompanion/CompanionStage';
 import LanguageToolsSurface from './components/desktopCompanion/LanguageToolsSurface';
 import SelectionSurface from './components/desktopCompanion/SelectionSurface';
@@ -53,5 +52,5 @@ function DesktopCompanion() {
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode>
-  {surface === DesktopCompanionSurface.Screenshot ? <CompanionScreenshot /> : <DesktopCompanion />}
+  <DesktopCompanion />
 </React.StrictMode>);

@@ -97,6 +97,7 @@ export class CompanionStageController {
     const kinds = [...new Set([...files.map(file => file.kind), ...hintedKinds])];
     if (this.current.kind === DesktopCompanionStageKind.Drop) {
       if (files.length) this.current = { ...this.current, files, kinds };
+      else if (hintedKinds.length && !this.current.files.length) this.current = { ...this.current, kinds };
       this.host.publish();
       return;
     }

@@ -7,6 +7,7 @@ import {
   DesktopCompanionStageCommandType,
   DesktopCompanionStageKind,
   type DesktopCompanionState,
+  DesktopCompanionTiming,
 } from '../../../shared/desktopCompanion/constants';
 import { CompanionSkinKind, getCompanionSkin } from '../../../shared/desktopCompanion/skins';
 import { i18nService } from '../../services/i18n';
@@ -23,24 +24,35 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
   const api = window.electron.desktopCompanion;
   const pointer = useRef<{ x: number; y: number; dragging: boolean } | null>(null);
   const dragDepth = useRef(0);
+  const dropTimer = useRef<ReturnType<typeof setTimeout>>();
   const [dropHover, setDropHover] = useState(false);
   const [moving, setMoving] = useState(false);
   const { session, pending } = useCompanionSession(state.sessionId, state.panelVisible);
   const status = session?.status ?? null;
-  const viewedAt = state.result.recentTasks.find(task => task.sessionId === state.sessionId)?.viewedAt ?? 0;
-  const unseenResult = status === CoworkSessionStatusValue.Completed && (session?.updatedAt ?? 0) > viewedAt;
+  const taskRecord = state.result.recentTasks.find(task => task.sessionId === state.sessionId);
+  const unseenResult = !!taskRecord && status === CoworkSessionStatusValue.Completed
+    && (session?.updatedAt ?? 0) > taskRecord.viewedAt;
 
   const mood = companionMood({
     status,
     waiting: pending,
     unseenResult,
     snoozed: !!state.snooze,
-    fileDragActive: state.fileDragActive,
     dropHover,
     dropStage: state.stage.kind === DesktopCompanionStageKind.Drop,
     hintShowing: state.stage.kind === DesktopCompanionStageKind.Hint,
   });
   const skinKind = getCompanionSkin(state.preferences.skin).kind;
+  const canDrop = state.preferences.enabled && state.preferences.dragAssist && !state.snooze;
+
+  useEffect(() => {
+    if (!canDrop) {
+      clearTimeout(dropTimer.current);
+      dragDepth.current = 0;
+      setDropHover(false);
+    }
+    return () => clearTimeout(dropTimer.current);
+  }, [canDrop]);
 
   // News brings compact task bubbles back without expanding them or taking focus.
   const taskNews = state.sessionId && (mood === CompanionMood.Done || mood === CompanionMood.Attention || mood === CompanionMood.Error)
@@ -66,6 +78,7 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
   };
 
   const leaveFileDrag = () => {
+    clearTimeout(dropTimer.current);
     dragDepth.current = 0;
     setDropHover(false);
   };
@@ -74,20 +87,24 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
     <div
       className="orb-surface"
       onDragEnter={event => {
-        if (!hasFiles(event.dataTransfer)) return;
+        if (!canDrop || !hasFiles(event.dataTransfer)) return;
         event.preventDefault();
         dragDepth.current += 1;
         if (dragDepth.current === 1) {
           setDropHover(true);
-          api.orbFileDrag(DesktopCompanionFileDragPhase.Enter, fileKindsFromDataTransfer(event.dataTransfer));
+          const kinds = fileKindsFromDataTransfer(event.dataTransfer);
+          dropTimer.current = setTimeout(() => {
+            api.orbFileDrag(DesktopCompanionFileDragPhase.Enter, kinds);
+          }, DesktopCompanionTiming.DropExpandDelayMs);
         }
       }}
       onDragOver={event => {
-        if (!hasFiles(event.dataTransfer)) return;
+        if (!canDrop || !hasFiles(event.dataTransfer)) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = 'copy';
       }}
       onDragLeave={() => {
+        if (!canDrop) return;
         dragDepth.current = Math.max(0, dragDepth.current - 1);
         if (dragDepth.current === 0) {
           leaveFileDrag();
@@ -95,6 +112,7 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
         }
       }}
       onDrop={event => {
+        if (!canDrop || !hasFiles(event.dataTransfer)) return;
         event.preventDefault();
         leaveFileDrag();
         api.orbFileDrag(DesktopCompanionFileDragPhase.Drop, []);
@@ -111,6 +129,7 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
         className="orb-button"
         data-kind={skinKind}
         data-moving={moving}
+        data-drop-hover={dropHover}
         style={skinKind === CompanionSkinKind.Brand ? { width: DesktopCompanionSize.BrandMark + 8, height: DesktopCompanionSize.BrandMark + 8 } : undefined}
         aria-label={i18nService.t(companionMoodLabelKey(mood))}
         title={i18nService.t(companionMoodLabelKey(mood))}

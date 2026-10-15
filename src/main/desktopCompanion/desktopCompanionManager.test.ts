@@ -1,13 +1,15 @@
-import { BrowserWindow, dialog, globalShortcut, ipcMain, Menu, type MenuItemConstructorOptions, screen } from 'electron';
+import { BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, type MenuItemConstructorOptions, screen } from 'electron';
 import { EventEmitter } from 'events';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { CoworkSessionStatusValue } from '../../renderer/types/cowork';
 import {
+  COMPANION_COPY_MAX_BYTES,
   CompanionCapability,
   DEFAULT_COMPANION_SKIN,
   DEFAULT_DESKTOP_COMPANION_PREFERENCES,
   DesktopCompanionDragPhase,
+  DesktopCompanionFileDragPhase,
   DesktopCompanionIpc,
   DesktopCompanionPanelPlacement,
   DesktopCompanionSize,
@@ -15,7 +17,9 @@ import {
   DesktopCompanionStageCommandType,
   DesktopCompanionStageKind,
   DesktopCompanionStoreKey,
+  DesktopCompanionTiming,
 } from '../../shared/desktopCompanion/constants';
+import { CompanionFileKind } from '../../shared/desktopCompanion/fileKinds';
 import { CompanionHintRule } from '../../shared/desktopCompanion/hintPolicy';
 import { LanguageTool, LanguageToolCode, LanguageToolsIpc, SpeechCommand, SpeechStatus } from '../../shared/desktopCompanion/languageTools';
 import { COMPANION_RECENT_TASK_LIMIT, COMPANION_RECENT_TASKS_KEY, CompanionResultIpc, type CompanionTaskInfo } from '../../shared/desktopCompanion/results';
@@ -149,6 +153,11 @@ function invoke(channel: string, value?: unknown, sender = main.webContents) {
 /** The orb is the first companion window created after the main window. */
 function orb() {
   return mocks.windows[1];
+}
+
+function dragOverOrb(phase: DesktopCompanionFileDragPhase, kinds: CompanionFileKind[] = []) {
+  ipcMain.emit(DesktopCompanionIpc.OrbFileDrag,
+    { sender: orb().webContents, senderFrame: orb().webContents.mainFrame }, { phase, kinds });
 }
 
 function menu(): MenuItemConstructorOptions[] {
@@ -445,6 +454,7 @@ describe('desktop companion lifecycle', () => {
     expect(openMain).toHaveBeenCalledWith(null);
     clickMenu('desktopCompanionSnoozeToday');
     expect(manager.getState().snooze?.mode).toBe(DesktopCompanionSnoozeMode.Quiet);
+    expect(orb().destroyed).toBe(true);
     clickMenu('desktopCompanionWake');
     expect(manager.getState().snooze).toBeNull();
     clickMenu('desktopCompanionSettings');
@@ -628,6 +638,30 @@ describe('desktop companion lifecycle', () => {
     expect(manager.getState().panelVisible).toBe(false);
   });
 
+  test.each([33_890, 250_000])('copies all %i characters to the clipboard verbatim', length => {
+    create();
+    const prefix = ' \t\r\n完整内容 🦞';
+    const suffix = '\r\n\t ';
+    const text = prefix + 'x'.repeat(length - prefix.length - suffix.length) + suffix;
+    expect(invoke(DesktopCompanionIpc.CopyText, text)).toEqual({ success: true });
+    const copied = vi.mocked(clipboard.writeText).mock.calls.at(-1)?.[0];
+    expect(copied?.length).toBe(length);
+    expect(copied).toBe(text);
+  });
+
+  test('rejects oversized clipboard payloads without writing a truncated value', () => {
+    create();
+    const result = invoke(DesktopCompanionIpc.CopyText, '字'.repeat(Math.ceil(COMPANION_COPY_MAX_BYTES / 3)));
+    expect(result).toEqual({ success: false, error: 'desktopCompanionCopyTooLarge' });
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+  });
+
+  test.each([null, 42, { text: 'invalid' }])('rejects non-string clipboard payload %j', value => {
+    create();
+    expect(invoke(DesktopCompanionIpc.CopyText, value)).toEqual({ success: false, error: 'desktopCompanionCopyFailed' });
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+  });
+
   test('foreign windows and subframes cannot use companion channels', () => {
     create();
     for (const channel of [DesktopCompanionIpc.GetState, DesktopCompanionIpc.QuickAnswerStart, DesktopCompanionIpc.CopyText]) {
@@ -663,19 +697,51 @@ describe('snoozing', () => {
     expect(mocks.windows.some(win => win !== main && !win.destroyed)).toBe(true);
   });
 
-  test('a quiet day keeps the character but stops drag detection', () => {
+  test('a quiet day hides the character until the next local midnight', () => {
+    vi.useFakeTimers();
+    const start = new Date(2026, 9, 15, 10).getTime();
+    const midnight = new Date(2026, 9, 16).getTime();
+    vi.setSystemTime(start);
     create();
     manager.setPreferences({ enabled: true });
+    orb().emit('ready-to-show');
+    expect(orb().visible).toBe(true);
+    const preferences = manager.getState().preferences;
+    vi.mocked(foreground.stop).mockClear();
     vi.mocked(fileDrag.stop).mockClear();
     manager.snoozeFor(DesktopCompanionSnoozeMode.Quiet);
-    expect(orb().destroyed).toBe(false);
+    expect(orb().destroyed).toBe(true);
+    expect(manager.getState().preferences).toEqual(preferences);
+    expect(manager.getState().snooze).toEqual({ mode: DesktopCompanionSnoozeMode.Quiet, until: midnight });
+    expect(foreground.stop).toHaveBeenCalled();
     expect(fileDrag.stop).toHaveBeenCalled();
-    manager.wake();
+    vi.advanceTimersByTime(midnight - start - 1);
+    expect(manager.getState().snooze).not.toBeNull();
+    expect(mocks.windows.filter(win => win !== main && !win.destroyed)).toHaveLength(0);
+    vi.advanceTimersByTime(1_001);
     expect(manager.getState().snooze).toBeNull();
+    const restored = mocks.windows.at(-1);
+    restored.emit('ready-to-show');
+    expect(restored.visible).toBe(true);
   });
 
-  test('an expired snooze from a previous launch is dropped', () => {
-    values.set(DesktopCompanionStoreKey.Snooze, { mode: DesktopCompanionSnoozeMode.Hidden, until: Date.now() - 1_000 });
+  test('a persisted quiet day stays hidden after relaunch and preference changes until woken', () => {
+    const snooze = { mode: DesktopCompanionSnoozeMode.Quiet, until: Date.now() + DesktopCompanionTiming.SnoozeHourMs };
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    values.set(DesktopCompanionStoreKey.Snooze, snooze);
+    create();
+    expect(manager.getState().snooze).toEqual(snooze);
+    expect(mocks.windows).toEqual([main]);
+    manager.setPreferences({ skin: 'ruanruanxia' });
+    expect(mocks.windows).toEqual([main]);
+    manager.wake();
+    expect(manager.getState().snooze).toBeNull();
+    expect(values.get(DesktopCompanionStoreKey.Snooze)).toBeNull();
+    expect(orb().destroyed).toBe(false);
+  });
+
+  test.each(Object.values(DesktopCompanionSnoozeMode))('an expired %s snooze from a previous launch is dropped', mode => {
+    values.set(DesktopCompanionStoreKey.Snooze, { mode, until: Date.now() - 1_000 });
     values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
     create();
     expect(manager.getState().snooze).toBeNull();
@@ -703,15 +769,31 @@ describe('stage: hints and drops', () => {
     expect(values.get(DesktopCompanionStoreKey.HintLedger)).toMatchObject({ categories: { mail: { acceptedAt: expect.any(Number) } } });
   });
 
-  test('dragging a document opens the drop zone, and dropping on "ask" attaches it in the panel', () => {
+  test('ordinary desktop drags never open a window or replace the current task', () => {
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    create();
+    manager.selectSession('current-task');
+    const windowCount = mocks.windows.length;
+    fileDrag.emit(FileDragEvent.Start, { paths: ['/tmp/方案.docx'] });
+    expect(manager.getState().fileDragActive).toBe(true);
+    expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
+    expect(manager.getState().sessionId).toBe('current-task');
+    expect(mocks.windows).toHaveLength(windowCount);
+    fileDrag.emit(FileDragEvent.End);
+    expect(manager.getState().fileDragActive).toBe(false);
+    expect(mocks.windows).toHaveLength(windowCount);
+  });
+
+  test('hovering over the orb opens file actions, and dropping on "ask" attaches it in the panel', () => {
     values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
     create();
     fileDrag.emit(FileDragEvent.Start, { paths: ['/tmp/方案.docx'] });
     expect(manager.getState().fileDragActive).toBe(true);
+    dragOverOrb(DesktopCompanionFileDragPhase.Enter);
     expect(manager.getState().stage).toMatchObject({
       kind: DesktopCompanionStageKind.Drop,
-      files: [{ name: '方案.docx', kind: 'document' }],
-      kinds: ['document'],
+      files: [{ name: '方案.docx', kind: CompanionFileKind.Document }],
+      kinds: [CompanionFileKind.Document],
     });
     invoke(DesktopCompanionIpc.StageCommand, {
       type: DesktopCompanionStageCommandType.DropAsk,
@@ -720,6 +802,38 @@ describe('stage: hints and drops', () => {
     expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
     expect(manager.getState().panelVisible).toBe(true);
     expect(manager.getState().draft.attachments).toEqual([{ path: '/tmp/方案.docx', name: '方案.docx', isImage: false, isDirectory: false }]);
+  });
+
+  test('a nearby file drag opens actions without enlarging the orb or needing its drag-enter event', () => {
+    vi.useFakeTimers();
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    create();
+    const bounds = { ...orb().bounds };
+    vi.spyOn(screen, 'getCursorScreenPoint').mockReturnValue({ x: bounds.x - 40, y: bounds.y + bounds.height / 2 });
+    fileDrag.emit(FileDragEvent.Start, { paths: ['/tmp/a.pdf'] });
+    expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
+    vi.advanceTimersByTime(DesktopCompanionTiming.DropExpandDelayMs + DesktopCompanionTiming.DropProximityPollMs);
+    expect(manager.getState().stage).toMatchObject({ kind: DesktopCompanionStageKind.Drop, kinds: [CompanionFileKind.Pdf] });
+    expect(orb().bounds).toEqual(bounds);
+    // Leaving the small native window should not dismiss the larger proximity area.
+    dragOverOrb(DesktopCompanionFileDragPhase.Leave);
+    vi.advanceTimersByTime(DesktopCompanionTiming.DropLingerMs + 1);
+    expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.Drop);
+    vi.mocked(screen.getCursorScreenPoint).mockReturnValue({ x: bounds.x - 200, y: bounds.y });
+    vi.advanceTimersByTime(DesktopCompanionTiming.DropProximityPollMs + DesktopCompanionTiming.DropLingerMs + 1);
+    expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
+  });
+
+  test('a file released nearby before dwelling does not open actions later', () => {
+    vi.useFakeTimers();
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    create();
+    const bounds = orb().bounds;
+    vi.spyOn(screen, 'getCursorScreenPoint').mockReturnValue({ x: bounds.x - 40, y: bounds.y + bounds.height / 2 });
+    fileDrag.emit(FileDragEvent.Start, { paths: ['/tmp/a.pdf'] });
+    fileDrag.emit(FileDragEvent.End);
+    vi.advanceTimersByTime(DesktopCompanionTiming.DropExpandDelayMs * 3);
+    expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
   });
 
   test('ignores drags of things that are not documents', () => {
@@ -735,10 +849,72 @@ describe('stage: hints and drops', () => {
     values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
     create();
     fileDrag.emit(FileDragEvent.Start, { paths: [] });
+    dragOverOrb(DesktopCompanionFileDragPhase.Enter);
     expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.Drop);
     fileDrag.emit(FileDragEvent.End);
     expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.Drop);
-    vi.advanceTimersByTime(600);
+    vi.advanceTimersByTime(DesktopCompanionTiming.DropLingerMs + 1);
+    expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
+  });
+
+  test('leaving the orb dismisses actions while a desktop drag is still in progress', () => {
+    vi.useFakeTimers();
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    create();
+    fileDrag.emit(FileDragEvent.Start, { paths: ['/tmp/a.pdf'] });
+    dragOverOrb(DesktopCompanionFileDragPhase.Enter);
+    dragOverOrb(DesktopCompanionFileDragPhase.Leave);
+    vi.advanceTimersByTime(DesktopCompanionTiming.DropLingerMs + 1);
+    expect(manager.getState().fileDragActive).toBe(true);
+    expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
+  });
+
+  test('moving from the orb to an action keeps the strip in place until the pointer leaves', () => {
+    vi.useFakeTimers();
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    create();
+    dragOverOrb(DesktopCompanionFileDragPhase.Enter, [CompanionFileKind.Image]);
+    const stage = manager.getState().stage;
+    const bounds = { ...mocks.windows.at(-1).bounds };
+    dragOverOrb(DesktopCompanionFileDragPhase.Leave);
+    invoke(DesktopCompanionIpc.StageCommand, { type: DesktopCompanionStageCommandType.StageHover, hovering: true });
+    vi.advanceTimersByTime(DesktopCompanionTiming.DropLingerMs + 1);
+    expect(manager.getState().stage).toEqual(stage);
+    expect(mocks.windows.at(-1).bounds).toEqual(bounds);
+    invoke(DesktopCompanionIpc.StageCommand, { type: DesktopCompanionStageCommandType.StageHover, hovering: false });
+    vi.advanceTimersByTime(DesktopCompanionTiming.DropLingerMs + 1);
+    expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
+  });
+
+  test('a later drag without native paths uses hover types and does not reuse the previous filename', () => {
+    vi.useFakeTimers();
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    create();
+    fileDrag.emit(FileDragEvent.Start, { paths: ['/tmp/a.pdf'] });
+    dragOverOrb(DesktopCompanionFileDragPhase.Enter);
+    fileDrag.emit(FileDragEvent.End);
+    vi.advanceTimersByTime(DesktopCompanionTiming.DropLingerMs + 1);
+    dragOverOrb(DesktopCompanionFileDragPhase.Enter, [CompanionFileKind.Image]);
+    expect(manager.getState().stage).toMatchObject({ files: [], kinds: [CompanionFileKind.Image] });
+  });
+
+  test('turning off drag assistance immediately dismisses an open strip', () => {
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    create();
+    fileDrag.emit(FileDragEvent.Start, { paths: ['/tmp/a.pdf'] });
+    dragOverOrb(DesktopCompanionFileDragPhase.Enter);
+    manager.setPreferences({ dragAssist: false });
+    expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
+    expect(manager.getState().fileDragActive).toBe(false);
+    dragOverOrb(DesktopCompanionFileDragPhase.Enter);
+    expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
+  });
+
+  test('quiet mode keeps file hovers from opening actions', () => {
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    create();
+    manager.snoozeFor(DesktopCompanionSnoozeMode.Quiet);
+    dragOverOrb(DesktopCompanionFileDragPhase.Enter);
     expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
   });
 
@@ -746,6 +922,7 @@ describe('stage: hints and drops', () => {
     values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
     create();
     fileDrag.emit(FileDragEvent.Start, { paths: ['/tmp/a.pdf'] });
+    dragOverOrb(DesktopCompanionFileDragPhase.Enter);
     invoke(DesktopCompanionIpc.StageCommand, { type: DesktopCompanionStageCommandType.DropStarted, sessionId: 'session-9' });
     expect(manager.getState().sessionId).toBe('session-9');
     expect(manager.getState().stage.kind).toBe(DesktopCompanionStageKind.None);
@@ -790,6 +967,68 @@ describe('stage: hints and drops', () => {
     expect(result.focusable).toBe(true);
     expect(result.focused).toBe(true);
     expect(mocks.windows).toHaveLength(windowCount);
+  });
+
+  test('the login dialog keeps its own size and closing it restores the current composer size', () => {
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows.at(-1);
+    const event = { sender: panel.webContents, senderFrame: panel.webContents.mainFrame };
+    const cardWidth = DesktopCompanionSize.Composer.width + DesktopCompanionSize.SurfacePad * 2;
+    ipcMain.emit(DesktopCompanionIpc.PanelLoginVisible, event, true);
+    expect(panel.bounds).toMatchObject(DesktopCompanionSize.ComposerLogin);
+    ipcMain.emit(DesktopCompanionIpc.ResizeSurface, event, { width: cardWidth, height: 144 });
+    expect(panel.bounds).toMatchObject(DesktopCompanionSize.ComposerLogin);
+    manager.hidePanel();
+    manager.togglePanel();
+    expect(panel.bounds).toMatchObject(DesktopCompanionSize.ComposerLogin);
+    ipcMain.emit(DesktopCompanionIpc.PanelLoginVisible, event, false);
+    expect(panel.bounds.height).toBe(144 + DesktopCompanionSize.ComposerMenuRoom);
+    expect(panel.bounds.width).toBe(cardWidth + DesktopCompanionSize.ComposerSideRoom);
+  });
+
+  test.each([{ x: 0, y: 0 }, { x: 1196, y: 0 }, { x: 1196, y: 816 }, { x: 600, y: 0 }, { x: 600, y: 816 }])(
+    'the login dialog preserves its spacing at screen edge $x, $y', position => {
+      values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+      values.set(DesktopCompanionStoreKey.Position, position);
+      create();
+      manager.togglePanel();
+      const panel = mocks.windows.at(-1);
+      ipcMain.emit(DesktopCompanionIpc.PanelLoginVisible,
+        { sender: panel.webContents, senderFrame: panel.webContents.mainFrame }, true);
+      expect(panel.bounds).toMatchObject(DesktopCompanionSize.ComposerLogin);
+      expect(panel.bounds.x).toBeGreaterThanOrEqual(0);
+      expect(panel.bounds.y).toBeGreaterThanOrEqual(0);
+      expect(panel.bounds.x + panel.bounds.width).toBeLessThanOrEqual(1280);
+      expect(panel.bounds.y + panel.bounds.height).toBeLessThanOrEqual(900);
+      const anchor = orb().getBounds();
+      const bounds = panel.getBounds();
+      const gap = DesktopCompanionSize.Gap;
+      expect(bounds.x + bounds.width <= anchor.x - gap
+        || bounds.x >= anchor.x + anchor.width + gap
+        || bounds.y + bounds.height <= anchor.y - gap
+        || bounds.y >= anchor.y + anchor.height + gap).toBe(true);
+    },
+  );
+
+  test('only a valid login visibility update from the panel changes its size', () => {
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows.at(-1);
+    const initialBounds = { ...panel.bounds };
+    const event = { sender: panel.webContents, senderFrame: panel.webContents.mainFrame };
+    ipcMain.emit(DesktopCompanionIpc.PanelLoginVisible,
+      { sender: orb().webContents, senderFrame: orb().webContents.mainFrame }, true);
+    ipcMain.emit(DesktopCompanionIpc.PanelLoginVisible, { ...event, senderFrame: {} }, true);
+    ipcMain.emit(DesktopCompanionIpc.PanelLoginVisible, event, 'true');
+    expect(panel.bounds).toEqual(initialBounds);
+    ipcMain.emit(DesktopCompanionIpc.PanelLoginVisible, event, true);
+    expect(panel.bounds).toMatchObject(DesktopCompanionSize.ComposerLogin);
+    panel.destroy();
+    manager.hidePanel();
+    manager.togglePanel();
+    expect(mocks.windows.at(-1).bounds).toEqual(initialBounds);
   });
 
   test('recent tasks survive reopening and manager restart without enabling the orb', () => {

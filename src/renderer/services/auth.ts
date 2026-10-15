@@ -891,8 +891,19 @@ class AuthService {
     this.unsubWindowState = null;
   }
 
-  private async handleSessionChanged(event: AuthSessionChangedEvent): Promise<void> {
-    if (event.status !== AuthSessionStatus.Expired) return;
+  /** Sync secondary windows without registering another OAuth callback consumer. */
+  async handleSessionChanged(event: AuthSessionChangedEvent): Promise<void> {
+    if (event.status === AuthSessionStatus.TemporarilyUnavailable) return;
+    // Invalidate pending reads even when this window still appears signed out.
+    store.dispatch(invalidateAuthAccountContext());
+    if (event.status === AuthSessionStatus.Authenticated) {
+      await this.refreshAuthState({ clearOnFailure: true });
+      return;
+    }
+    if (event.status === AuthSessionStatus.Unauthenticated) {
+      await this.applyLoggedOutState(false);
+      return;
+    }
     writeAuthRendererLog('warn', `login session expired (${event.reason})`);
     const cleanup = this.applyLoggedOutState(true);
     const toastKey = event.reason === AuthSessionChangeReason.EnterpriseMembershipRevoked

@@ -19,20 +19,19 @@ export interface CompanionMoodInput {
   waiting: boolean;
   unseenResult: boolean;
   snoozed: boolean;
-  fileDragActive: boolean;
   dropHover: boolean;
   dropStage: boolean;
   hintShowing: boolean;
 }
 
 /**
- * Snoozing wins; then whatever the user is doing right now (a file drag);
+ * Snoozing wins; then a file intentionally brought to the companion;
  * then task news in ChatGPT's order: needs input > failed > ready > running.
  */
 export function companionMood(input: CompanionMoodInput): CompanionMood {
   if (input.snoozed) return CompanionMood.Snooze;
   if (input.dropHover) return CompanionMood.Catch;
-  if (input.fileDragActive || input.dropStage) return CompanionMood.Curious;
+  if (input.dropStage) return CompanionMood.Curious;
   if (input.waiting) return CompanionMood.Attention;
   if (input.status === CoworkSessionStatusValue.Error) return CompanionMood.Error;
   if (input.unseenResult) return CompanionMood.Done;

@@ -36,6 +36,8 @@ export const DesktopCompanionIpc = {
   TaskUpdated: 'desktop-companion:task-updated',
   /** The composer window lets clicks through its empty room above the card. */
   PanelPassThrough: 'desktop-companion:panel-pass-through',
+  /** Reserve the welcome dialog's own size while login is open in the composer. */
+  PanelLoginVisible: 'desktop-companion:panel-login-visible',
 } as const;
 
 export const DesktopCompanionSurface = {
@@ -205,9 +207,16 @@ export type DesktopCompanionStageCommand =
 export const DesktopCompanionSelectionMode = { Toolbar: 'toolbar', Answer: 'answer' } as const;
 export type DesktopCompanionSelectionMode = typeof DesktopCompanionSelectionMode[keyof typeof DesktopCompanionSelectionMode];
 
+/** Maximum UTF-8 payload size for selection intake and clipboard writes (1 MB). */
+export const COMPANION_COPY_MAX_BYTES = 1_000_000;
+
+export type CompanionCopyResult = { success: true } | { success: false; error: string };
+
 export interface DesktopCompanionSelection {
   id: string;
   text: string;
+  /** Oversized selections carry no text and only show a capacity notice. */
+  tooLarge?: boolean;
   appId: string;
   actions: CompanionSelectionAction[];
   mode: DesktopCompanionSelectionMode;
@@ -294,13 +303,14 @@ export interface DesktopCompanionBridge extends LanguageToolsBridge, CompanionSc
   taskStarted(sessionId: string): Promise<void>;
   taskUpdated(): void;
   setPanelPassThrough(passThrough: boolean): void;
+  setPanelLoginVisible(visible: boolean): void;
   stageCommand(command: DesktopCompanionStageCommand): Promise<void>;
   resizeSurface(size: CompanionSurfaceSize): void;
   selectionCommand(command: DesktopCompanionSelectionCommand): Promise<void>;
   startQuickAnswer(request: CompanionQuickAnswerRequest): Promise<CompanionQuickAnswerResult>;
   abortQuickAnswer(requestId: string): Promise<void>;
   requestPermission(permission: CompanionPermission): Promise<DesktopCompanionState>;
-  copyText(text: string): Promise<void>;
+  copyText(text: string): Promise<CompanionCopyResult>;
   onChanged(callback: (state: DesktopCompanionState) => void): () => void;
   onSelection(callback: (selection: DesktopCompanionSelection | null) => void): () => void;
   onQuickAnswer(callback: (event: CompanionQuickAnswerEvent) => void): () => void;
@@ -331,6 +341,9 @@ export const DesktopCompanionSize = {
   // Window for the brand disc, status badge and shadow. Cards beside the orb
   // line up with the window's edges, so the window has to fit the art closely.
   BrandOrb: { width: 60, height: 60 },
+  // File drags can summon actions outside the orb without enlarging its native hit area.
+  DropProximityPadding: 128,
+  DropProximityExitPadding: 32,
   // Window sizes include the transparent SurfacePad margin that holds the card shadow.
   // The quick panel is the home composer in a narrow card that grows upward. Its
   // window adds room above the card and toward the middle of the screen, so the
@@ -338,10 +351,13 @@ export const DesktopCompanionSize = {
   Composer: { width: 380, maxHeight: 560 },
   ComposerMenuRoom: 360,
   ComposerSideRoom: 400,
+  // Preserve the welcome card's spacing independently of the prompt height and orb position.
+  ComposerLogin: { width: 824, height: 412 },
   PanelCompactHeight: 280,
   Task: { width: 420, height: 112 },
   Hint: { width: 320, height: 168 },
-  Drop: { width: 448, height: 214 },
+  // A 420px card with generous drop targets, plus its transparent shadow margin.
+  Drop: { width: 464, height: 188 },
   // A 42px toolbar plus the margin; the window always reserves ToolbarMenu space below or above it.
   Toolbar: { width: 680, height: 86 },
   ToolbarMenu: 200,
@@ -359,6 +375,8 @@ export const DesktopCompanionSize = {
 
 export const DesktopCompanionTiming = {
   HintAutoDismissMs: 12_000,
+  DropExpandDelayMs: 180,
+  DropProximityPollMs: 60,
   DropLingerMs: 450,
   SnoozeHourMs: 60 * 60_000,
 } as const;
