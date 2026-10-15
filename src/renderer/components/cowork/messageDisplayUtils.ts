@@ -10,12 +10,14 @@ import {
   isInternalCompactionSystemText,
 } from '../../../common/coworkSystemMessages';
 import type { CoworkTurnUsageAnchor } from '../../../shared/cowork/llmTurnUsage';
+import { MediaTaskStatus, TERMINAL_MEDIA_TASK_STATUSES } from '../../../shared/media/constants';
 import { hasToolResultMediaAssets, normalizeFilePathForDedup } from '../../services/artifactParser';
 import { i18nService } from '../../services/i18n';
 import type { Artifact } from '../../types/artifact';
 import type { CoworkMessage, CoworkMessageMetadata } from '../../types/cowork';
 import { ActivityStepKind } from './constants';
 import type { MediaPollingGroup } from './MediaPollingIndicator';
+import type { MediaTaskPresentations } from './mediaTaskPresentation';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -959,7 +961,7 @@ const LOCAL_VIDEO_PATH_DISPLAY_RE = /(?:^|[\s"'`(：:])((?:\/|[A-Za-z]:\/)[^\n"'
 const SAVED_GENERATED_MEDIA_RE = /^Saved generated (?:video|image)s?:/i;
 const GENERATED_MEDIA_SUCCEEDED_RE = /^(?:Video|Image) generation succeeded\./i;
 const GENERATED_VIDEO_TEXT_RE = /(?:视频(?:已生成|生成完成)|video\s+(?:generated|generation\s+succeeded|generation\s+complete))/i;
-const TERMINAL_MEDIA_STATUSES = new Set(['succeeded', 'failed', 'timeout', 'cancelled']);
+const TERMINAL_MEDIA_STATUSES = TERMINAL_MEDIA_TASK_STATUSES;
 
 export type MediaStreamingInfo = {
   taskId?: string;
@@ -1248,12 +1250,16 @@ const extractMediaPollCount = (poll: ToolGroupItem): number | undefined => {
   return getMediaPollCount(poll);
 };
 
-export const consolidateMediaPolling = (items: AssistantTurnItem[]): ConsolidatedItem[] => {
+export const consolidateMediaPolling = (
+  items: AssistantTurnItem[],
+  mediaTaskPresentations?: MediaTaskPresentations,
+): ConsolidatedItem[] => {
   const pollsByTaskId = new Map<string, { toolName: string; indices: number[] }>();
   const mediaPollOrdinals = new Map<number, number>();
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
-    if (item.type === 'tool_group' && isMediaStatusPoll(item.group)) {
+    if (item.type === 'tool_group' && isMediaStatusPoll(item.group)
+      && !mediaTaskPresentations?.has(item.group.toolUse.id)) {
       const toolName = item.group.toolUse.metadata!.toolName!;
       const input = item.group.toolUse.metadata!.toolInput as Record<string, string>;
       const taskId = input.taskId;
@@ -1296,27 +1302,27 @@ export const consolidateMediaPolling = (items: AssistantTurnItem[]): Consolidate
       });
     }
     const lastPoll = consolidatedPolls[consolidatedPolls.length - 1];
-    const lastStatus = extractMediaPollStatus(lastPoll);
+    let lastStatus = extractMediaPollStatus(lastPoll);
     let isComplete = lastStatus != null && TERMINAL_MEDIA_STATUSES.has(lastStatus);
 
     if (!isComplete) {
+      const escapedTaskId = taskId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const completionPattern = new RegExp(
-        `Task ID: ${taskId}[\\s\\S]*?generation (succeeded|failed|timed out|cancelled)`
-        + `|generation (succeeded|failed|timed out|cancelled)[\\s\\S]*?Task ID: ${taskId}`,
+        `Task ID: ${escapedTaskId}(?=\\s|$)[\\s\\S]*?generation (succeeded|failed|timed out|cancelled)`
+        + `|generation (succeeded|failed|timed out|cancelled)[\\s\\S]*?Task ID: ${escapedTaskId}(?=\\s|$)`,
         'i',
       );
       for (const item of items) {
         if (item.type === 'system' || item.type === 'tool_result') {
-          if (completionPattern.test(item.message.content)) {
+          const completion = completionPattern.exec(item.message.content);
+          if (completion) {
+            lastStatus = (completion[1] || completion[2]).toLowerCase().replace('timed out', MediaTaskStatus.Timeout);
             isComplete = true;
             break;
           }
           const details = item.message.metadata?.toolResultDetails as Record<string, unknown> | undefined;
-          if (details?.status && TERMINAL_MEDIA_STATUSES.has(details.status as string)) {
-            isComplete = true;
-            break;
-          }
-          if (/^Saved generated (video|image)s?:/m.test(item.message.content)) {
+          if (String(details?.taskId) === taskId && details?.status && TERMINAL_MEDIA_STATUSES.has(details.status as string)) {
+            lastStatus = String(details.status);
             isComplete = true;
             break;
           }

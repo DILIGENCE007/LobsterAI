@@ -27,6 +27,7 @@ import {
   type CoworkSteerRequest,
   CoworkSteerStatus,
 } from '../../shared/cowork/steer';
+import { MediaProtocol } from '../../shared/media/constants';
 import { OpenClawLoopbackRepairOutcome } from '../../shared/openclawEngine/constants';
 import { store } from '../store';
 import {
@@ -340,7 +341,7 @@ class CoworkService {
 
     const mediaStatusPollCleanup = cowork.onMediaStatusPollUpdate?.(({ sessionId, toolCallId, details }) => {
       const session = store.getState().cowork.sessions.find(s => s.id === sessionId);
-      if (session?.status !== 'completed') {
+      if (details.protocolVersion !== MediaProtocol.Durable && session?.status !== 'completed') {
         store.dispatch(updateSessionStatus({ sessionId, status: 'running' }));
         this.queuedFollowUpCoordinator.handleSessionRunning(sessionId);
       }
