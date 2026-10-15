@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
+import type { GenerateSessionTitleRequest } from '../common/sessionTitle';
 import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
 import {
   type ActivityHostExecuteActionInput,
@@ -8,6 +9,7 @@ import {
   ActivityIpc,
 } from '../shared/activity/constants';
 import { AgentIpcChannel, AgentLegacyIdentityCleanupStatus } from '../shared/agent/constants';
+import type { UsageContext } from '../shared/analytics/usage';
 import { AppIpcChannel } from '../shared/app/constants';
 import { AppSettingsIpc } from '../shared/appSettings/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
@@ -64,6 +66,15 @@ import type { CoworkTurnUsage } from '../shared/cowork/llmTurnUsage';
 import type { CoworkSearchMessageCursor } from '../shared/cowork/search';
 import { DataMigrationIpc } from '../shared/dataMigration/constants';
 import { type DecisionModelConfigUpdate, DecisionModelIpcChannel } from '../shared/decisionModel/constants';
+import {
+  type CompanionQuickAnswerEvent,
+  type DesktopCompanionBridge,
+  DesktopCompanionIpc,
+  type DesktopCompanionSelection,
+  type DesktopCompanionState,
+} from '../shared/desktopCompanion/constants';
+import { CompanionResultIpc } from '../shared/desktopCompanion/results';
+import { CompanionScreenshotIpc } from '../shared/desktopCompanion/screenshot';
 import { DialogIpc } from '../shared/dialog/constants';
 import { DshIpcChannel } from '../shared/dshEngine/constants';
 import {
@@ -137,6 +148,7 @@ import type {
   SkinListResponse,
 } from '../shared/skin/types';
 import { SubscriptionTrialIpc } from '../shared/subscriptionTrial/constants';
+import { createLanguageToolsBridge } from './desktopCompanion/languageToolsPreload';
 import { NimQrLoginIpc } from './ipcHandlers/nimQrLogin';
 import { createOfficeBridges } from './office/officePreloadBridges';
 import { OpenClawSessionIpc } from './openclawSession/constants';
@@ -144,6 +156,54 @@ import { OpenClawSessionPolicyIpc } from './openclawSessionPolicy/constants';
 
 // 暴露安全的 API 到渲染进程
 contextBridge.exposeInMainWorld('electron', {
+  desktopCompanion: {
+    ...createLanguageToolsBridge(),
+    openResult: sessionId => ipcRenderer.invoke(CompanionResultIpc.Open, sessionId),
+    hideResult: () => ipcRenderer.invoke(CompanionResultIpc.Hide),
+    dismissResult: sessionId => ipcRenderer.invoke(CompanionResultIpc.Dismiss, sessionId),
+    pinResult: pinned => ipcRenderer.invoke(CompanionResultIpc.Pin, pinned),
+    getRecentTasks: () => ipcRenderer.invoke(CompanionResultIpc.Recent),
+    setResultPassThrough: passThrough => ipcRenderer.invoke(CompanionResultIpc.PassThrough, passThrough),
+    getScreenshotFrame: () => ipcRenderer.invoke(CompanionScreenshotIpc.GetFrame),
+    screenshotReady: () => ipcRenderer.invoke(CompanionScreenshotIpc.Ready),
+    finishScreenshot: rect => ipcRenderer.invoke(CompanionScreenshotIpc.Finish, rect),
+    getState: () => ipcRenderer.invoke(DesktopCompanionIpc.GetState),
+    setPreferences: patch => ipcRenderer.invoke(DesktopCompanionIpc.SetPreferences, patch),
+    getSelectionExcludedApps: () => ipcRenderer.invoke(DesktopCompanionIpc.GetSelectionExcludedApps),
+    setDraft: draft => ipcRenderer.invoke(DesktopCompanionIpc.SetDraft, draft),
+    selectSession: id => ipcRenderer.invoke(DesktopCompanionIpc.SelectSession, id),
+    togglePanel: () => ipcRenderer.invoke(DesktopCompanionIpc.TogglePanel),
+    hidePanel: () => ipcRenderer.invoke(DesktopCompanionIpc.HidePanel),
+    openMain: id => ipcRenderer.invoke(DesktopCompanionIpc.OpenMain, id),
+    showContextMenu: () => ipcRenderer.invoke(DesktopCompanionIpc.ContextMenu),
+    drag: phase => ipcRenderer.send(DesktopCompanionIpc.Drag, phase),
+    orbFileDrag: (phase, kinds) => ipcRenderer.send(DesktopCompanionIpc.OrbFileDrag, { phase, kinds }),
+    taskStarted: sessionId => ipcRenderer.invoke(DesktopCompanionIpc.TaskStarted, sessionId),
+    taskUpdated: () => ipcRenderer.send(DesktopCompanionIpc.TaskUpdated),
+    setPanelPassThrough: passThrough => ipcRenderer.send(DesktopCompanionIpc.PanelPassThrough, passThrough),
+    stageCommand: command => ipcRenderer.invoke(DesktopCompanionIpc.StageCommand, command),
+    resizeSurface: size => ipcRenderer.send(DesktopCompanionIpc.ResizeSurface, size),
+    selectionCommand: command => ipcRenderer.invoke(DesktopCompanionIpc.SelectionCommand, command),
+    startQuickAnswer: request => ipcRenderer.invoke(DesktopCompanionIpc.QuickAnswerStart, request),
+    abortQuickAnswer: requestId => ipcRenderer.invoke(DesktopCompanionIpc.QuickAnswerAbort, requestId),
+    requestPermission: permission => ipcRenderer.invoke(DesktopCompanionIpc.RequestPermission, permission),
+    copyText: text => ipcRenderer.invoke(DesktopCompanionIpc.CopyText, text),
+    onChanged: callback => {
+      const handler = (_event: Electron.IpcRendererEvent, state: DesktopCompanionState) => callback(state);
+      ipcRenderer.on(DesktopCompanionIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(DesktopCompanionIpc.Changed, handler);
+    },
+    onSelection: callback => {
+      const handler = (_event: Electron.IpcRendererEvent, selection: DesktopCompanionSelection | null) => callback(selection);
+      ipcRenderer.on(DesktopCompanionIpc.Selection, handler);
+      return () => ipcRenderer.removeListener(DesktopCompanionIpc.Selection, handler);
+    },
+    onQuickAnswer: callback => {
+      const handler = (_event: Electron.IpcRendererEvent, event: CompanionQuickAnswerEvent) => callback(event);
+      ipcRenderer.on(DesktopCompanionIpc.QuickAnswerEvent, handler);
+      return () => ipcRenderer.removeListener(DesktopCompanionIpc.QuickAnswerEvent, handler);
+    },
+  } satisfies DesktopCompanionBridge,
   platform: process.platform,
   arch: process.arch,
   store: {
@@ -344,8 +404,8 @@ contextBridge.exposeInMainWorld('electron', {
     model: string;
     apiType?: 'anthropic' | 'openai';
   }) => ipcRenderer.invoke('save-api-config', config),
-  generateSessionTitle: (userInput: string | null) =>
-    ipcRenderer.invoke('generate-session-title', userInput),
+  generateSessionTitle: (request: GenerateSessionTitleRequest) =>
+    ipcRenderer.invoke(CoworkIpcChannel.GenerateSessionTitle, request),
   getRecentCwds: (limit?: number) => ipcRenderer.invoke('get-recent-cwds', limit),
   dsh: {
     getState: () => ipcRenderer.invoke(DshIpcChannel.GetState),
@@ -367,6 +427,7 @@ contextBridge.exposeInMainWorld('electron', {
       retryInstall: () => ipcRenderer.invoke(OpenClawEngineIpc.RetryInstall),
       restartGateway: () => ipcRenderer.invoke(OpenClawEngineIpc.RestartGateway),
       repairGatewayState: () => ipcRenderer.invoke(OpenClawEngineIpc.RepairGatewayState),
+      repairLoopbackFirewall: () => ipcRenderer.invoke(OpenClawEngineIpc.RepairLoopbackFirewall),
       onProgress: (callback: (status: any) => void) => {
         const handler = (_event: any, status: any) => callback(status);
         ipcRenderer.on(OpenClawEngineIpc.OnProgress, handler);
@@ -530,16 +591,28 @@ contextBridge.exposeInMainWorld('electron', {
     },
     presetTemplates: async () => {
       const result = await ipcRenderer.invoke(AgentIpcChannel.PresetTemplates);
-      return result?.success ? result.presets : [];
+      if (!result?.success) throw new Error(result?.error || 'Failed to load preset templates');
+      return result.presets;
+    },
+    expertCatalog: async () => {
+      const result = await ipcRenderer.invoke(AgentIpcChannel.ExpertCatalog);
+      if (!result?.success) throw new Error(result?.error || 'Failed to load expert catalog');
+      return result.catalog;
     },
     addPreset: async (presetId: string) => {
       const result = await ipcRenderer.invoke(AgentIpcChannel.AddPreset, presetId);
       return result?.success ? result.agent : null;
     },
+    onChanged: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on(AgentIpcChannel.Changed, handler);
+      return () => ipcRenderer.removeListener(AgentIpcChannel.Changed, handler);
+    },
   },
   cowork: {
     // Session management
     startSession: (options: {
+      analytics?: UsageContext;
       prompt: string;
       cwd?: string;
       systemPrompt?: string;
@@ -557,8 +630,9 @@ contextBridge.exposeInMainWorld('electron', {
       thinkingLevel?: string;
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string; sizeBytes?: number; localPath?: string; previewMimeType?: string; previewBase64Data?: string }>;
       mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string }; mediaReferences?: Array<{ token: string; mediaType: string; index: number; fileId: string; fileName: string; mimeType: string; localPath?: string; remoteUrl?: string; dataUrl?: string; role?: string }>;
-    }) => ipcRenderer.invoke('cowork:session:start', options),
+    }) => ipcRenderer.invoke(CoworkIpcChannel.SessionStart, options),
     continueSession: (options: {
+      analytics?: UsageContext;
       sessionId: string;
       prompt: string;
       systemPrompt?: string;
@@ -582,7 +656,7 @@ contextBridge.exposeInMainWorld('electron', {
         remoteUrl?: string;
         dataUrl?: string; role?: string;
       }>;
-    }) => ipcRenderer.invoke('cowork:session:continue', options),
+    }) => ipcRenderer.invoke(CoworkIpcChannel.SessionContinue, options),
     submitBtw: (options: CoworkBtwSubmitRequest): Promise<CoworkBtwSubmitResponse> =>
       ipcRenderer.invoke(CoworkIpcChannel.SubmitBtw, options),
     abortBtw: (options: CoworkBtwAbortRequest): Promise<CoworkBtwAbortResponse> =>
@@ -601,7 +675,7 @@ contextBridge.exposeInMainWorld('electron', {
     setSessionPinned: (options: { sessionId: string; pinned: boolean }) =>
       ipcRenderer.invoke('cowork:session:pin', options),
     renameSession: (options: { sessionId: string; title: string }) =>
-      ipcRenderer.invoke('cowork:session:rename', options),
+      ipcRenderer.invoke(CoworkIpcChannel.RenameSession, options),
     forkSession: (options: {
       sessionId: string;
       forkedFromMessageId?: string | null;
@@ -632,15 +706,6 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CoworkIpcChannel.GetSessionSearchMessages, options),
     getSessionMessageRailIndex: (sessionId: string) =>
       ipcRenderer.invoke(CoworkIpcChannel.GetSessionMessageRailIndex, sessionId),
-    getProgressCard: (sessionId: string) =>
-      ipcRenderer.invoke(CoworkIpcChannel.GetProgressCard, sessionId),
-    dismissProgressCard: (sessionId: string, revision: number) =>
-      ipcRenderer.invoke(CoworkIpcChannel.DismissProgressCard, sessionId, revision),
-    onProgressCardChanged: (callback: (event: { sessionId: string }) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: { sessionId: string }) => callback(data);
-      ipcRenderer.on(CoworkIpcChannel.ProgressCardChanged, handler);
-      return () => ipcRenderer.removeListener(CoworkIpcChannel.ProgressCardChanged, handler);
-    },
     getContextUsage: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:contextUsage', sessionId),
     compactContext: (sessionId: string) =>
@@ -1073,14 +1138,14 @@ contextBridge.exposeInMainWorld('electron', {
       save: (request: SaveMarkdownFileRequest) => ipcRenderer.invoke(MarkdownFileIpc.Save, request),
       setHasUnsafeEdits: (hasUnsafeEdits: boolean) => ipcRenderer.send(MarkdownFileIpc.SetUnsafeEdits, hasUnsafeEdits),
     },
-    watchFile: (filePath: string) => ipcRenderer.invoke('artifact:watchFile', filePath),
-    unwatchFile: (filePath: string) => ipcRenderer.invoke('artifact:unwatchFile', filePath),
+    watchFile: (filePath: string) => ipcRenderer.invoke(ArtifactPreviewIpc.WatchFile, filePath),
+    unwatchFile: (filePath: string) => ipcRenderer.invoke(ArtifactPreviewIpc.UnwatchFile, filePath),
     onFileChanged: (callback: (data: { filePath: string }) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: { filePath: string }) =>
         callback(data);
-      ipcRenderer.on('artifact:file:changed', handler);
+      ipcRenderer.on(ArtifactPreviewIpc.FileChanged, handler);
       return () => {
-        ipcRenderer.removeListener('artifact:file:changed', handler);
+        ipcRenderer.removeListener(ArtifactPreviewIpc.FileChanged, handler);
       };
     },
     createPreviewSession: (filePath: string) =>
@@ -1129,6 +1194,14 @@ contextBridge.exposeInMainWorld('electron', {
     relaunch: () => ipcRenderer.invoke('app:relaunch'),
     openSystemNotificationSettings: () =>
       ipcRenderer.invoke(AppIpcChannel.OpenSystemNotificationSettings),
+  },
+  openWith: {
+    consumePaths: () => ipcRenderer.invoke(AppIpcChannel.ConsumeOpenWithPaths),
+    onPathsAvailable: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on(AppIpcChannel.OpenWithPathsAvailable, handler);
+      return () => ipcRenderer.removeListener(AppIpcChannel.OpenWithPathsAvailable, handler);
+    },
   },
   subscriptionTrial: {
     status: () => ipcRenderer.invoke(SubscriptionTrialIpc.Status),

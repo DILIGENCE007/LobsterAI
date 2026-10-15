@@ -26,11 +26,13 @@ interface ToastProps {
   actionLabel?: string;
   onAction?: () => void;
   onClose?: () => void;
+  /** Centers the toast on its nearest positioned ancestor instead of the window. */
+  contained?: boolean;
 }
 
-const Toast: React.FC<ToastProps> = ({ message, closeLabel, actionLabel, onAction, onClose, placement = ToastPlacement.Center }) => {
+const Toast: React.FC<ToastProps> = ({ message, closeLabel, actionLabel, onAction, onClose, placement = ToastPlacement.Center, contained = false }) => {
   return (
-    <div className={`pointer-events-none fixed left-1/2 z-[10000] w-max max-w-full -translate-x-1/2 px-4 ${
+    <div className={`pointer-events-none ${contained ? 'absolute' : 'fixed'} left-1/2 z-[10000] w-max max-w-full -translate-x-1/2 px-4 ${
       placement === ToastPlacement.Top ? 'top-8' : 'top-1/2 -translate-y-1/2'
     }`}>
       <div

@@ -22,6 +22,7 @@ import BetterSqlite3 from 'better-sqlite3';
 
 import { CoworkSystemMessageKind } from '../common/coworkSystemMessages';
 import { AgentAvatarSvg, DefaultAgentAvatarIcon, encodeAgentAvatarIcon } from '../shared/agent/avatar';
+import { AgentId, AgentSource } from '../shared/agent/constants';
 import {
   COWORK_SEARCH_HISTORY_MAX_MESSAGE_CONTENT_CODE_UNITS,
   COWORK_SEARCH_MESSAGE_PAGE_MAX_CONTENT_BYTES,
@@ -131,6 +132,7 @@ function setupDb(): void {
       thinking_level TEXT NOT NULL DEFAULT '',
       working_directory TEXT NOT NULL DEFAULT '',
       icon TEXT NOT NULL DEFAULT '',
+      icon_customized INTEGER,
       skill_ids TEXT NOT NULL DEFAULT '[]',
       subagent_allow_agent_ids TEXT NOT NULL DEFAULT '[]',
       enabled INTEGER NOT NULL DEFAULT 1,
@@ -1331,6 +1333,41 @@ test('agent CRUD normalizes legacy icons to the default svg avatar', () => {
 
   const updated = store.updateAgent(designedIconAgent.id, { icon: 'legacy-icon' });
   expect(updated?.icon).toBe(DefaultAgentAvatarIcon);
+});
+
+test('preset avatar refresh respects persisted user ownership and leaves other settings unchanged', () => {
+  const agent = store.createAgent({ id: 'office-expert', name: 'My expert', source: AgentSource.Preset,
+    presetId: 'office-expert', systemPrompt: 'Custom instructions' });
+  expect(agent.iconCustomized).toBe(false);
+  const icon = 'https://ydhardwarecommon.nosdn.127.net/category-office.webp';
+  expect(store.updatePresetAgentAvatar(agent.id, icon)).toMatchObject({
+    icon, iconCustomized: false, name: 'My expert', systemPrompt: 'Custom instructions',
+  });
+  expect(store.updateAgent(agent.id, { name: 'Renamed', icon })?.iconCustomized).toBe(false);
+  const chosen = encodeAgentAvatarIcon({ svg: AgentAvatarSvg.Heart });
+  expect(store.updateAgent(agent.id, { icon: chosen })?.iconCustomized).toBe(true);
+  expect(store.updatePresetAgentAvatar(agent.id, icon)).toMatchObject({ icon: chosen, iconCustomized: true });
+  store.updateAgent(agent.id, { icon: DefaultAgentAvatarIcon });
+  expect(store.updatePresetAgentAvatar(agent.id, icon)?.icon).toBe(DefaultAgentAvatarIcon);
+});
+
+test('legacy defaults migrate conservatively and main/custom agents never receive catalog avatars', () => {
+  const original = encodeAgentAvatarIcon({ svg: AgentAvatarSvg.Data });
+  const agent = store.createAgent({ id: 'renamed-preset', name: 'Old expert', source: AgentSource.Preset,
+    presetId: 'data-advisor', icon: original });
+  db.prepare('UPDATE agents SET icon_customized = NULL WHERE id = ?').run(agent.id);
+  expect(store.getAgent(agent.id)?.iconCustomized).toBe(false);
+  const edited = encodeAgentAvatarIcon({ svg: AgentAvatarSvg.Creation });
+  db.prepare('UPDATE agents SET icon = ? WHERE id = ?').run(edited, agent.id);
+  expect(store.getAgent(agent.id)?.iconCustomized).toBe(true);
+  const icon = 'https://ydhardwarecommon.nosdn.127.net/category-research.webp';
+  expect(store.updatePresetAgentAvatar(agent.id, icon)?.icon).toBe(edited);
+  for (const protectedAgent of [
+    store.createAgent({ id: AgentId.Main, name: 'Main', source: AgentSource.Preset }),
+    store.createAgent({ id: 'user-agent', name: 'User agent', icon: original }),
+  ]) {
+    expect(store.updatePresetAgentAvatar(protectedAgent.id, icon)?.icon).toBe(protectedAgent.icon);
+  }
 });
 
 test('agent pinning stores first-pinned-first order', () => {

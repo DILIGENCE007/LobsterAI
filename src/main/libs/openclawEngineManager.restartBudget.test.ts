@@ -1,8 +1,11 @@
 import { type ChildProcess } from 'child_process';
+import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { OpenClawEnginePhase } from '../../shared/openclawEngine/constants';
+import { PythonEncodingEnv } from './pythonEncodingEnv';
 
 // These tests drive the real startGateway -> doStartGateway success path, so a
 // healthy start that refills the restart budget too early fails them. Only the
@@ -10,7 +13,7 @@ import { OpenClawEnginePhase } from '../../shared/openclawEngine/constants';
 const spawnState = vi.hoisted(() => ({ children: [] as unknown[] }));
 
 vi.mock('electron', () => ({
-  app: { getAppPath: () => process.cwd(), isPackaged: false, getVersion: () => '2026.9.24' },
+  app: { getAppPath: () => process.cwd(), getPath: () => '/test-profile', isPackaged: false, getVersion: () => '2026.9.24' },
 }));
 vi.mock('./openclawLocalExtensions', () => ({
   syncLocalOpenClawExtensionsIntoRuntime: () => ({ copied: [] }),
@@ -23,7 +26,6 @@ vi.mock('./coworkUtil', () => ({
   getSkillsRoot: () => '/skills',
 }));
 vi.mock('./openaiCodexAuth', () => ({ getCodexHomeDir: () => '/codex' }));
-vi.mock('./pythonRuntime', () => ({ appendPythonRuntimeToEnv: () => {} }));
 vi.mock('./systemProxy', () => ({
   isSystemProxyEnabled: () => false,
   resolveSystemProxyUrlForTargets: async () => ({ proxyUrl: null, targetUrl: null }),
@@ -67,6 +69,9 @@ vi.mock('./openclawGatewayProcess', async (importOriginal) => {
 });
 
 import { OpenClawEngineManager } from './openclawEngineManager';
+import { spawnOpenClawGatewayProcess } from './openclawGatewayProcess';
+
+const originalPlatform = process.platform;
 
 interface BudgetInternals {
   gatewayProcess: ChildProcess | null;
@@ -85,6 +90,8 @@ function makeManager() {
     configPath: path.join(fixtures, 'state', 'openclaw.json'),
     logsDir: path.join(fixtures, 'logs'),
     secretEnvVars: {},
+    gatewayProcessSecretEnvVars: null,
+    gatewayProcessConfigRaw: null,
     gatewayProcess: null,
     gatewayGeneration: 0,
     gatewaySpawnedAt: null,
@@ -147,8 +154,41 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  Object.defineProperty(process, 'platform', { value: originalPlatform });
+  vi.unstubAllEnvs();
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+describe('OpenClaw gateway Python environment', () => {
+  test('startup and restart supply UTF-8 even when the Electron parent has no encoding variables', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.stubEnv(PythonEncodingEnv.Utf8, undefined);
+    vi.stubEnv(PythonEncodingEnv.IoEncoding, undefined);
+    const { manager, crashRunningGateway } = makeManager();
+
+    await manager.startGateway('initial-start');
+    expect(vi.mocked(spawnOpenClawGatewayProcess).mock.lastCall?.[0].env)
+      .toMatchObject({ [PythonEncodingEnv.Utf8]: '1', [PythonEncodingEnv.IoEncoding]: 'utf-8' });
+
+    crashRunningGateway();
+    await manager.restartGateway('encoding-regression');
+    expect(vi.mocked(spawnOpenClawGatewayProcess).mock.lastCall?.[0].env)
+      .toMatchObject({ [PythonEncodingEnv.Utf8]: '1', [PythonEncodingEnv.IoEncoding]: 'utf-8' });
+    expect(process.env[PythonEncodingEnv.Utf8]).toBeUndefined();
+    expect(process.env[PythonEncodingEnv.IoEncoding]).toBeUndefined();
+  });
+
+  test('startup preserves explicit Python encoding settings', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.stubEnv(PythonEncodingEnv.Utf8, '0');
+    vi.stubEnv(PythonEncodingEnv.IoEncoding, 'gbk');
+    const { manager } = makeManager();
+
+    await manager.startGateway('initial-start');
+    expect(vi.mocked(spawnOpenClawGatewayProcess).mock.lastCall?.[0].env)
+      .toMatchObject({ [PythonEncodingEnv.Utf8]: '0', [PythonEncodingEnv.IoEncoding]: 'gbk' });
+  });
 });
 
 // Crashes the gateway 1s after every healthy start until the supervisor gives
@@ -235,5 +275,52 @@ describe('OpenClaw gateway restart budget across healthy starts', () => {
 
     expect(internals.gatewayRestartAttempt).toBe(1);
     expect(manager.getStatus().phase).toBe(OpenClawEnginePhase.Starting);
+  });
+});
+
+describe('OpenClaw gateway spawn secrets', () => {
+  test('the live process keeps the secrets it was spawned with until it exits', async () => {
+    const { manager, crashRunningGateway } = makeManager();
+    manager.setSecretEnvVars({ LOBSTER_APIKEY_QWEN: 'spawned-key' });
+    await manager.startGateway('initial-start');
+    manager.setSecretEnvVars({ LOBSTER_APIKEY_QWEN: 'rotated-key' });
+
+    expect(vi.mocked(spawnOpenClawGatewayProcess).mock.lastCall?.[0].env)
+      .toMatchObject({ LOBSTER_APIKEY_QWEN: 'spawned-key' });
+    expect(manager.getGatewayProcessSecretEnvVars()).toEqual({ LOBSTER_APIKEY_QWEN: 'spawned-key' });
+
+    crashRunningGateway();
+    expect(manager.getGatewayProcessSecretEnvVars()).toBeNull();
+  });
+});
+
+describe('OpenClaw gateway spawn config', () => {
+  test('the live process keeps the config file content it was spawned with until it exits', async () => {
+    const { manager, crashRunningGateway } = makeManager();
+    const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-spawn-config-'));
+    const configPath = path.join(configDir, 'openclaw.json');
+    Object.assign(manager, { configPath });
+    try {
+      fs.writeFileSync(configPath, '{"mcp":{"servers":{}}}\n');
+      await manager.startGateway('initial-start');
+      // Later writes reach the running process only through config RPC.
+      fs.writeFileSync(configPath, '{"mcp":{"servers":{"computer-use":{}}}}\n');
+
+      expect(manager.getGatewayProcessConfigRaw()).toBe('{"mcp":{"servers":{}}}\n');
+
+      crashRunningGateway();
+      expect(manager.getGatewayProcessConfigRaw()).toBeNull();
+    } finally {
+      fs.rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test('a gateway spawned without a config file has no spawn config', async () => {
+    const { manager } = makeManager();
+    Object.assign(manager, { configPath: path.join(os.tmpdir(), 'openclaw-missing-config', 'openclaw.json') });
+
+    await manager.startGateway('initial-start');
+
+    expect(manager.getGatewayProcessConfigRaw()).toBeNull();
   });
 });

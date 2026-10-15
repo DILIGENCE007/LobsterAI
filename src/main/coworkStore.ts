@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { CoworkSystemMessageKind } from '../common/coworkSystemMessages';
 import { AgentId, normalizeAgentAvatarIcon } from '../shared/agent';
+import { usesManagedPresetAvatar } from '../shared/agent/presetAvatar';
 import {
   COWORK_MESSAGE_PAGE_SIZE,
   COWORK_SEARCH_HISTORY_MAX_MESSAGE_CONTENT_CODE_UNITS,
@@ -423,6 +424,7 @@ export interface Agent {
   thinkingLevel: ModelThinkingLevel | '';
   workingDirectory: string;
   icon: string;
+  iconCustomized?: boolean;
   skillIds: string[];
   subagentAllowAgentIds: string[];
   enabled: boolean;
@@ -3407,6 +3409,7 @@ export class CoworkStore {
       thinking_level?: string | null;
       working_directory?: string | null;
       icon: string;
+      icon_customized?: number | null;
       skill_ids: string;
       subagent_allow_agent_ids?: string | null;
       enabled: number;
@@ -3439,6 +3442,7 @@ export class CoworkStore {
       thinking_level?: string | null;
       working_directory?: string | null;
       icon: string;
+      icon_customized?: number | null;
       skill_ids: string;
       subagent_allow_agent_ids?: string | null;
       enabled: number;
@@ -3481,8 +3485,8 @@ export class CoworkStore {
       this.db
         .prepare(
           `
-        INSERT INTO agents (id, name, description, system_prompt, identity, model, thinking_level, working_directory, icon, skill_ids, subagent_allow_agent_ids, enabled, is_default, source, preset_id, sort_order, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)
+        INSERT INTO agents (id, name, description, system_prompt, identity, model, thinking_level, working_directory, icon, icon_customized, skill_ids, subagent_allow_agent_ids, enabled, is_default, source, preset_id, sort_order, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)
       `,
         )
         .run(
@@ -3495,6 +3499,7 @@ export class CoworkStore {
           normalizeAgentThinkingLevel(request.thinkingLevel),
           request.workingDirectory || '',
           normalizeAgentAvatarIcon(request.icon),
+          usesManagedPresetAvatar({ id, source: request.source, iconCustomized: false }) ? 0 : 1,
           JSON.stringify(normalizeStringIdList(request.skillIds)),
           JSON.stringify(normalizeStringIdList(request.subagentAllowAgentIds)),
           request.source || 'custom',
@@ -3559,8 +3564,9 @@ export class CoworkStore {
       values.push(updates.workingDirectory);
     }
     if (updates.icon !== undefined) {
-      setClauses.push('icon = ?');
-      values.push(normalizeAgentAvatarIcon(updates.icon));
+      const icon = normalizeAgentAvatarIcon(updates.icon);
+      setClauses.push('icon = ?', 'icon_customized = ?');
+      values.push(icon, icon !== existing.icon || existing.iconCustomized ? 1 : 0);
     }
     if (updates.skillIds !== undefined) {
       setClauses.push('skill_ids = ?');
@@ -3593,6 +3599,18 @@ export class CoworkStore {
 
     values.push(id);
     this.db.prepare(`UPDATE agents SET ${setClauses.join(', ')} WHERE id = ?`).run(...values);
+    return this.getAgent(id);
+  }
+
+  /** Cosmetic catalog refresh: never overwrite a user-owned avatar. */
+  updatePresetAgentAvatar(id: string, icon: string): Agent | null {
+    const existing = this.getAgent(id);
+    if (!usesManagedPresetAvatar(existing)) return existing;
+    const normalized = normalizeAgentAvatarIcon(icon);
+    if (existing?.icon !== normalized) {
+      this.db.prepare('UPDATE agents SET icon = ?, icon_customized = 0, updated_at = ? WHERE id = ?')
+        .run(normalized, Date.now(), id);
+    }
     return this.getAgent(id);
   }
 
@@ -3652,6 +3670,7 @@ export class CoworkStore {
     thinking_level?: string | null;
     working_directory?: string | null;
     icon: string;
+    icon_customized?: number | null;
     skill_ids: string;
     subagent_allow_agent_ids?: string | null;
     enabled: number;
@@ -3676,6 +3695,10 @@ export class CoworkStore {
       thinkingLevel: parseModelThinkingLevel(row.thinking_level) ?? '',
       workingDirectory: row.working_directory || '',
       icon: row.icon,
+      iconCustomized: !usesManagedPresetAvatar({
+        id: row.id, source: row.source as AgentSource, presetId: row.preset_id, icon: row.icon,
+        iconCustomized: row.icon_customized == null ? undefined : Boolean(row.icon_customized),
+      }),
       skillIds,
       subagentAllowAgentIds,
       enabled: Boolean(row.enabled),

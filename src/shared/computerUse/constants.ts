@@ -10,15 +10,16 @@ export const ComputerUseSkillId = {
 } as const;
 export type ComputerUseSkillId = typeof ComputerUseSkillId[keyof typeof ComputerUseSkillId];
 
+// The macOS skill bundle only carries SKILL.md, so the arm64 and x64 runtimes share it.
 export const ComputerUseKitBundle = {
-  MacArm64: 'https://ydschool-video.nosdn.127.net/1791322104350lobsterai-computer-use-skill-mac-arm64-0.2.2.zip',
+  MacOS: 'https://ydschool-video.nosdn.127.net/1791322104350lobsterai-computer-use-skill-mac-arm64-0.2.2.zip',
   WindowsX64: 'https://ydhardwarebusiness.nosdn.127.net/2fa564627a3f1a0f3acedbc771d15f12.zip',
 } as const;
 export type ComputerUseKitBundle =
   typeof ComputerUseKitBundle[keyof typeof ComputerUseKitBundle];
 
 export const ComputerUseKitBundleIntegrity = {
-  MacArm64: {
+  MacOS: {
     Sha256: '2dc658dae293661e7459b9c386d3b300c4aa369fbaf2ad062e1102751404fc66',
     SizeBytes: 2729,
   },

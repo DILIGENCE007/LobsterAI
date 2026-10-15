@@ -799,8 +799,52 @@ describe('Windows installer hardening contracts', () => {
     // process-stop kill loop + survivor dump, rollback Defender cleanup +
     // displaced-tree cleanup, Skills backup, Defender post-uninstaller add +
     // query-only, tar, extractor watchdog, Skills restore, Defender
-    // rebalance, old-install cleanup, uninstaller Defender cleanup.
-    expect(helperLaunches).toBe(13);
+    // rebalance, old-install cleanup, loopback firewall rule, uninstaller
+    // Defender cleanup, uninstaller loopback firewall rule removal.
+    expect(helperLaunches).toBe(15);
+  });
+
+  test('allows only loopback TCP for the committed executable and removes it on uninstall', () => {
+    // Field case 2026-10: Windows Firewall's "Query user" default dropped
+    // 127.0.0.1 connections to LobsterAI.exe, so the app never reached its
+    // gateway after a reboot.
+    const start = installerInclude.indexOf('!macro LobsterApplyLoopbackFirewallRule');
+    expect(start).toBeGreaterThan(-1);
+    const apply = installerInclude.slice(start, installerInclude.indexOf('!macroend', start));
+    expect(apply).toContain(
+      String.raw`SetEnvironmentVariable(t "LOBSTERAI_FIREWALL_PROGRAM", t "$INSTDIR\${APP_EXECUTABLE_FILENAME}")`,
+    );
+    expect(apply).toContain('SetEnvironmentVariable(t "LOBSTERAI_FIREWALL_PROGRAM", t "")');
+    const replaceRule = apply.indexOf(
+      String.raw`firewall delete rule \"name=LobsterAI loopback\" dir=in $$program`,
+    );
+    const addRule = apply.indexOf(
+      String.raw`firewall add rule \"name=LobsterAI loopback\" dir=in action=allow $$program protocol=TCP localip=127.0.0.1 remoteip=127.0.0.1 profile=any`,
+    );
+    expect(replaceRule).toBeGreaterThan(-1);
+    expect(addRule).toBeGreaterThan(replaceRule);
+    expect(apply).toContain('phase=loopback-firewall-rule-complete attempt_id=');
+
+    // Only a committed install gets the rule, after every old uninstaller ran.
+    // Anchored to the line end rather than '\n': Windows checkouts may be CRLF.
+    const customInstallStart = installerInclude.search(/^!macro customInstall\r?$/m);
+    const customInstall = installerInclude.slice(
+      customInstallStart,
+      installerInclude.indexOf('!macroend', customInstallStart),
+    );
+    expect(customInstall.indexOf('!insertmacro LobsterApplyLoopbackFirewallRule')).toBeGreaterThan(
+      customInstall.indexOf('InstallFinalizeComplete:'),
+    );
+
+    const uninstallStart = installerInclude.indexOf('!macro customUnInstall');
+    const uninstall = installerInclude.slice(
+      uninstallStart,
+      installerInclude.indexOf('!macroend', uninstallStart),
+    );
+    expect(uninstall).toContain(
+      String.raw`firewall delete rule \"name=LobsterAI loopback\" dir=in (\"program=\" + $$env:LOBSTERAI_FIREWALL_PROGRAM)`,
+    );
+    expect(uninstall).not.toContain('firewall add rule');
   });
 
   test('rebalances Defender exclusions in one helper launch', () => {
@@ -1614,5 +1658,81 @@ describe('Windows installer hardening contracts', () => {
     // the larger patch file.
     expect(appBuilderPatch).toContain('Computed URLs point at a directory');
     expect(appBuilderPatch).toContain('defines.APP_PACKAGE_URL_IS_INCOMPLETE = null;');
+  });
+});
+
+describe('Windows installer Explorer "Open with" contracts', () => {
+  const openWithStart = installerInclude.indexOf('; -- Explorer "Open with" --');
+  const openWith = installerInclude.slice(
+    openWithStart,
+    installerInclude.indexOf('; Standard post-registry electron-builder hook', openWithStart),
+  );
+  const macroBody = (name: string): string => {
+    // Windows checkouts may use CRLF.
+    const start = installerInclude.search(new RegExp(`!macro ${name}\\r?\\n`));
+    return installerInclude.slice(start, installerInclude.indexOf('!macroend', start));
+  };
+  const extensions = [...openWith.matchAll(/!insertmacro \$\{OP\} "([^"]+)"/g)].map(match => match[1]);
+
+  test('lists each extension once, lowercase and without a dot', () => {
+    expect(openWithStart).toBeGreaterThan(-1);
+    expect(extensions.length).toBeGreaterThan(40);
+    expect(new Set(extensions).size).toBe(extensions.length);
+    for (const extension of extensions) {
+      expect(extension).toMatch(/^[a-z0-9]+$/);
+    }
+    expect(extensions).toEqual(
+      expect.arrayContaining(['pdf', 'docx', 'xlsx', 'pptx', 'csv', 'txt', 'md', 'html', 'png', 'jpg', 'mp3']),
+    );
+  });
+
+  test('adds only an OpenWithList entry, never a default app candidate', () => {
+    expect(macroBody('LobsterOpenWithAddExtension EXT')).toContain(
+      'WriteRegStr SHELL_CONTEXT "Software\\Classes\\.${EXT}\\OpenWithList\\${APP_EXECUTABLE_FILENAME}" "" ""',
+    );
+    // Writing the default value of .<ext> is what takes over an association.
+    expect(openWith).not.toMatch(/WriteRegStr SHELL_CONTEXT "Software\\Classes\\\.\$\{EXT\}" ""/);
+    expect(openWith).not.toContain('APP_ASSOCIATE');
+    // A ProgID under OpenWithProgids becomes the default of a type that has
+    // none, and re-prompts for a type whose default the user never picked.
+    expect(openWith).not.toMatch(/WriteReg\w+ [^\n]*OpenWithProgids/);
+  });
+
+  test('launches the installed exe with the quoted path', () => {
+    const register = macroBody('LobsterRegisterOpenWith');
+    // The OpenWithList entries name the exe; Explorer resolves them here.
+    expect(register).toContain(
+      'WriteRegStr SHELL_CONTEXT "Software\\Classes\\Applications\\${APP_EXECUTABLE_FILENAME}\\shell\\open\\command" "" \'"$appExe" "%1"\'',
+    );
+    expect(register).toContain(
+      'WriteRegStr SHELL_CONTEXT "Software\\Classes\\Applications\\${APP_EXECUTABLE_FILENAME}" "FriendlyAppName" "${PRODUCT_NAME}"',
+    );
+    expect(register).toContain('!insertmacro LobsterOpenWithExtensions LobsterOpenWithAddExtension');
+    expect(register).toContain('SHChangeNotify');
+  });
+
+  test('uninstall removes only what the installer added', () => {
+    expect(macroBody('LobsterOpenWithRemoveExtension EXT')).toContain(
+      'DeleteRegKey SHELL_CONTEXT "Software\\Classes\\.${EXT}\\OpenWithList\\${APP_EXECUTABLE_FILENAME}"',
+    );
+    // Extension keys and their OpenWithList are shared with other apps; only
+    // LobsterAI's own entry goes.
+    expect(openWith).not.toMatch(/DeleteRegKey[^\n]*\.\$\{EXT\}(\\OpenWithList)?"/);
+    const unregister = macroBody('LobsterUnregisterOpenWith');
+    expect(unregister).toContain('!insertmacro LobsterOpenWithExtensions LobsterOpenWithRemoveExtension');
+    expect(unregister).toContain('DeleteRegKey SHELL_CONTEXT "Software\\Classes\\Applications\\${APP_EXECUTABLE_FILENAME}"');
+    expect(macroBody('customUnInstall')).toContain('!insertmacro LobsterUnregisterOpenWith');
+  });
+
+  test('registers only after the install is committed, after old uninstallers ran', () => {
+    const finalize = macroBody('customInstall');
+    expect(finalize.indexOf('!insertmacro LobsterRegisterOpenWith')).toBeGreaterThan(
+      finalize.indexOf('InstallFinalizeComplete:'),
+    );
+    // When an update does run the old version's uninstaller, it removes the
+    // entries; the template must run it before customInstall writes them again.
+    expect(installSection.indexOf('customUninstallOldVersion SHELL_CONTEXT')).toBeLessThan(
+      installSection.indexOf('!insertmacro customInstall'),
+    );
   });
 });

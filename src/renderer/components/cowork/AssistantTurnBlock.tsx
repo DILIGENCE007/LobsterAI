@@ -45,6 +45,7 @@ import AssistantMessageItem from './AssistantMessageItem';
 import { ActivityEntryVariant } from './constants';
 import { reportConversationBlockAction } from './conversationAnalytics';
 import MediaPollingIndicator from './MediaPollingIndicator';
+import { buildMediaTaskPresentations, type MediaTaskPresentations } from './mediaTaskPresentation';
 import { MessageCopyButton } from './MessageActionButton';
 import {
   canFoldTurnProcess,
@@ -184,6 +185,9 @@ const ContextCompactionDivider: React.FC<{ label: string; active?: boolean }> = 
 // One tick: the first value the user sees is "1s", counting up naturally.
 const ACTIVITY_TIMER_APPEAR_DELAY_MS = 1000;
 const ACTIVITY_LONG_WAIT_HINT_DELAY_MS = 30_000;
+// A start request normally returns within milliseconds; one still pending
+// after this is waiting for the engine (startup, a busy gateway, config).
+const ACTIVITY_RUN_START_WAIT_HINT_DELAY_MS = 2_000;
 
 // Rotate the phase word while the model is still silent, so the row visibly keeps moving.
 const ACTIVITY_PHASE_INTERVAL_MS = 2200;
@@ -201,13 +205,31 @@ export const ActivityIndicator: React.FC<{
   liveStatusText?: string | null;
   /** Whether the turn has shown anything yet; silent gaps after that read as "working". */
   hasContent?: boolean;
-}> = ({ fingerprint, startTimestamp, statusTextOverride, liveStatusText = null, hasContent = false }) => {
+  /** The task's start request is still in flight, so nothing has reached the model yet. */
+  awaitingRunStart?: boolean;
+}> = ({
+  fingerprint,
+  startTimestamp,
+  statusTextOverride,
+  liveStatusText = null,
+  hasContent = false,
+  awaitingRunStart = false,
+}) => {
   const [isLongWaiting, setIsLongWaiting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [phaseIndex, setPhaseIndex] = useState(0);
+  // Elapsed time is anchored to message timestamps so it survives remounts
+  // (switching sessions/views); until the turn has a timestamp, show no
+  // counter rather than one restarted from zero.
+  const elapsedMs = startTimestamp != null ? Math.max(0, now - startTimestamp) : null;
+  // A start that is still pending after the grace period is waiting for the
+  // engine; calling that "thinking" makes a stalled engine look like a slow model.
+  const awaitingEngine = awaitingRunStart
+    && elapsedMs != null
+    && elapsedMs >= ACTIVITY_RUN_START_WAIT_HINT_DELAY_MS;
   // Waiting for the model's first output: nothing overrides the label, no
   // step is running, and the turn has shown nothing yet.
-  const thinking = !statusTextOverride && !liveStatusText && !isLongWaiting && !hasContent;
+  const thinking = !statusTextOverride && !awaitingEngine && !liveStatusText && !isLongWaiting && !hasContent;
 
   useEffect(() => {
     if (!thinking) {
@@ -238,14 +260,11 @@ export const ActivityIndicator: React.FC<{
     return () => window.clearInterval(intervalId);
   }, []);
 
-  // Elapsed time is anchored to message timestamps so it survives remounts
-  // (switching sessions/views); until the turn has a timestamp, show no
-  // counter rather than one restarted from zero.
-  const elapsedMs = startTimestamp != null ? Math.max(0, now - startTimestamp) : null;
   const phases = getThinkingPhaseLabels();
   // A running step always names itself; the long-wait hint only applies to a
   // silent model, never to a command that is simply taking its time.
   const statusText = statusTextOverride
+    ?? (awaitingEngine ? i18nService.t('coworkActivityWaitEngineReady') : null)
     ?? liveStatusText
     ?? (thinking
       ? phases[phaseIndex % phases.length]
@@ -560,6 +579,7 @@ const MediaImageInline: React.FC<{ artifacts: Artifact[] }> = ({ artifacts }) =>
 
 const AssistantTurnBlock: React.FC<{
   turn: ConversationTurn;
+  mediaTaskPresentations?: MediaTaskPresentations;
   artifacts?: Artifact[];
   resolveLocalFilePath?: (href: string, text: string) => string | null;
   mapDisplayText?: (value: string) => string;
@@ -576,6 +596,8 @@ const AssistantTurnBlock: React.FC<{
   renderToolGroupOverride?: (group: ToolGroupItem) => React.ReactNode;
   showActivityIndicator?: boolean;
   activityStatusOverride?: string | null;
+  /** The session's start request is still in flight (optimistic temp session). */
+  awaitingRunStart?: boolean;
   showCopyButtons?: boolean;
   completedGoal?: CoworkGoal | null;
   hiddenSystemMessageId?: string | null;
@@ -586,6 +608,7 @@ const AssistantTurnBlock: React.FC<{
   hasRunningSubagents?: boolean;
 }> = ({
   turn,
+  mediaTaskPresentations,
   artifacts,
   resolveLocalFilePath,
   mapDisplayText,
@@ -601,6 +624,7 @@ const AssistantTurnBlock: React.FC<{
   renderToolGroupOverride,
   showActivityIndicator = false,
   activityStatusOverride = null,
+  awaitingRunStart = false,
   showCopyButtons = true,
   completedGoal,
   hiddenSystemMessageId,
@@ -620,9 +644,13 @@ const AssistantTurnBlock: React.FC<{
     }),
     [turn.assistantItems, hideCreditQuotaBanner, isStreamingTurn],
   );
+  const taskPresentations = useMemo(
+    () => mediaTaskPresentations ?? buildMediaTaskPresentations([turn]),
+    [mediaTaskPresentations, turn],
+  );
   const consolidatedItems = useMemo(
-    () => consolidateMediaPolling(visibleAssistantItems),
-    [visibleAssistantItems],
+    () => consolidateMediaPolling(visibleAssistantItems, taskPresentations),
+    [visibleAssistantItems, taskPresentations],
   );
   const toolGroupOverrides = useMemo(() => {
     const overrides = new Map<string, React.ReactNode>();
@@ -939,6 +967,7 @@ const AssistantTurnBlock: React.FC<{
         <ToolCallGroup
           key={`tool-${item.group.toolUse.id}`}
           group={item.group}
+          mediaTaskPresentation={taskPresentations.get(item.group.toolUse.id)}
           isLastInSequence={isLastInSequence}
           mapDisplayText={mapDisplayText}
           retainedMediaPollCounts={retainedMediaPollCounts}
@@ -1088,6 +1117,7 @@ const AssistantTurnBlock: React.FC<{
                 statusTextOverride={activityStatusOverride}
                 liveStatusText={liveStatusText}
                 hasContent={visibleAssistantItems.length > 0}
+                awaitingRunStart={awaitingRunStart}
               />
             )}
             {artifacts && artifacts.length > 0 && (

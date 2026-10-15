@@ -1,4 +1,5 @@
 import type { OpenClawSessionPatch } from '../../common/openclawSession';
+import type { GenerateSessionTitleRequest } from '../../common/sessionTitle';
 import type {
   ActivityActionResponse,
   ActivityContextResponse,
@@ -8,6 +9,8 @@ import type {
   ActivityResult,
   ActivitySlotResponse,
 } from '../../shared/activity/constants';
+import type { ExpertCatalog } from '../../shared/agent/presets';
+import type { UsageContext } from '../../shared/analytics/usage';
 import type { AppUpdateActiveWorkloads, AppUpdateCheckResult, AppUpdateRuntimeState } from '../../shared/appUpdate/constants';
 import type { MarkdownFileBridge } from '../../shared/artifactPreview/markdownEditing';
 import type { ReviewScopeRequest } from '../../shared/artifactPreview/reviewScopes';
@@ -65,7 +68,6 @@ import type {
 } from '../../shared/cowork/constants';
 import type { CoworkGoal } from '../../shared/cowork/goal';
 import type { CoworkTurnUsage, CoworkTurnUsageAnchor } from '../../shared/cowork/llmTurnUsage';
-import type { ProgressCardResponse } from '../../shared/cowork/progressCard';
 import type { CoworkMessageRailIndexItem } from '../../shared/cowork/rail';
 import type {
   CoworkSearchMessage,
@@ -81,6 +83,7 @@ import type {
   DecisionModelConfigView,
   DecisionModelTestResult,
 } from '../../shared/decisionModel/constants';
+import type { DesktopCompanionBridge } from '../../shared/desktopCompanion/constants';
 import type { EnterpriseQuotaRequestType } from '../../shared/enterpriseAccount/constants';
 import type {
   EnterpriseAccountContext,
@@ -138,6 +141,7 @@ import type {
   OpenClawEngineErrorCode,
   OpenClawEnginePhase as SharedOpenClawEnginePhase,
   OpenClawGatewayRepairErrorCode,
+  OpenClawLoopbackRepairOutcome,
 } from '../../shared/openclawEngine/constants';
 import type { OpenClawRepairStage } from '../../shared/openclawEngine/repair';
 import type { ModelThinkingLevel } from '../../shared/providers/modelThinking';
@@ -410,6 +414,13 @@ interface OpenClawGatewayRepairResult {
   failurePath?: string;
 }
 
+interface OpenClawLoopbackRepairResult {
+  outcome: OpenClawLoopbackRepairOutcome;
+  status?: OpenClawEngineStatus;
+  detail?: string;
+  manualCommand?: string;
+}
+
 interface OpenClawSessionPolicyConfig {
   keepAlive: '1d' | '7d' | '30d' | '365d';
 }
@@ -674,6 +685,7 @@ interface HtmlShareResult {
 }
 
 interface IElectronAPI {
+  desktopCompanion: DesktopCompanionBridge;
   platform: string;
   arch: string;
   store: {
@@ -849,7 +861,10 @@ interface IElectronAPI {
     delete: (id: string) => Promise<boolean>;
     presets: () => Promise<PresetAgent[]>;
     presetTemplates: () => Promise<PresetAgent[]>;
+    expertCatalog: () => Promise<ExpertCatalog>;
     addPreset: (presetId: string) => Promise<Agent>;
+    /** Another window changed agents; reload them. */
+    onChanged?: (callback: () => void) => () => void;
   };
   api: {
     fetch: (options: {
@@ -876,7 +891,7 @@ interface IElectronAPI {
     probeModel?: boolean;
   }) => Promise<{ hasConfig: boolean; config: CoworkApiConfig | null; error?: string }>;
   saveApiConfig: (config: CoworkApiConfig) => Promise<{ success: boolean; error?: string }>;
-  generateSessionTitle: (userInput: string | null) => Promise<string>;
+  generateSessionTitle: (request: GenerateSessionTitleRequest) => Promise<string | null>;
   getRecentCwds: (limit?: number) => Promise<string[]>;
   dsh: {
     getState: () => Promise<{
@@ -912,6 +927,7 @@ interface IElectronAPI {
         error?: string;
       }>;
       repairGatewayState: () => Promise<OpenClawGatewayRepairResult>;
+      repairLoopbackFirewall: () => Promise<OpenClawLoopbackRepairResult>;
       onProgress: (callback: (status: OpenClawEngineStatus) => void) => () => void;
     };
     sessionPolicy: {
@@ -986,6 +1002,7 @@ interface IElectronAPI {
   };
   cowork: {
     startSession: (options: {
+      analytics?: UsageContext;
       prompt: string;
       cwd?: string;
       systemPrompt?: string;
@@ -1012,6 +1029,7 @@ interface IElectronAPI {
       engineStatus?: OpenClawEngineStatus;
     }>;
     continueSession: (options: {
+      analytics?: UsageContext;
       sessionId: string;
       prompt: string;
       systemPrompt?: string;
@@ -1096,9 +1114,6 @@ interface IElectronAPI {
       hasMore?: boolean;
       error?: string;
     }>;
-    getProgressCard: (sessionId: string) => Promise<ProgressCardResponse>;
-    dismissProgressCard: (sessionId: string, revision: number) => Promise<ProgressCardResponse>;
-    onProgressCardChanged: (callback: (event: { sessionId: string }) => void) => () => void;
     getContextUsage: (
       sessionId: string,
     ) => Promise<{
@@ -1663,6 +1678,11 @@ interface IElectronAPI {
     }>;
     relaunch: () => Promise<void>;
     openSystemNotificationSettings: () => Promise<{ success: boolean; error?: string }>;
+  };
+  /** Files and folders macOS asked LobsterAI to open (Finder "Open With", Dock drops). */
+  openWith: {
+    consumePaths: () => Promise<string[]>;
+    onPathsAvailable: (callback: () => void) => () => void;
   };
   appUpdate: {
     getState: () => Promise<AppUpdateRuntimeState>;

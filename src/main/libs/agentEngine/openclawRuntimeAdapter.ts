@@ -67,7 +67,6 @@ import {
   isPlanImplementationApproval,
   PLAN_MODE_EXECUTION_OVERRIDE_MARKER,
 } from '../../../shared/cowork/planMode';
-import { ProgressCardEvent } from '../../../shared/cowork/progressCard';
 import {
   buildSelectedTextPromptSection,
   type CoworkSelectedTextSnippet,
@@ -181,7 +180,6 @@ import {
   shouldReplaceLocalConversationWithCronHistory,
 } from './openclawCronRunHistorySync';
 import { OpenClawImWorkloadTracker } from './openclawImWorkloadTracker';
-import { OpenClawProgressCards } from './openclawProgressCard';
 import { OpenClawQuestionController } from './openclawQuestionController';
 import {
   buildOpenClawTranscriptOversizedError,
@@ -241,6 +239,7 @@ import type {
   CoworkStartOptions,
   PermissionResult,
 } from './types';
+import { removeWorkspaceDeliveredInstructions } from './workspaceDeliveredInstructions';
 
 const OPENCLAW_GATEWAY_TOOL_EVENTS_CAP = 'tool-events';
 const OPENCLAW_BTW_SESSION_KEY_MAX_CHARS = 4_096;
@@ -513,7 +512,7 @@ type OpenClawRuntimeAdapterOptions = {
     conversationState: PromptAnalyticsConversationStateValue;
     isMainAgent: boolean;
     platform: string;
-  }) => void;
+  }, sessionId: string) => void;
   onGatewayClientReady?: () => void;
   onBrowserToolEvent?: (event: AgentBrowserToolEvent) => void;
 };
@@ -777,6 +776,12 @@ type ActiveTurn = {
   contextMaintenanceToolCallIds: Set<string>;
   planModeSuppressedToolCallIds: Set<string>;
   stopRequested: boolean;
+  /**
+   * chat.send run ids of steer input handed to OpenClaw's native queue during this
+   * turn. A user stop aborts them; otherwise OpenClaw replays unconsumed steer input
+   * as a new turn once the aborted run releases the session.
+   */
+  steerRunIds?: Set<string>;
   /** Thinking message state — separate from main assistant message. */
   thinking: OpenClawThinkingTurnState;
   /** True while async user message prefetch is in progress for channel sessions. */
@@ -2553,6 +2558,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * keeps routing correct without retaining every historical run id. */
   private readonly latestCronSessionKeyByCacheKey = new Map<string, string>();
   private readonly sessionIdByRunId = new Map<string, string>();
+  /**
+   * Steer chat.send run ids awaiting the bare final OpenClaw sends once the input is
+   * injected into, or queued behind, the steered execution. That final ends no execution.
+   */
+  private readonly pendingSteerAckSessionIdByRunId = new Map<string, string>();
   private readonly pendingAgentEventsByRunId = new Map<string, AgentEventPayload[]>();
   private readonly lastChatSeqByRunId = new Map<string, number>();
   private readonly lastAgentSeqByRunId = new Map<string, number>();
@@ -2594,6 +2604,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private static readonly STOP_COOLDOWN_MS = 10_000; // 10 seconds
   private static readonly RECENTLY_CLOSED_RUN_ID_TTL_MS = 120_000;
   private static readonly RECENTLY_CLOSED_RUN_ID_LIMIT = 1000;
+  private static readonly PENDING_STEER_ACK_LIMIT = 200;
   private static readonly TERMINAL_BTW_RUN_ID_TTL_MS = 120_000;
   private static readonly TERMINAL_BTW_RUN_ID_LIMIT = 1000;
   private static readonly LIFECYCLE_ERROR_FALLBACK_DELAY_MS = 20_000;
@@ -3440,23 +3451,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       `Action ${command.action}.`,
     );
     this.emit('message', sessionId, userMessage);
-  }
-
-  // Native progress cards live in the Gateway under the session key the run
-  // writes them with: the active turn's key, else the session's first key.
-  private readonly progressCards = new OpenClawProgressCards({
-    client: () => this.requireGatewayClient(),
-    sessionKey: (sessionId) => this.activeTurns.get(sessionId)?.sessionKey
-      ?? this.getSessionKeysForSession(sessionId)[0],
-    changed: (sessionId) => this.emit(ProgressCardEvent.Changed, sessionId),
-  });
-
-  getProgressCard(sessionId: string) {
-    return this.progressCards.get(sessionId);
-  }
-
-  dismissProgressCard(sessionId: string, revision: number) {
-    return this.progressCards.dismiss(sessionId, revision);
   }
 
   async getContextUsage(sessionId: string): Promise<CoworkContextUsage | null> {
@@ -5081,6 +5075,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     try {
       const client = this.requireGatewayClient();
+      // Record before sending so a stop that lands while this request is in flight drops it too.
+      (turn.steerRunIds ??= new Set()).add(clientSteerId);
+      // OpenClaw may broadcast the acknowledgement before this request resolves.
+      this.rememberPendingSteerAck(clientSteerId, sessionId);
       const result = await client.request<OpenClawChatSendSteerResult>(
         OpenClawGatewayMethod.ChatSend,
         {
@@ -5092,6 +5090,21 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         },
         { timeoutMs: OpenClawRuntimeAdapter.SESSION_PATCH_TIMEOUT_MS },
       );
+      if (result?.runId && turn.stopRequested) {
+        // The stop's abort may have reached OpenClaw before it registered this steer.
+        console.log(
+          '[OpenClawRuntime] dropped steer input acknowledged after the user stopped the turn.',
+          `Session ${sessionId}.`,
+          `Client steer ${clientSteerId}.`,
+        );
+        this.abortSteerInput(client, turn.sessionKey, clientSteerId);
+        return {
+          success: false,
+          status: CoworkSteerStatus.Rejected,
+          clientSteerId,
+          reason: CoworkSteerRejectReason.NoActiveTurn,
+        };
+      }
       if (result?.runId) {
         console.debug(
           '[OpenClawRuntime] steer accepted by native chat queue.',
@@ -5339,8 +5352,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.finalizeStoppedStreamingMessages(sessionId, turn);
       const client = this.gatewayClient;
       if (client) {
+        // A stop drops queued steer input. Abort it before the run so OpenClaw
+        // cannot replay it as a new turn; consumed steer input makes this a no-op.
+        if (turn.steerRunIds?.size) {
+          console.log(
+            `[OpenClawRuntime] user requested stop, dropping ${turn.steerRunIds.size} steer input(s) queued for run ${turn.runId}.`,
+          );
+          turn.steerRunIds.forEach((steerRunId) => this.abortSteerInput(client, turn.sessionKey, steerRunId));
+        }
         console.log(`[OpenClawRuntime] user requested stop, aborting gateway run ${turn.runId}.`);
-        void client.request('chat.abort', {
+        void client.request(OpenClawGatewayMethod.ChatAbort, {
           sessionKey: turn.sessionKey,
           runId: turn.runId,
         }).catch((error) => {
@@ -5365,6 +5386,43 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.emitSessionStatus(sessionId, 'idle');
     this.emit('sessionStopped', sessionId);
     this.resolveTurn(sessionId);
+  }
+
+  /** Aborts one steer input by its chat.send run id, whether pending injection or queued as a follow-up. */
+  private abortSteerInput(client: GatewayClientLike, sessionKey: string, steerRunId: string): void {
+    void client.request(OpenClawGatewayMethod.ChatAbort, {
+      sessionKey,
+      runId: steerRunId,
+    }).catch((error) => {
+      console.warn('[OpenClawRuntime] Failed to abort queued steer input:', error);
+    });
+  }
+
+  private rememberPendingSteerAck(steerRunId: string, sessionId: string): void {
+    this.pendingSteerAckSessionIdByRunId.set(steerRunId, sessionId);
+    while (this.pendingSteerAckSessionIdByRunId.size > OpenClawRuntimeAdapter.PENDING_STEER_ACK_LIMIT) {
+      const oldestRunId = this.pendingSteerAckSessionIdByRunId.keys().next().value;
+      if (typeof oldestRunId !== 'string') break;
+      this.pendingSteerAckSessionIdByRunId.delete(oldestRunId);
+    }
+  }
+
+  /**
+   * True for the bare final that terminalizes a steer's own chat.send. It may arrive
+   * after the steered turn closed, and must neither bind to a turn nor finish one.
+   */
+  private consumeSteerAck(runId: string, payload: ChatEventPayload): boolean {
+    const sessionId = this.pendingSteerAckSessionIdByRunId.get(runId);
+    if (!sessionId) return false;
+    this.pendingSteerAckSessionIdByRunId.delete(runId);
+    // A steer already routed as its own execution ends with that execution's final.
+    if (isRecord(payload.message) || this.sessionIdByRunId.has(runId)) return false;
+    console.debug(
+      '[OpenClawRuntime] steer input acknowledged by OpenClaw; the steered run continues.',
+      `Session ${sessionId}.`,
+      `Client steer ${runId}.`,
+    );
+    return true;
   }
 
   private cancelTurnStartupIfStopped(sessionId: string, checkpoint: string): boolean {
@@ -6035,7 +6093,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const sections: string[] = [];
     if (shouldInjectSystemPrompt) {
-      sections.push(this.buildSystemPromptPrefix(normalizedSystemPrompt));
+      sections.push(this.buildSystemPromptPrefix(
+        this.buildInjectedSystemPrompt(normalizedSystemPrompt, agentId),
+      ));
     }
     sections.push(buildOpenClawLocalTimeContextPrompt());
     if (currentModel) {
@@ -6152,8 +6212,24 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       '[LobsterAI system instructions]',
       'Apply the instructions below as the highest-priority guidance for this session.',
       'If earlier LobsterAI system instructions exist, replace them with this version.',
-      systemPrompt,
+      systemPrompt || 'No session-specific instructions apply; follow the workspace instructions in AGENTS.md.',
     ].join('\n');
+  }
+
+  // AGENTS.md is already in the system prompt, so injecting its sections again
+  // only repeats them (issue #2440). Any failure keeps the full prompt.
+  private buildInjectedSystemPrompt(systemPrompt: string, agentId?: string): string {
+    try {
+      return removeWorkspaceDeliveredInstructions({
+        systemPrompt,
+        stateDir: this.engineManager.getStateDir(),
+        agentId,
+        defaultSystemPrompt: this.store.getConfig().systemPrompt,
+      });
+    } catch (error) {
+      console.warn('[OpenClawRuntime] kept the full system prompt because AGENTS.md could not be compared:', error);
+      return systemPrompt;
+    }
   }
 
   private buildBridgePrefix(messages: CoworkMessage[], currentPrompt: string): string {
@@ -6324,7 +6400,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // Setting gatewayClient earlier would let concurrent code send
         // request frames before the connect frame, causing 1008 rejection.
         this.gatewayClient = client;
-        this.progressCards.reconnected();
         this.gatewayClientVersion = connection.version;
         this.gatewayClientEntryPath = connection.clientEntryPath;
         this.gatewayReconnectSuppressed = false;
@@ -7551,11 +7626,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // disconnect from the TickWatchdog.
     this.lastTickTimestamp = Date.now();
 
-    if (event.event === ProgressCardEvent.GatewayChanged) {
-      this.progressCards.changed(event.payload);
-      return;
-    }
-
     if (event.event === OpenClawGatewayEvent.Shutdown) {
       // A close code describes the transport, not process ownership. Use the
       // native restart announcement and let the supervisor observe child exit.
@@ -7633,6 +7703,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
       // Process assistant text updates here (before handleAgentEvent) because
       // handleAgentEvent may enqueue events when sessionId mapping isn't ready.
+      // Checkpoints share that path so they stay ordered with the text around them.
+      this.processAgentCheckpoint(event.payload);
       this.processAgentAssistantText(event.payload);
       this.handleAgentEvent(event.payload, event.seq);
       return;
@@ -9314,6 +9386,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
 
+    // Must run before session resolution, which binds the run id to the active turn.
+    if (state === OpenClawChatState.Final && runId && this.consumeSteerAck(runId, chatPayload)) {
+      return;
+    }
+
     const sessionKey = typeof chatPayload.sessionKey === 'string' ? chatPayload.sessionKey.trim() : '';
     const sessionId = this.resolveSessionIdFromChatPayload(chatPayload);
     if (state === OpenClawChatState.Final || state === OpenClawChatState.Aborted || state === OpenClawChatState.Error) {
@@ -9562,6 +9639,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     for (const messageId of silentAssistantIds) {
       this.deleteAssistantMessage(sessionId, messageId);
     }
+  }
+
+  /**
+   * OpenClaw's plan completion check continues a run past a finished answer
+   * (zz-openclaw-plan-completion-check.patch). Close that answer's segment so the
+   * follow-up streams into a new assistant message instead of replacing it: a short
+   * answer followed by text does not trip the stream reset heuristic.
+   */
+  private processAgentCheckpoint(payload: unknown): void {
+    if (!isRecord(payload) || payload.stream !== AgentEventStream.Checkpoint) return;
+    const runId = typeof payload.runId === 'string' ? payload.runId.trim() : '';
+    const sessionKey = typeof payload.sessionKey === 'string' ? payload.sessionKey.trim() : '';
+    const sessionId = (runId ? this.sessionIdByRunId.get(runId) : undefined)
+      ?? (sessionKey ? this.resolveSessionIdBySessionKey(sessionKey) ?? undefined : undefined);
+    const turn = sessionId ? this.activeTurns.get(sessionId) : undefined;
+    if (!sessionId || !turn) return;
+    console.debug('[OpenClawRuntime] closed the assistant segment at a run checkpoint.', `Session ${sessionId}.`);
+    this.splitAssistantSegmentBeforeTool(sessionId, turn);
+    turn.agentAssistantTextLength = 0;
   }
 
   /**
@@ -12557,7 +12653,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         conversationState,
         isMainAgent: agentId === 'main',
         platform: channel.platform,
-      });
+      }, sessionId);
     } catch (error) {
       const errorName = error instanceof Error && error.name.trim()
         ? error.name.trim()
