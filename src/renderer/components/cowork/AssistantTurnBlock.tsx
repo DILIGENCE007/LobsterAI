@@ -84,8 +84,10 @@ import {
   isActivityItemLive,
   isContextCompactionMessage,
   isDuplicateGeneratedVideoAssistantMessage,
+  isModelChangeMessage,
   type ToolGroupItem,
 } from './messageDisplayUtils';
+import ModelChangeDivider from './ModelChangeDivider';
 import ThinkingBlock from './ThinkingBlock';
 import ToolCallGroup from './ToolCallGroup';
 import TurnUsageChip from './TurnUsageChip';
@@ -709,6 +711,9 @@ const AssistantTurnBlock: React.FC<{
   }
 
   const renderSystemMessage = (message: CoworkMessage) => {
+    if (isModelChangeMessage(message) && message.metadata?.modelChange) {
+      return <ModelChangeDivider change={message.metadata.modelChange} />;
+    }
     if (message.id === hiddenSystemMessageId) {
       return null;
     }

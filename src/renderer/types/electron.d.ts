@@ -2114,6 +2114,7 @@ interface IElectronAPI {
         limitedFreeStartAt?: string | null;
         limitedFreeEndAt?: string | null;
         subscriptionPriority?: boolean;
+        busy?: boolean;
         moreModel?: boolean;
         accessible?: boolean;
         restrictionHint?: string;
@@ -2133,6 +2134,7 @@ interface IElectronAPI {
         contextWindow?: number | null;
         costMultiplier?: number;
         moreModel?: boolean;
+        busy?: boolean;
       }>;
       imageModels?: Array<{
         modelId: string;

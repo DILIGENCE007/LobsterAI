@@ -91,6 +91,7 @@ export interface PricingCatalogTextModel extends PricingCatalogBaseModel {
   limitedFreeStartAt?: string | null;
   limitedFreeEndAt?: string | null;
   subscriptionPriority?: boolean;
+  busy?: boolean;
   supportsImage?: boolean;
   supportsThinking?: boolean;
   thinkingConfig?: ModelThinkingConfig;
@@ -140,6 +141,7 @@ export interface AvailableServerModelEntry {
   limitedFreeStartAt?: string | null;
   limitedFreeEndAt?: string | null;
   subscriptionPriority?: boolean;
+  busy?: boolean;
 }
 
 const readString = (value: unknown): string => (
@@ -245,6 +247,7 @@ export function mapPricingCatalogTextModelsToServerModels(
       limitedFreeStartAt: model.limitedFreeStartAt,
       limitedFreeEndAt: model.limitedFreeEndAt,
       subscriptionPriority: model.subscriptionPriority,
+      busy: model.busy === true,
       moreModel: model.moreModel === true,
       accessible: false,
     }];
@@ -292,8 +295,9 @@ export function mapAvailableServerModelsToModels(
       limitedFreeStartAt: model.limitedFreeStartAt,
       limitedFreeEndAt: model.limitedFreeEndAt,
       subscriptionPriority: model.subscriptionPriority,
+      busy: model.busy === true,
       moreModel: model.moreModel === true,
-      accessible: model.accessible ?? true,
+      accessible: model.busy !== true && (model.accessible ?? true),
       restrictionHint: model.restrictionHint ?? undefined,
     };
   });

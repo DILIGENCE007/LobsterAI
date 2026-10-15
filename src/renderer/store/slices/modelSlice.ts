@@ -36,6 +36,7 @@ export interface Model {
   limitedFreeStartAt?: string | null;
   limitedFreeEndAt?: string | null;
   subscriptionPriority?: boolean;
+  busy?: boolean;
   moreModel?: boolean; // 是否收起到“更多模型”分组
   accessible?: boolean; // false = 模型可见但用户无权使用（置灰）
   restrictionHint?: string; // 限制提示（如 "订阅套餐/购买加油包可用"）
@@ -67,7 +68,7 @@ export function isSameModelIdentity(
 }
 
 function isModelAccessible(model: Model | undefined): model is Model {
-  return !!model && model.accessible !== false;
+  return !!model && model.accessible !== false && model.busy !== true;
 }
 
 function selectPreferredAccessibleModel(
@@ -178,11 +179,11 @@ const modelSlice = createSlice({
   initialState,
   reducers: {
     setSelectedModel: (state, action: PayloadAction<{ agentId: string; model: Model }>) => {
-      if (action.payload.model.accessible === false) return;
+      if (!isModelAccessible(action.payload.model)) return;
       state.selectedModelByAgent[action.payload.agentId] = action.payload.model;
     },
     setDefaultSelectedModel: (state, action: PayloadAction<Model>) => {
-      if (action.payload.presetId || action.payload.accessible === false) return;
+      if (action.payload.presetId || !isModelAccessible(action.payload)) return;
       state.defaultSelectedModel = action.payload;
     },
     clearAgentSelectedModel: (state, action: PayloadAction<string>) => {

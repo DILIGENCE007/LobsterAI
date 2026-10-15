@@ -29,6 +29,7 @@ import {
   type CoworkTurnUsageAnchor,
   getCoworkTurnUsage,
 } from '../shared/cowork/llmTurnUsage';
+import type { CoworkModelChange } from '../shared/cowork/modelChange';
 import { OpenClawCronRunMetadataKey } from '../shared/cowork/openclawCronSessionKey';
 import {
   COWORK_RAIL_TOOLTIP_PREVIEW_MAX_LENGTH,
@@ -475,6 +476,7 @@ export interface CoworkLiveEditDiff {
 }
 
 export interface CoworkMessageMetadata {
+  modelChange?: CoworkModelChange;
   modelPresetId?: ModelPresetId;
   resolvedModelId?: string;
   toolName?: string;

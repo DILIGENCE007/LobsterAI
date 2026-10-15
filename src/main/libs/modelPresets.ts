@@ -1,6 +1,7 @@
 import { type AvailableModelPreset, isChatPresetSession, type ModelPresetId, ModelPresetIpc, modelPresetPreferenceKey, parseModelPresetId, parseModelPresetPreference } from '../../shared/modelPresets/constants';
 import { type ModelThinkingLevel, OpenClawProviderId, parseModelThinkingConfig, parseModelThinkingLevel } from '../../shared/providers';
 import type { ServerModelMetadataInput } from './claudeSettings';
+import { recordSessionModelChange } from './sessionModelChange';
 
 export type ResolvedPresetModel = ServerModelMetadataInput & { modelId: string; apiFormat: string; accessible?: boolean };
 
@@ -101,7 +102,8 @@ export function registerModelPresetIpc(dependencies: {
     if (!isCurrent()) throw new Error(t('modelPresetAccountChanged'));
     if (selectionRevision.get(sessionId) !== revision) throw new Error(t('modelPresetModelMismatch'));
     getSessions().updateSession(sessionId, { modelPresetId: presetId, modelOverride: modelRef, thinkingLevel }, { touchUpdatedAt: false });
-    return getSessions().getSession(sessionId)!;
+    const updatedSession = getSessions().getSession(sessionId)!;
+    return initial ? updatedSession : recordSessionModelChange(getSessions(), session, updatedSession);
   };
   const choose = (sessionId: string, presetId: ModelPresetId, requiresImage: boolean, initial = false, thinkingLevel?: ModelThinkingLevel) => {
     const key = `${dependencies.ownerAccountKey()}:${sessionId}:${presetId}:${requiresImage}:${initial}:${thinkingLevel ?? ''}`;

@@ -618,6 +618,11 @@ export const isContextCompactionMessage = (message: CoworkMessage): boolean => (
   message.type === 'system' && message.metadata?.kind === CoworkSystemMessageKind.ContextCompaction
 );
 
+export const isModelChangeMessage = (message: CoworkMessage): boolean => (
+  message.type === 'system' && message.metadata?.kind === CoworkSystemMessageKind.ModelChanged
+  && !!message.metadata.modelChange
+);
+
 export const isForkCompactionSummaryMessage = (message: CoworkMessage): boolean => (
   message.type === 'system' && message.metadata?.kind === CoworkSystemMessageKind.ForkCompactionSummary
 );
@@ -638,6 +643,7 @@ const isRenderableAssistantOrSystemMessage = (message: CoworkMessage): boolean =
   if (isForkCompactionSummaryMessage(message)) {
     return false;
   }
+  if (isModelChangeMessage(message)) return true;
   if (hasText(message.content) || hasText(message.metadata?.error)) {
     return true;
   }
@@ -869,6 +875,12 @@ export const buildConversationTurns = (
     }
 
     const message = item.message;
+    if (isModelChangeMessage(message)) {
+      currentTurn = null;
+      ensureTurn(message.id).assistantItems.push({ type: 'system', message });
+      currentTurn = null;
+      continue;
+    }
     if (isContextCompactionMessage(message) && currentTurn?.assistantItems.length) {
       currentTurn = null;
     }

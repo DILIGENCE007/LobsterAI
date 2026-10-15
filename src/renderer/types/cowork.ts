@@ -15,6 +15,7 @@ import type {
   CoworkTurnUsage,
   CoworkTurnUsageAnchor,
 } from '../../shared/cowork/llmTurnUsage';
+import type { CoworkModelChange } from '../../shared/cowork/modelChange';
 import type { CoworkSelectedTextSnippet } from '../../shared/cowork/selectedText';
 import type {
   KitReference,
@@ -82,6 +83,7 @@ export interface CoworkLiveEditDiff {
 }
 
 export interface CoworkMessageMetadata {
+  modelChange?: CoworkModelChange;
   modelPresetId?: ModelPresetId;
   resolvedModelId?: string;
   toolName?: string;

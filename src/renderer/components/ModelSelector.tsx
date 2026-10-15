@@ -3,6 +3,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   ClockIcon,
+  GiftIcon,
   LockClosedIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -34,6 +35,9 @@ import { getModelIdentityKey, isSameModelIdentity, setSelectedModel } from '../s
 import Modal from './common/Modal';
 import { resolvePopoverPlacement } from './cowork/popoverPlacement';
 import BalancedModelIcon from './icons/BalancedModelIcon';
+import BusyModelIcon from './icons/BusyModelIcon';
+import UltimateModelIcon from './icons/UltimateModelIcon';
+import VipDiamondLineIcon from './icons/VipDiamondLineIcon';
 import ModelThinkingMenu, {
   getModelThinkingLevelLabel,
 } from './modelSelector/ModelThinkingMenu';
@@ -67,8 +71,8 @@ interface ModelSelectorProps {
 }
 
 const DROPDOWN_MAX_HEIGHT = 380; // list max-h-72 plus the tab area and current-model footer
-// Wide enough for the longest plan model name plus its tag, thinking level,
-// multiplier and check columns, so names stay readable instead of truncating.
+// Compact rows reserve separate columns for names, tags, multipliers and status.
+// Long names truncate consistently instead of pushing the other columns around.
 const DROPDOWN_WIDTH = 360;
 const MODEL_ITEM_HEIGHT = 36; // py-2 row with a 20px line
 const LIST_VERTICAL_PADDING = 8; // scroll container py-1
@@ -87,8 +91,6 @@ const THINKING_MENU_WIDTH = 210;
 // look disconnected, and no overlap that makes the panels look stacked.
 const CASCADE_OVERLAP = 0;
 const MODEL_ICON_CLASS_NAME = 'h-[18px] w-[18px]';
-// Foreground-tinted so the tag stays visible on the gray hover/selected row.
-const MODEL_TAG_CLASS_NAME = 'shrink-0 rounded-md bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] font-medium leading-none text-secondary';
 export const CascadeSide = {
   Left: 'left',
   Right: 'right',
@@ -146,6 +148,7 @@ export interface ModelSelectorChangeMeta {
 
 export const ModelAccessPromptKind = {
   AgenticNotReady: 'agentic_not_ready',
+  Busy: 'busy',
   Login: 'login',
   Subscribe: 'subscribe',
   SubscriptionPriority: 'subscription_priority',
@@ -169,22 +172,23 @@ export const ModelAccessPromptModal: React.FC<ModelAccessPromptModalProps> = ({
   primaryButtonKey,
   showLearnMore = true,
 }) => {
+  const busyPrompt = promptKind === ModelAccessPromptKind.Busy;
   const agenticNotReadyPrompt = promptKind === ModelAccessPromptKind.AgenticNotReady;
   const loginPrompt = promptKind === ModelAccessPromptKind.Login;
   const purchaseOffer = useModelPurchaseOffer(promptKind === ModelAccessPromptKind.Subscribe, onClose);
   const resolvedTitleKey = titleKey ?? (
-    agenticNotReadyPrompt
+    busyPrompt ? 'modelBusyBadge' : agenticNotReadyPrompt
       ? 'modelSelectorAgenticNotReadyTitle'
       : loginPrompt ? 'modelSelectorLoginTitle' : 'modelSelectorSubscribeTitle'
   );
   const resolvedDescriptionKey = descriptionKey ?? (
-    agenticNotReadyPrompt
+    busyPrompt ? 'modelBusyHint' : agenticNotReadyPrompt
       ? 'serverModelAgenticNotReady'
       : loginPrompt ? 'modelSelectorLoginDesc'
         : promptKind === ModelAccessPromptKind.SubscriptionPriority ? 'modelSubscriptionPriorityHint' : 'modelSelectorSubscribeDesc'
   );
   const resolvedPrimaryButtonKey = primaryButtonKey ?? (
-    agenticNotReadyPrompt
+    busyPrompt ? 'close' : agenticNotReadyPrompt
       ? 'modelSelectorAgenticNotReadyBtn'
       : loginPrompt ? 'modelSelectorLoginBtn' : 'modelSelectorSubscribeBtn'
   );
@@ -203,7 +207,7 @@ export const ModelAccessPromptModal: React.FC<ModelAccessPromptModalProps> = ({
       await authService.login();
       return;
     }
-    if (promptKind === ModelAccessPromptKind.AgenticNotReady) {
+    if (busyPrompt || promptKind === ModelAccessPromptKind.AgenticNotReady) {
       onClose();
       return;
     }
@@ -382,6 +386,7 @@ export function canConfigureModelThinking(
   model: Pick<
     Model,
     | 'accessible'
+    | 'busy'
     | 'agenticReady'
     | 'isServerModel'
     | 'presetId'
@@ -394,6 +399,7 @@ export function canConfigureModelThinking(
     && !model.presetId
     && supportsLobsterAIRequestOptionsV1(model.requestCapabilities)
     && model.accessible !== false
+    && model.busy !== true
     && !isModelAgenticBlocked(model);
 }
 
@@ -418,9 +424,11 @@ export function hasModelHoverDetails(
     | 'supportsThinking'
     | 'thinkingConfig'
     | 'subscriptionPriority'
+    | 'busy'
   >,
 ): boolean {
-  return !!model.subscriptionPriority
+  return !!model.busy
+    || !!model.subscriptionPriority
     || !!model.description
     || !!model.costMultiplier
     || !!model.supportsImage
@@ -489,9 +497,14 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const globalSelectedModel = useSelector((state: RootState) => state.model.defaultSelectedModel);
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
   const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
-  const selectedModel = controlled ? value ?? null : globalSelectedModel;
-  const selectedModelKey = selectedModel ? getModelIdentityKey(selectedModel) : '';
   const availableModels = useSelector((state: RootState) => state.model.availableModels);
+  const selectedValue = controlled ? value ?? null : globalSelectedModel;
+  const currentModelMetadata = selectedValue
+    ? availableModels.find(model => isSameModelIdentity(model, selectedValue)) : undefined;
+  const selectedModel = React.useMemo(() => selectedValue && currentModelMetadata
+    ? { ...selectedValue, busy: currentModelMetadata.busy, accessible: currentModelMetadata.accessible }
+    : selectedValue, [selectedValue, currentModelMetadata]);
+  const selectedModelKey = selectedModel ? getModelIdentityKey(selectedModel) : '';
   const serverModels = availableModels.filter(m => m.isServerModel && (allowPresets || !m.presetId))
     .map(model => model.presetId && model.presetId === selectedModel?.presetId
       ? { ...selectedModel, costMultiplier: model.costMultiplier } : model);
@@ -563,9 +576,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       <BalancedModelIcon className={MODEL_ICON_CLASS_NAME} />
     );
     if (model.presetId === ModelPresetId.Ultimate) return (
-      <svg viewBox="0 0 24 24" className={MODEL_ICON_CLASS_NAME} fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-        <path d="M6 3h12l4 7-10 12L2 10 6 3Zm-4 7h20M6 3l6 19L18 3" strokeLinejoin="round" />
-      </svg>
+      <UltimateModelIcon className={MODEL_ICON_CLASS_NAME} />
     );
     const icon = getProviderIcon(resolveModelIconProviderKey(model));
     if (!React.isValidElement<{ className?: string }>(icon)) return icon;
@@ -803,6 +814,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
 
   const handleModelSelect = (model: Model | null) => {
     if (disabled) return;
+    if (model?.busy) {
+      setRestrictedPrompt(ModelAccessPromptKind.Busy);
+      setHoveredModel(null);
+      setIsOpen(false);
+      return;
+    }
     if (isModelAgenticBlocked(model)) {
       setRestrictedPrompt(ModelAccessPromptKind.AgenticNotReady);
       setHoveredModel(null);
@@ -1086,17 +1103,19 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     const selected = isSelected(model);
     const agenticBlocked = isModelAgenticBlocked(model);
     const restricted = model.accessible === false;
-    const blocked = restricted || agenticBlocked;
+    const busy = model.busy === true;
+    const blocked = restricted || agenticBlocked || busy;
     const hasThinkingProtocol = supportsConfigurableModelThinkingProtocol(model);
 
-    const thinkingLevelLabel = hasThinkingProtocol && model.thinkingConfig
-      ? thinkingLabelForModel(model)
-      : null;
     const showCostMultiplier = model.costMultiplier != null && (model.costMultiplier > 0 || !!model.presetId || model.limitedFreeActive === true);
+    const costMultiplierLabel = showCostMultiplier
+      ? model.presetId
+        ? `${model.costMultiplier?.toFixed(2)}x`
+        : `x${model.costMultiplier?.toFixed(2)}`
+      : undefined;
 
-    // Layout: the name (with its tags) takes all remaining width; the thinking
-    // level and multiplier sit in a right-aligned column next to a fixed status
-    // slot, so every row lines up and only extreme names ever truncate.
+    // Keep names, tags and multipliers in fixed columns. Tags and multipliers
+    // align to their column starts so spare width cannot create leading gaps.
     return (
       <button
         ref={selected ? selectedItemRef : undefined}
@@ -1109,59 +1128,53 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         onBlur={handleModelHoverEnd}
         aria-disabled={blocked}
         aria-haspopup={thinkingSelectionEnabled && hasThinkingProtocol ? 'menu' : undefined}
-        className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-foreground transition-colors ${
-          blocked
-            ? 'cursor-pointer opacity-60 hover:bg-surface-raised'
+        className={`grid w-full grid-cols-[20px_minmax(0,1fr)_72px_40px_16px] items-center gap-x-1 rounded-lg px-2.5 py-2 text-left text-foreground transition-colors ${
+          busy
+            ? 'cursor-not-allowed'
+            : blocked
+              ? 'cursor-pointer opacity-60 hover:bg-surface-raised'
             : selected
               ? 'bg-surface-raised'
               : 'hover:bg-surface-raised'
         }`}
       >
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center text-secondary">
+        <span className={`flex h-5 w-5 shrink-0 items-center justify-center text-secondary ${busy ? 'opacity-50 grayscale' : ''}`}>
           {renderProviderIcon(model)}
         </span>
-        <span className="flex min-w-0 flex-1 items-center gap-1.5">
-          <span
-            className={`min-w-0 truncate text-[13px] leading-5 ${selected ? 'font-medium' : 'font-normal'}`}
-            title={hasModelHoverDetails(model) ? undefined : model.name}
-          >
-            {model.presetId ? modelPresetName(model.presetId) : model.name}
-          </span>
+        <span
+          className={`min-w-0 truncate text-[13px] leading-5 ${selected ? 'font-medium' : 'font-normal'} ${busy ? 'text-secondary opacity-50' : ''}`}
+          title={hasModelHoverDetails(model) ? undefined : model.name}
+        >
+          {model.presetId ? modelPresetName(model.presetId) : model.name}
+        </span>
+        <span className="flex min-w-0 flex-col items-start gap-1">
           {model.presetId && restricted && model.restrictionHint && (
-            <span className="min-w-0 truncate text-[10px] text-secondary" title={model.restrictionHint}>{model.restrictionHint}</span>
+            <span className="max-w-full truncate text-[10px] text-secondary" title={model.restrictionHint}>{model.restrictionHint}</span>
           )}
           {model.limitedFreeActive && (
-            <span className="shrink-0 rounded-full bg-red-500/10 px-1.5 py-0.5 text-[10px] leading-none text-red-600 dark:text-red-400">
-              {i18nService.t('modelLimitedFreeBadge')}
+            <span className="inline-flex max-w-full items-center gap-[3px] whitespace-nowrap rounded-full bg-red-500/10 px-1.5 py-0.5 text-[10px] leading-none text-red-600 dark:text-red-400" title={i18nService.t('modelLimitedFreeBadge')}>
+              <GiftIcon className="h-3 w-3 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+              <span className="truncate">{i18nService.t('modelLimitedFreeBadge')}</span>
             </span>
           )}
           {model.subscriptionPriority && (
-            <span className="shrink-0 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] leading-none text-amber-700 dark:text-amber-300" title={i18nService.t('modelSubscriptionPriorityHint')}>
-              {i18nService.t('modelSubscriptionPriorityBadge')}
+            <span className="inline-flex max-w-full items-center gap-[3px] whitespace-nowrap rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] leading-none text-amber-700 dark:text-amber-300" title={i18nService.t('modelSubscriptionPriorityHint')}>
+              <VipDiamondLineIcon className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{i18nService.t('modelSubscriptionPriorityBadge')}</span>
             </span>
           )}
-          {model.supportsImage && (
-            <span className={MODEL_TAG_CLASS_NAME}>
-              {i18nService.t('modelSupportsImageInputBadge')}
-            </span>
-          )}
-          {agenticBlocked && (
-            <span className="flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-amber-700 dark:text-amber-300">
-              <ClockIcon className="h-3 w-3" />
-              {i18nService.t('modelSelectorAgenticVerifyingBadge')}
+          {!busy && agenticBlocked && (
+            <span className="flex max-w-full items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-amber-700 dark:text-amber-300" title={i18nService.t('modelSelectorAgenticVerifyingBadge')}>
+              <ClockIcon className="h-3 w-3 shrink-0" />
+              <span className="truncate">{i18nService.t('modelSelectorAgenticVerifyingBadge')}</span>
             </span>
           )}
         </span>
-        {(thinkingLevelLabel || showCostMultiplier) && (
-          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] leading-4 text-secondary">
-            {thinkingLevelLabel && <span className="font-medium">{thinkingLevelLabel}</span>}
-            {showCostMultiplier && (
-              <span className="min-w-[34px] text-right tabular-nums">{model.presetId ? `${model.costMultiplier?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}x` : `x${model.costMultiplier}`}</span>
-            )}
-          </span>
-        )}
+        <span className={`min-w-0 truncate text-left text-[11px] leading-4 tabular-nums text-secondary ${busy ? 'opacity-50' : ''}`} title={costMultiplierLabel}>
+          {costMultiplierLabel}
+        </span>
         <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-          {restricted && !agenticBlocked && (
+          {restricted && !agenticBlocked && !busy && (
             <LockClosedIcon className="h-3.5 w-3.5 text-secondary" />
           )}
           {selected && !blocked && (
@@ -1172,20 +1185,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     );
   };
 
-  const renderModelRows = (models: Model[]) => {
-    const presets = models.filter(model => model.presetId);
-    const accessibleModels = models.filter(model => !model.presetId && model.accessible !== false);
-    const restrictedModels = models.filter(model => !model.presetId && model.accessible === false);
-    return (
-      <>
-        {presets.map(renderModelItem)}
-        {accessibleModels.map(renderModelItem)}
-        {restrictedModels.length > 0 && (
-          <div>{restrictedModels.map(renderModelItem)}</div>
-        )}
-      </>
-    );
-  };
+  // The server orders models by entitlement before applying busy availability.
+  // Preserve that order so a service outage cannot move a model to the bottom.
+  const renderModelRows = (models: Model[]) => models.map(renderModelItem);
 
   const renderMoreModelsSection = () => {
     if (visibleSections.moreModels.length === 0) return null;
@@ -1230,7 +1232,19 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         className="w-[220px] rounded-xl border border-border bg-surface p-3 shadow-popover pointer-events-auto"
       >
         <div className="text-[13px] font-semibold text-foreground leading-5">{hoveredModel.presetId ? modelPresetName(hoveredModel.presetId) : hoveredModel.name}</div>
-        {hoveredModel.subscriptionPriority && (
+        {hoveredModel.busy && (
+          <div className="mt-2 border-t border-border pt-2">
+            <div className="flex items-center justify-between text-[12px]">
+              <span>{i18nService.t('modelBusyLevel')}</span>
+              <span className="text-secondary">{i18nService.t('modelBusyUnavailable')}</span>
+            </div>
+            <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-4 text-red-600 dark:text-red-400">
+              <BusyModelIcon className="h-4 w-4 shrink-0" />
+              <span>{i18nService.t('modelBusyHint')}</span>
+            </p>
+          </div>
+        )}
+        {!hoveredModel.busy && hoveredModel.subscriptionPriority && (
           <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300 leading-4">{i18nService.t('modelSubscriptionPriorityHint')}</div>
         )}
         {hoveredModel.presetId && hoveredModel.accessible === false && hoveredModel.restrictionHint && (
@@ -1246,7 +1260,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         )}
         {hoveredModel.costMultiplier != null && hoveredModel.costMultiplier > 0 && (
           <div className="mt-2 text-[11px] text-secondary">
-            ({i18nService.t('modelCostMultiplierLabel')} x{hoveredModel.costMultiplier})
+            ({i18nService.t('modelCostMultiplierLabel')} x{hoveredModel.costMultiplier.toFixed(2)})
           </div>
         )}
         {(hoveredModel.supportsImage || showThinkingBadge) && (
@@ -1292,6 +1306,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
                 : <LockClosedIcon className="h-3.5 w-3.5 text-secondary" />}
             </span>
           </button>
+        )}
+        {!thinkingSelectionEnabled && hasThinkingProtocol && hoveredModel.thinkingConfig && (
+          <div className="mt-1.5 flex items-center justify-between py-2 text-[12px] text-foreground">
+            <span>{i18nService.t('modelThinkingStrength')}</span>
+            <span className="font-medium">{thinkingLabelForModel(hoveredModel)}</span>
+          </div>
         )}
       </div>
     );
@@ -1425,7 +1445,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         type="button"
         disabled={disabled}
         onClick={toggleOpen}
-        className={`flex min-w-0 items-center overflow-hidden hover:bg-surface-raised text-foreground transition-colors disabled:opacity-70 disabled:cursor-wait ${triggerClassName} ${isOpen ? 'bg-surface-raised' : ''}`}
+        className={`flex min-w-0 items-center overflow-hidden hover:bg-surface-raised text-foreground transition-colors disabled:opacity-70 disabled:cursor-wait ${triggerClassName} ${selectedModel?.busy ? 'text-secondary opacity-60 grayscale' : ''} ${isOpen ? 'bg-surface-raised' : ''}`}
       >
         {selectedModel?.isServerModel && (
           <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-secondary">

@@ -534,6 +534,7 @@ import { runLegacyWeixinAllowFromMigration } from './libs/openclawWeixinPairingM
 import { migrateMainAgentWorkspace } from './libs/openclawWorkspaceMigration';
 import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
 import { isAnalyticsEndpointUrl, sanitizeUrlForLog, serializeForLog } from './libs/sanitizeForLog';
+import { recordSessionModelChange } from './libs/sessionModelChange';
 import { packageNodeServiceDeployment } from './libs/shareDeployment/nodeServiceDeploymentPackager';
 import {
   analyzeNodeServiceProjectDirectory,
@@ -11152,6 +11153,7 @@ if (!gotTheLock) {
       if (patch.model) {
         patch.model = normalizeOpenClawModelRef(patch.model);
       }
+      const previousSession = getCoworkStore().getSession(sessionId);
       const runtime = getCoworkEngineRouter();
       const patchResult = await runtime.patchSession(sessionId, patch);
 
@@ -11183,7 +11185,9 @@ if (!gotTheLock) {
 
       return {
         success: true,
-        session,
+        session: patch.model !== undefined
+          ? recordSessionModelChange(getCoworkStore(), previousSession, session)
+          : session,
       };
     } catch (error) {
       return {
