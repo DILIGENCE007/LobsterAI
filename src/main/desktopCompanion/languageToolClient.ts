@@ -28,11 +28,11 @@ export class CompanionLanguageClient {
       const response = await this.fetch(session, `${this.deps.getServerApiBaseUrl()}/api/desktop-tools/${path}`, {
         headers: device ? { [LANGUAGE_TOOL_DEVICE_HEADER]: device } : {},
       });
-      const body = await response.json() as { code?: number; data?: LanguageToolQuotas };
+      const body = await response.json().catch((): null => null) as { code?: number; data?: LanguageToolQuotas } | null;
       if (session !== this.deps.getSessionKey()) return { success: false, code: LanguageToolCode.Unauthorized };
-      return response.ok && body.code === 0 && body.data
+      return response.ok && body?.code === 0 && body.data
         ? { success: true, data: body.data }
-        : { success: false, code: this.errorCode(session, response.status, body.code) };
+        : { success: false, code: this.errorCode(response.status, body?.code) };
     } catch { return { success: false, code: LanguageToolCode.Unavailable }; }
   }
 
@@ -70,10 +70,10 @@ export class CompanionLanguageClient {
     return session ? this.deps.fetchWithAuth(url, options) : this.deps.fetchAnonymous(url, { ...options, credentials: 'omit' });
   }
 
-  private errorCode(session: string | null, status: number, code?: number): number {
-    // An older server may still require login. Translation remains unavailable until it is upgraded.
-    if (!session && (status === 401 || code === LanguageToolCode.Unauthorized)) return LanguageToolCode.Unavailable;
-    return code ?? (status === 401 ? LanguageToolCode.Unauthorized : LanguageToolCode.Unavailable);
+  private errorCode(status: number, code?: number): number {
+    // Normalize both controller and security-filter responses to the existing sign-in UI.
+    if (status === 401 || code === 401 || code === LanguageToolCode.Unauthorized) return LanguageToolCode.Unauthorized;
+    return code ?? LanguageToolCode.Unavailable;
   }
 
   private async stream(request: LanguageToolRequest, session: string | null, device: string | null, controller: AbortController, send: (event: LanguageToolEvent) => void): Promise<void> {
@@ -93,7 +93,7 @@ export class CompanionLanguageClient {
       if (!response.ok || !response.body || !response.headers.get('content-type')?.includes('text/event-stream')) {
         const body = await response.json().catch((): null => null) as { code?: number } | null;
         emit({ requestId: request.requestId, type: LanguageToolEventType.Error,
-          code: this.errorCode(session, response.status, body?.code) });
+          code: this.errorCode(response.status, body?.code) });
         return;
       }
       reader = response.body.getReader();

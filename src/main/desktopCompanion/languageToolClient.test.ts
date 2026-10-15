@@ -94,7 +94,7 @@ test('authenticated rejection never falls back to anonymous transport', async ()
   expect(fetchAnonymous).not.toHaveBeenCalled();
 });
 
-test('guest quota is translation-only and older servers report unavailable', async () => {
+test('guest quota is translation-only and server authentication rejection requests sign-in', async () => {
   const fetchAnonymous = vi.fn(async () => Response.json({ code: 0, data: { tools: { translate: { limitRequests: 1000 } } } }));
   const client = new CompanionLanguageClient({ ...deviceDeps, fetchAnonymous, fetchWithAuth: vi.fn(),
     getSessionKey: () => null, getServerApiBaseUrl: () => 'http://localhost' });
@@ -103,8 +103,49 @@ test('guest quota is translation-only and older servers report unavailable', asy
     headers: { [LANGUAGE_TOOL_DEVICE_HEADER]: deviceId }, credentials: 'omit',
   }));
   expect(await client.quota(LanguageTool.Tts)).toEqual({ success: false, code: LanguageToolCode.Unauthorized });
-  fetchAnonymous.mockImplementation(async () => Response.json({ code: LanguageToolCode.Unauthorized }, { status: 401 }));
-  expect(await client.quota(LanguageTool.Translate)).toEqual({ success: false, code: LanguageToolCode.Unavailable });
+  fetchAnonymous.mockImplementation(async () => Response.json({ code: 401 }, { status: 401 }));
+  expect(await client.quota(LanguageTool.Translate)).toEqual({ success: false, code: LanguageToolCode.Unauthorized });
+  fetchAnonymous.mockImplementation(async () => new Response('Unauthorized', { status: 401 }));
+  expect(await client.quota(LanguageTool.Translate)).toEqual({ success: false, code: LanguageToolCode.Unauthorized });
+});
+
+test.each([
+  { status: 401, code: 401 },
+  { status: 401, code: LanguageToolCode.Unauthorized },
+  { status: 401, code: undefined },
+  { status: 200, code: 401 },
+  { status: 200, code: LanguageToolCode.Unauthorized },
+])('guest translation requests sign-in for authentication rejection $status/$code', async ({ status, code }) => {
+  const fetchAnonymous = vi.fn(async () => code === undefined
+    ? new Response('Unauthorized', { status }) : Response.json({ code }, { status }));
+  const fetchWithAuth = vi.fn();
+  const client = new CompanionLanguageClient({ ...deviceDeps, fetchAnonymous, fetchWithAuth,
+    getSessionKey: () => null, getServerApiBaseUrl: () => 'http://localhost' });
+  const send = vi.fn();
+  client.start(request, send);
+  await drain();
+  expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    type: LanguageToolEventType.Error, code: LanguageToolCode.Unauthorized,
+  }));
+  expect(fetchAnonymous).toHaveBeenCalledTimes(1);
+  expect(fetchWithAuth).not.toHaveBeenCalled();
+});
+
+test('a later guest request can translate after the server removes its login requirement', async () => {
+  const fetchAnonymous = vi.fn()
+    .mockResolvedValueOnce(Response.json({ code: 401 }, { status: 401 }))
+    .mockResolvedValueOnce(sse(delta + done));
+  const client = new CompanionLanguageClient({ ...deviceDeps, fetchAnonymous, fetchWithAuth: vi.fn(),
+    getSessionKey: () => null, getServerApiBaseUrl: () => 'http://localhost' });
+  const send = vi.fn();
+  client.start(request, send);
+  await drain();
+  expect(send).toHaveBeenCalledWith(expect.objectContaining({ code: LanguageToolCode.Unauthorized }));
+  send.mockClear();
+  expect(client.start(request, send).success).toBe(true);
+  await drain();
+  expect(send.mock.calls.map(([event]) => event.type)).toEqual([LanguageToolEventType.Delta, LanguageToolEventType.Done]);
+  expect(fetchAnonymous).toHaveBeenCalledTimes(2);
 });
 
 test('missing persistent device fails before dispatch and guest results are discarded after login', async () => {
