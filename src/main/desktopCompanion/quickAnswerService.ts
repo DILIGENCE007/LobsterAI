@@ -1,9 +1,11 @@
 import type { WebContents } from 'electron';
 
 import {
+  CompanionQuickAnswerErrorCode,
   type CompanionQuickAnswerEvent,
   CompanionQuickAnswerEventType,
   type CompanionQuickAnswerRequest,
+  type CompanionQuickAnswerResult,
   DesktopCompanionIpc,
 } from '../../shared/desktopCompanion/constants';
 import {
@@ -102,8 +104,9 @@ interface Running {
 }
 
 interface QuickAnswerDeps {
-  resolveModel(): QuickAnswerModelConfig | null;
-  fetch: typeof fetch;
+  getSessionKey(): string | null;
+  resolveModel?(): QuickAnswerModelConfig | null;
+  fetch?: typeof fetch;
 }
 
 /**
@@ -114,15 +117,18 @@ interface QuickAnswerDeps {
 export class CompanionQuickAnswerService {
   private running = new Map<string, Running>();
 
-  constructor(private readonly deps: QuickAnswerDeps = { resolveModel: resolveQuickAnswerModel, fetch: (...args) => fetch(...args) }) {}
+  constructor(private readonly deps: QuickAnswerDeps = { getSessionKey: () => null }) {}
 
-  start(sender: WebContents, request: CompanionQuickAnswerRequest): { success: boolean; error?: string } {
+  start(sender: WebContents, request: CompanionQuickAnswerRequest): CompanionQuickAnswerResult {
+    if (!this.deps.getSessionKey()) {
+      return { success: false, code: CompanionQuickAnswerErrorCode.LoginRequired, error: t('desktopToolsLoginRequired') };
+    }
     const requestId = typeof request?.requestId === 'string' ? request.requestId.slice(0, 100) : '';
     const text = typeof request?.text === 'string' ? request.text.trim() : '';
     if (!requestId || !text || !isCompanionSelectionAction(request.action) || request.action === CompanionSelectionAction.Translate) {
       return { success: false, error: t('desktopCompanionRequestFailed') };
     }
-    const model = this.deps.resolveModel();
+    const model = (this.deps.resolveModel ?? resolveQuickAnswerModel)();
     if (!model) return { success: false, error: t('desktopCompanionAnswerNoModel') };
     const history = Array.isArray(request.history)
       ? request.history.filter(turn => turn && typeof turn.content === 'string').slice(-MAX_HISTORY_TURNS)
@@ -170,7 +176,7 @@ export class CompanionQuickAnswerService {
     const read = model.protocol === CoworkModelProtocol.GeminiNative ? readGeminiStreamEvent : readAnthropicStreamEvent;
     try {
       const { url, init } = buildQuickAnswerHttpRequest(model, prompt);
-      const response = await this.deps.fetch(url, { ...init, signal: controller.signal });
+      const response = await (this.deps.fetch ?? fetch)(url, { ...init, signal: controller.signal });
       if (!response.ok || !response.body) {
         const detail = extractApiErrorSnippet(await response.text().catch(() => '')) || `HTTP ${response.status}`;
         send({ requestId, type: CompanionQuickAnswerEventType.Error, message: t('desktopCompanionAnswerFailed', { error: detail }) });

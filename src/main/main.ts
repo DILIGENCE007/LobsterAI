@@ -235,6 +235,7 @@ import { isScopedReview, ScopedReviewStore } from './conversation/scopedReview';
 import { type CoworkForkContextMessage, type CoworkMessage, CoworkStore } from './coworkStore';
 import { DesktopCompanionManager } from './desktopCompanion/desktopCompanionManager';
 import { CompanionLanguageClient } from './desktopCompanion/languageToolClient';
+import { CompanionQuickAnswerService } from './desktopCompanion/quickAnswerService';
 import {
   buildEnterpriseAccountRequestHeaders,
   clearEnterpriseAccountContext,
@@ -15582,7 +15583,10 @@ if (!gotTheLock) {
         const task = getCoworkStore().getSession(sessionId, 1);
         return task ? { ...task, preview: getCompanionTaskPreview(task.messages.at(-1)) } : null;
       },
-      services: { languageClient: desktopLanguageClient },
+      services: {
+        languageClient: desktopLanguageClient,
+        quickAnswer: new CompanionQuickAnswerService({ getSessionKey: getAuthSessionKey }),
+      },
       store: getStore(),
       preloadPath: PRELOAD_PATH,
       rendererDirectory: path.join(__dirname, '../dist'),

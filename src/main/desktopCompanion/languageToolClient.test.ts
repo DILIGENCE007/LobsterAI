@@ -11,10 +11,10 @@ const done = 'event: done\ndata: {}\n\n';
 const drain = () => new Promise(resolve => setTimeout(resolve, 15));
 
 describe('authenticated desktop language tools', () => {
-  test('requires a session before any paid upstream request', () => {
+  test.each([LanguageTool.Translate, LanguageTool.Tts])('requires a session before any %s request', tool => {
     const fetchWithAuth = vi.fn();
     const client = new CompanionLanguageClient({ fetchWithAuth, getSessionKey: () => null, getServerApiBaseUrl: () => 'http://localhost' });
-    expect(client.start(request, vi.fn())).toEqual({ success: false, code: LanguageToolCode.Unauthorized });
+    expect(client.start({ ...request, tool }, vi.fn())).toEqual({ success: false, code: LanguageToolCode.Unauthorized });
     expect(fetchWithAuth).not.toHaveBeenCalled();
   });
 

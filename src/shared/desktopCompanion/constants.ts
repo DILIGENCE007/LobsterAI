@@ -258,6 +258,15 @@ export interface CompanionQuickAnswerRequest {
   history?: CompanionQuickAnswerTurn[];
 }
 
+export const CompanionQuickAnswerErrorCode = { LoginRequired: 'login_required' } as const;
+export type CompanionQuickAnswerErrorCode = typeof CompanionQuickAnswerErrorCode[keyof typeof CompanionQuickAnswerErrorCode];
+
+export interface CompanionQuickAnswerResult {
+  success: boolean;
+  error?: string;
+  code?: CompanionQuickAnswerErrorCode;
+}
+
 export const CompanionQuickAnswerEventType = { Delta: 'delta', Done: 'done', Error: 'error' } as const;
 
 export type CompanionQuickAnswerEvent =
@@ -288,7 +297,7 @@ export interface DesktopCompanionBridge extends LanguageToolsBridge, CompanionSc
   stageCommand(command: DesktopCompanionStageCommand): Promise<void>;
   resizeSurface(size: CompanionSurfaceSize): void;
   selectionCommand(command: DesktopCompanionSelectionCommand): Promise<void>;
-  startQuickAnswer(request: CompanionQuickAnswerRequest): Promise<{ success: boolean; error?: string }>;
+  startQuickAnswer(request: CompanionQuickAnswerRequest): Promise<CompanionQuickAnswerResult>;
   abortQuickAnswer(requestId: string): Promise<void>;
   requestPermission(permission: CompanionPermission): Promise<DesktopCompanionState>;
   copyText(text: string): Promise<void>;

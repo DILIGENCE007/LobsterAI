@@ -18,6 +18,7 @@ import {
   SourceQuote,
   StopGlyph,
 } from './SelectionCard';
+import SelectionLoginRequired from './SelectionLoginRequired';
 import { useLanguageTools } from './useLanguageTools';
 import { useMeasuredSurface } from './useMeasuredSurface';
 import { usePointerPassThrough } from './usePointerPassThrough';
@@ -72,6 +73,7 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
   if (!input?.text) return null;
   const source = input.text;
   const isTranslation = input.tool === LanguageTool.Translate;
+  const loginRequired = tools.error === LanguageToolCode.Unauthorized || followUp.loginRequired;
   const speechVisible = !isTranslation || playback.status !== SpeechStatus.Idle;
   const speechActive = playback.status !== SpeechStatus.Idle;
   const speechLoading = playback.status === SpeechStatus.Loading;
@@ -118,7 +120,7 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
             <span className="lt-lang">{t('desktopToolsDetectLanguage')}</span>
             <ArrowRightIcon className="lt-arrow" aria-hidden="true" />
             <label className="lt-lang lt-select">
-              <select aria-label={t('desktopToolsTarget')} value={tools.target}
+              <select aria-label={t('desktopToolsTarget')} value={tools.target} disabled={loginRequired}
                 onChange={event => tools.translate(event.target.value as TranslationTarget)}>
                 <option value={TranslationTarget.Chinese}>{t('desktopToolsChinese')}</option>
                 <option value={TranslationTarget.English}>{t('desktopToolsEnglish')}</option>
@@ -139,12 +141,10 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
             </div>
           )}
 
-          {tools.error !== null && (
+          {loginRequired ? <SelectionLoginRequired /> : tools.error !== null && (
             <SelectionError
               message={t(ERROR_KEYS[tools.error] ?? 'desktopToolsUpstream')}
-              action={tools.error === LanguageToolCode.Unauthorized
-                ? <button type="button" onClick={() => { void window.electron.auth.login(); }}>{t('desktopToolsLogin')}</button>
-                : <button type="button" onClick={tools.retry}>{t('desktopCompanionAnswerRetry')}</button>}
+              action={<button type="button" onClick={tools.retry}>{t('desktopCompanionAnswerRetry')}</button>}
             />
           )}
 
@@ -156,7 +156,7 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
               {followUp.streaming && (followUp.streaming.text
                 ? <SelectionAnswer text={followUp.streaming.text} streaming />
                 : <SelectionThinking label={t('desktopCompanionAnswerThinking')} />)}
-              {followUp.error && (
+              {followUp.error && !loginRequired && (
                 <SelectionError
                   message={followUp.error}
                   action={<button type="button" onClick={followUp.retry}>{t('desktopCompanionAnswerRetry')}</button>}
@@ -167,7 +167,7 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
           )}
         </div>
 
-        {speechVisible && (
+        {speechVisible && !loginRequired && (
           <section className="lt-player" aria-label={t('desktopToolsPlayback')}>
             <div className="lt-controls">
               <button type="button" className="lt-play" onClick={tools.togglePlayback}
@@ -206,7 +206,7 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
           </section>
         )}
 
-        {isTranslation && (translating || (translation && !followUp.streaming)) && (
+        {isTranslation && !loginRequired && (translating || (translation && !followUp.streaming)) && (
           <div className="sel-actions">
             {translating ? (
               <button type="button" className="sel-action" onClick={tools.stopTranslation}>
@@ -238,7 +238,7 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
             onChange={followUp.setQuestion}
             onSubmit={followUp.submit}
             onStop={followUp.streaming ? followUp.stop : undefined}
-            disabled={!translation || translating}
+            disabled={loginRequired || !translation || translating}
           />
         )}
       </div>

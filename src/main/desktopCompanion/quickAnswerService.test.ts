@@ -1,7 +1,7 @@
 import type { WebContents } from 'electron';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { CompanionQuickAnswerEventType, DesktopCompanionIpc } from '../../shared/desktopCompanion/constants';
+import { CompanionQuickAnswerErrorCode, CompanionQuickAnswerEventType, DesktopCompanionIpc } from '../../shared/desktopCompanion/constants';
 import { buildCompanionQuickAnswerPrompt, CompanionSelectionAction } from '../../shared/desktopCompanion/selectionActions';
 import { ApiFormat, ProviderName } from '../../shared/providers/constants';
 import { resolveCurrentApiConfig, resolveRawApiConfig } from '../libs/claudeSettings';
@@ -23,6 +23,50 @@ beforeEach(() => {
 });
 
 describe('selection quick-answer authentication', () => {
+  test.each([
+    CompanionSelectionAction.Summarize,
+    CompanionSelectionAction.Explain,
+    CompanionSelectionAction.Ask,
+  ])('requires a LobsterAI login before resolving a model or sending %s', action => {
+    const resolveModel = vi.fn(() => ({
+      protocol: CoworkModelProtocol.Anthropic, apiKey: upstreamKey, baseURL: 'https://provider.example', model: 'test-model',
+    }));
+    const fetchMock = vi.fn<typeof fetch>();
+    const service = new CompanionQuickAnswerService({ getSessionKey: () => null, resolveModel, fetch: fetchMock });
+    const sender = { id: 31, isDestroyed: () => false, send: vi.fn() };
+    expect(service.start(sender as unknown as WebContents, { requestId: 'signed-out', action, text: 'Hello' })).toEqual({
+      success: false, code: CompanionQuickAnswerErrorCode.LoginRequired, error: 'desktopToolsLoginRequired',
+    });
+    expect(resolveModel).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(sender.send).not.toHaveBeenCalled();
+    service.dispose();
+  });
+
+  test('only reports a missing model after login and checks credentials again on each request', () => {
+    let session: string | null = null;
+    const resolveModel = vi.fn(() => null);
+    const service = new CompanionQuickAnswerService({ getSessionKey: () => session, resolveModel, fetch: vi.fn() });
+    const sender = { id: 31, isDestroyed: () => false, send: vi.fn() } as unknown as WebContents;
+    const request = { requestId: 'summary', action: CompanionSelectionAction.Summarize, text: 'Hello' };
+    expect(service.start(sender, request).code).toBe(CompanionQuickAnswerErrorCode.LoginRequired);
+    session = 'signed-in';
+    expect(service.start(sender, request)).toEqual({ success: false, error: 'desktopCompanionAnswerNoModel' });
+    session = null;
+    expect(service.start(sender, request).code).toBe(CompanionQuickAnswerErrorCode.LoginRequired);
+    expect(resolveModel).toHaveBeenCalledTimes(1);
+    service.dispose();
+  });
+
+  test('requires login when no credential source is configured', () => {
+    const service = new CompanionQuickAnswerService();
+    const sender = { id: 31, isDestroyed: () => false, send: vi.fn() } as unknown as WebContents;
+    expect(service.start(sender, { requestId: 'ask', action: CompanionSelectionAction.Ask, text: 'Hello' }).code)
+      .toBe(CompanionQuickAnswerErrorCode.LoginRequired);
+    expect(resolveRawApiConfig).not.toHaveBeenCalled();
+    service.dispose();
+  });
+
   test('authenticates a local compatibility proxy separately from the upstream provider', () => {
     vi.mocked(resolveCurrentApiConfig).mockReturnValue({
       config: { apiKey: upstreamKey, baseURL: 'http://127.0.0.1:9876', model: 'test-model', apiType: ApiFormat.OpenAI },
@@ -62,6 +106,7 @@ describe('translation follow-up through quick answers', () => {
       + 'data: {"type":"message_stop"}\n\n',
     ));
     const service = new CompanionQuickAnswerService({
+      getSessionKey: () => 'signed-in',
       resolveModel: () => ({ protocol: CoworkModelProtocol.Anthropic, apiKey: upstreamKey, baseURL: 'https://provider.example', model: 'test-model' }),
       fetch: fetchMock,
     });
@@ -88,7 +133,7 @@ describe('translation follow-up through quick answers', () => {
 
   test('keeps initial translation on the server API instead of the configured conversation model', () => {
     const fetchMock = vi.fn<typeof fetch>();
-    const service = new CompanionQuickAnswerService({ resolveModel: () => null, fetch: fetchMock });
+    const service = new CompanionQuickAnswerService({ getSessionKey: () => 'signed-in', resolveModel: () => null, fetch: fetchMock });
     const sender = { id: 31, isDestroyed: () => false, send: vi.fn() };
     expect(service.start(sender as unknown as WebContents, {
       requestId: 'initial-translation', action: CompanionSelectionAction.Translate, text: 'Hello',
