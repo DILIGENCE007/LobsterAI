@@ -17,6 +17,7 @@ import type { Artifact } from '../../types/artifact';
 import type { CoworkMessage, CoworkMessageMetadata } from '../../types/cowork';
 import { ActivityStepKind } from './constants';
 import type { MediaPollingGroup } from './MediaPollingIndicator';
+import type { MediaTaskPresentations } from './mediaTaskPresentation';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -1249,12 +1250,16 @@ const extractMediaPollCount = (poll: ToolGroupItem): number | undefined => {
   return getMediaPollCount(poll);
 };
 
-export const consolidateMediaPolling = (items: AssistantTurnItem[]): ConsolidatedItem[] => {
+export const consolidateMediaPolling = (
+  items: AssistantTurnItem[],
+  mediaTaskPresentations?: MediaTaskPresentations,
+): ConsolidatedItem[] => {
   const pollsByTaskId = new Map<string, { toolName: string; indices: number[] }>();
   const mediaPollOrdinals = new Map<number, number>();
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
-    if (item.type === 'tool_group' && isMediaStatusPoll(item.group)) {
+    if (item.type === 'tool_group' && isMediaStatusPoll(item.group)
+      && !mediaTaskPresentations?.has(item.group.toolUse.id)) {
       const toolName = item.group.toolUse.metadata!.toolName!;
       const input = item.group.toolUse.metadata!.toolInput as Record<string, string>;
       const taskId = input.taskId;

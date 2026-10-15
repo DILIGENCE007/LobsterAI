@@ -1,5 +1,6 @@
 export const mediaTranslations = {
   zh: {
+    mediaTaskCallDetails: '生成任务 {taskId} 的调用记录',
     mediaVideoConfirmTitle: '确认生成视频？',
     mediaVideoConfirmCostUnknown: '积分按所选模型、时长和规格结算；当前无法可靠估算总额。',
     mediaVideoConfirmDescription: '请确认生成描述及素材。提交后可继续聊天，完成后会显示结果。\n\n视频生成期间通常无法取消。生成结果也可在[个人主页]({url})查看。',
@@ -29,6 +30,7 @@ export const mediaTranslations = {
     mediaTaskVideoUrlRequired: '所选模型的参考视频需要可访问的 HTTP(S) 链接，请先上传视频后再生成。',
   },
   en: {
+    mediaTaskCallDetails: 'Call details for generation task {taskId}',
     mediaVideoConfirmTitle: 'Generate this video?',
     mediaVideoConfirmCostUnknown: 'Credits depend on the selected model, duration and settings. A reliable total estimate is unavailable.',
     mediaVideoConfirmDescription: 'Check the description and references. You can continue chatting after submission; the result will appear when ready.\n\nVideo generation usually cannot be cancelled after submission. Results are also available on your [profile]({url}).',

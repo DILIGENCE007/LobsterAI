@@ -191,6 +191,7 @@ import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInpu
 import QuestionDock from './interactions/QuestionDock';
 import { isQuestionDockRequest } from './interactions/questionDockModel';
 import LazyRenderTurn, { clearHeightCache } from './LazyRenderTurn';
+import { buildMediaTaskPresentations } from './mediaTaskPresentation';
 import {
   buildConversationTurns,
   buildDisplayItems,
@@ -5140,6 +5141,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     () => buildConversationTurns(displayItems, { leadingTurnStartTimestamp, leadingTurnUsage }),
     [displayItems, leadingTurnStartTimestamp, leadingTurnUsage],
   );
+  const mediaTaskPresentations = useMemo(() => buildMediaTaskPresentations(turns), [turns]);
   const enterpriseQuotaSignal = useMemo(
     () => findCurrentEnterpriseQuotaSignal(currentSession, currentMessagesWithDetachedTail),
     [currentMessagesWithDetachedTail, currentSession],
@@ -6069,6 +6071,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             >
               <AssistantTurnBlock
                 turn={turn}
+                mediaTaskPresentations={mediaTaskPresentations}
                 artifacts={turnArtifacts}
                 resolveLocalFilePath={resolveLocalFilePath}
                 mapDisplayText={mapDisplayText}

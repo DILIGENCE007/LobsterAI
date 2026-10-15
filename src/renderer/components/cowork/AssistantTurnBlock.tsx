@@ -45,6 +45,7 @@ import AssistantMessageItem from './AssistantMessageItem';
 import { ActivityEntryVariant } from './constants';
 import { reportConversationBlockAction } from './conversationAnalytics';
 import MediaPollingIndicator from './MediaPollingIndicator';
+import { buildMediaTaskPresentations, type MediaTaskPresentations } from './mediaTaskPresentation';
 import { MessageCopyButton } from './MessageActionButton';
 import {
   canFoldTurnProcess,
@@ -576,6 +577,7 @@ const MediaImageInline: React.FC<{ artifacts: Artifact[] }> = ({ artifacts }) =>
 
 const AssistantTurnBlock: React.FC<{
   turn: ConversationTurn;
+  mediaTaskPresentations?: MediaTaskPresentations;
   artifacts?: Artifact[];
   resolveLocalFilePath?: (href: string, text: string) => string | null;
   mapDisplayText?: (value: string) => string;
@@ -604,6 +606,7 @@ const AssistantTurnBlock: React.FC<{
   hasRunningSubagents?: boolean;
 }> = ({
   turn,
+  mediaTaskPresentations,
   artifacts,
   resolveLocalFilePath,
   mapDisplayText,
@@ -639,9 +642,13 @@ const AssistantTurnBlock: React.FC<{
     }),
     [turn.assistantItems, hideCreditQuotaBanner, isStreamingTurn],
   );
+  const taskPresentations = useMemo(
+    () => mediaTaskPresentations ?? buildMediaTaskPresentations([turn]),
+    [mediaTaskPresentations, turn],
+  );
   const consolidatedItems = useMemo(
-    () => consolidateMediaPolling(visibleAssistantItems),
-    [visibleAssistantItems],
+    () => consolidateMediaPolling(visibleAssistantItems, taskPresentations),
+    [visibleAssistantItems, taskPresentations],
   );
   const toolGroupOverrides = useMemo(() => {
     const overrides = new Map<string, React.ReactNode>();
@@ -938,6 +945,7 @@ const AssistantTurnBlock: React.FC<{
         <ToolCallGroup
           key={`tool-${item.group.toolUse.id}`}
           group={item.group}
+          mediaTaskPresentation={taskPresentations.get(item.group.toolUse.id)}
           isLastInSequence={isLastInSequence}
           mapDisplayText={mapDisplayText}
           retainedMediaPollCounts={retainedMediaPollCounts}
