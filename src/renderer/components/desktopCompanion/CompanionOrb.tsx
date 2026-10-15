@@ -27,6 +27,7 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
   const dropTimer = useRef<ReturnType<typeof setTimeout>>();
   const [dropHover, setDropHover] = useState(false);
   const [moving, setMoving] = useState(false);
+  const expanded = state.panelVisible || state.result.visible;
   const { session, pending } = useCompanionSession(state.sessionId, state.panelVisible);
   const status = session?.status ?? null;
   const taskRecord = state.result.recentTasks.find(task => task.sessionId === state.sessionId);
@@ -43,6 +44,8 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
     hintShowing: state.stage.kind === DesktopCompanionStageKind.Hint,
   });
   const skinKind = getCompanionSkin(state.preferences.skin).kind;
+  const label = i18nService.t(state.result.visible ? 'desktopCompanionCloseResults'
+    : state.panelVisible ? 'desktopCompanionClosePanel' : companionMoodLabelKey(mood));
   const canDrop = state.preferences.enabled && state.preferences.dragAssist && !state.snooze;
 
   useEffect(() => {
@@ -60,11 +63,10 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
     : '';
   useEffect(() => { if (taskNews) api.taskUpdated(); }, [api, taskNews]);
 
-  const open = async () => {
+  const toggle = async (fromPointer = false) => {
     try {
-      if ((await api.getRecentTasks()).length) await api.openResult();
-      else await api.togglePanel();
-    } catch (error) { console.warn('[DesktopCompanion] Failed to open task entry', error); }
+      await api.toggleOrb(fromPointer);
+    } catch (error) { console.warn('[DesktopCompanion] Failed to toggle task entry', error); }
   };
 
   const finishDrag = (event: React.PointerEvent<HTMLButtonElement>, canceled = false) => {
@@ -74,7 +76,7 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
     if (!start) return;
     api.drag(start.dragging ? DesktopCompanionDragPhase.End : DesktopCompanionDragPhase.Cancel);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    if (!canceled && !start.dragging) open();
+    if (!canceled && !start.dragging) void toggle(true);
   };
 
   const leaveFileDrag = () => {
@@ -131,8 +133,9 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
         data-moving={moving}
         data-drop-hover={dropHover}
         style={skinKind === CompanionSkinKind.Brand ? { width: DesktopCompanionSize.BrandMark + 8, height: DesktopCompanionSize.BrandMark + 8 } : undefined}
-        aria-label={i18nService.t(companionMoodLabelKey(mood))}
-        title={i18nService.t(companionMoodLabelKey(mood))}
+        aria-expanded={expanded}
+        aria-label={label}
+        title={label}
         onPointerDown={event => {
           if (event.button !== 0) return;
           pointer.current = { x: event.screenX, y: event.screenY, dragging: false };
@@ -150,7 +153,7 @@ export default function CompanionOrb({ state }: { state: DesktopCompanionState }
         }}
         onPointerUp={event => finishDrag(event)}
         onPointerCancel={event => finishDrag(event, true)}
-        onClick={event => { if (event.detail === 0) open(); }}
+        onClick={event => { if (event.detail === 0) void toggle(); }}
         onContextMenu={event => { event.preventDefault(); void api.showContextMenu(); }}
       >
         <CompanionCharacter skin={state.preferences.skin} mood={mood} size={skinKind === CompanionSkinKind.Brand ? DesktopCompanionSize.BrandMark : CHARACTER_SIZE} />

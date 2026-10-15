@@ -204,16 +204,20 @@ export function companionCardSlot(anchor: CompanionSelectionAnchor, workArea: Co
   return { below: roomBelow >= room || roomBelow >= roomAbove, room };
 }
 
-/** The card next to the selection; past the screen edge it is pushed back over the selection, never off screen. */
+/** Replace the toolbar in place; without a toolbar, fall back to the selection. Keep the card on screen as it grows. */
 export function resolveCompanionCardBounds(
   anchor: CompanionSelectionAnchor,
   size: CompanionSize,
   workArea: CompanionRect,
+  toolbar: CompanionRect | null = null,
 ): CompanionRect {
   const pad = DesktopCompanionSize.SurfacePad;
   const gap = DesktopCompanionSize.Gap;
   const slot = companionCardSlot(anchor, workArea);
   const height = Math.min(size.height, slot.room);
+  if (toolbar) {
+    return clampCompanionBounds({ width: size.width, height, x: toolbar.x, y: toolbar.y }, workArea);
+  }
   const y = slot.below ? anchor.bottom + gap - pad : anchor.top - gap - height + pad;
   return clampCompanionBounds({ width: size.width, height, x: selectionColumnX(anchor, size.width), y }, workArea);
 }

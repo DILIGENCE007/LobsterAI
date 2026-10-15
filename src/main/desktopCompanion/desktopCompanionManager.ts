@@ -25,6 +25,7 @@ import {
   DesktopCompanionDropSource,
   DesktopCompanionFileDragPhase,
   DesktopCompanionIpc,
+  DesktopCompanionMainPage,
   DesktopCompanionPanelPlacement,
   type DesktopCompanionPreferences,
   type DesktopCompanionResult,
@@ -162,9 +163,11 @@ function describeDraggedPaths(paths: string[]): DesktopCompanionDropFile[] {
 }
 
 export class DesktopCompanionManager {
+  private pendingMainPage: DesktopCompanionMainPage | null = null;
   private orb: BrowserWindow | null = null;
   private panel: BrowserWindow | null = null;
   private panelVisible = false;
+  private orbPressVisible = false;
   private panelLoginVisible = false;
   /** Height of the composer card plus its shadow margin, as the panel last reported it. */
   private panelCardHeight: number = DesktopCompanionSize.PanelCompactHeight;
@@ -264,6 +267,7 @@ export class DesktopCompanionManager {
     this.languageTools = new CompanionLanguageToolsController({
       createWindow: () => this.createWindow(DesktopCompanionSurface.LanguageTools, true),
       getSelectionAnchor: () => this.selection.selectionAnchor,
+      getSelectionToolbarBounds: () => this.selection.selectionToolbarBounds,
       assertSender: id => this.assertSender(id),
       publish: () => this.publish(),
       hideSelection: () => this.selection.hide(),
@@ -348,6 +352,19 @@ export class DesktopCompanionManager {
     this.publish();
     this.options.onPreferencesChanged();
     return { success: true, state: this.getState() };
+  }
+
+  private toggleOrb(fromPointer: boolean): void {
+    if (this.capturing) return;
+    const closeOnly = fromPointer && this.orbPressVisible;
+    this.orbPressVisible = false;
+    if (closeOnly || this.panelVisible || this.results.state.visible) {
+      this.hidePanel();
+      this.results.hide();
+      return;
+    }
+    this.results.open();
+    if (!this.results.state.visible) this.showPanel();
   }
 
   togglePanel(): void {
@@ -538,6 +555,8 @@ export class DesktopCompanionManager {
     if (phase === DesktopCompanionDragPhase.Cancel) { this.dragOrigin = null; return; }
     const cursor = screen.getCursorScreenPoint();
     if (phase === DesktopCompanionDragPhase.Start) {
+      // Capture before blur can hide the surface, using main-process state even during rapid clicks.
+      this.orbPressVisible = this.panelVisible || this.results.state.visible;
       const start = this.orbBounds() ?? this.orb.getBounds();
       this.dragOrigin = { cursor, position: { x: start.x, y: start.y } };
       return;
@@ -597,7 +616,8 @@ export class DesktopCompanionManager {
         event.preventDefault();
         this.hidePanel();
       });
-      win.on('hide', () => this.hidePanel());
+      // A native hide notification can arrive after a rapid reopen.
+      win.on('hide', () => { if (!win.isVisible()) this.hidePanel(); });
       win.on('closed', () => {
         if (this.panel !== win) return;
         this.panel = null;
@@ -870,6 +890,7 @@ export class DesktopCompanionManager {
       this.hidePanel();
       this.followTask(value.slice(0, 200));
     });
+    handle(DesktopCompanionIpc.ToggleOrb, value => this.toggleOrb(value === true));
     handle(DesktopCompanionIpc.TogglePanel, () => this.togglePanel());
     handle(DesktopCompanionIpc.HidePanel, () => this.hidePanel());
     handle(DesktopCompanionIpc.OpenMain, (value, sender) => {
@@ -877,6 +898,21 @@ export class DesktopCompanionManager {
       if (sender.id === this.results.webContentsId) this.results.hide();
       this.hidePanel();
       this.options.openMain(typeof value === 'string' ? value : null);
+    });
+    handle(DesktopCompanionIpc.OpenMainPage, value => {
+      if (value !== DesktopCompanionMainPage.Kits && value !== DesktopCompanionMainPage.Skills) return;
+      // Keep the destination until the main renderer is ready, including window recreation.
+      this.pendingMainPage = value;
+      this.hidePanel();
+      this.options.openMain(null);
+      const main = this.options.getMainWindow();
+      if (main && !main.isDestroyed()) main.webContents.send(DesktopCompanionIpc.MainPageRequested);
+    });
+    handle(DesktopCompanionIpc.ConsumeMainPage, (_value, sender) => {
+      if (sender.id !== this.options.getMainWindow()?.webContents.id) return null;
+      const page = this.pendingMainPage;
+      this.pendingMainPage = null;
+      return page;
     });
     handle(DesktopCompanionIpc.ContextMenu, () => this.showContextMenu());
     handle(DesktopCompanionIpc.StageCommand, value => this.stage.handleCommand(value as DesktopCompanionStageCommand));

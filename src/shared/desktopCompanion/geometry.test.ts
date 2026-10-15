@@ -191,6 +191,35 @@ describe('selection toolbar placement', () => {
 
   const full = DesktopCompanionSize.Answer;
 
+  test.each([
+    word,
+    { ...paragraph, bottom: 820 },
+    { ...word, top: 30, bottom: 50 },
+  ])('replaces the measured toolbar at the same origin for %j', anchor => {
+    const toolbar = resolveCompanionToolbarBounds(anchor, size, area).bounds;
+    for (const height of [236, 330, full.height]) {
+      const card = resolveCompanionCardBounds(anchor, { width: full.width, height }, area, toolbar);
+      expect(card).toMatchObject({ x: toolbar.x, y: toolbar.y, height });
+    }
+  });
+
+  test('a card at the bottom right stays as close to the toolbar as the screen allows', () => {
+    const anchor = { ...word, left: 1400, right: 1430, top: 840, bottom: 860 };
+    const toolbar = resolveCompanionToolbarBounds(anchor, size, area).bounds;
+    for (const height of [236, full.height]) {
+      const card = resolveCompanionCardBounds(anchor, { width: full.width, height }, area, toolbar);
+      expect(card).toEqual({ x: area.width - full.width, y: area.height - height, width: full.width, height });
+    }
+  });
+
+  test('toolbar-anchored cards stay inside a small secondary display with negative coordinates', () => {
+    const secondary = { x: -1280, y: -600, width: 1280, height: 560 };
+    const anchor = { ...paragraph, left: -250, right: -200, top: -150, bottom: -80 };
+    const toolbar = resolveCompanionToolbarBounds(anchor, size, secondary).bounds;
+    const card = resolveCompanionCardBounds(anchor, full, secondary, toolbar);
+    expect(card).toEqual({ x: -full.width, y: secondary.y, width: full.width, height: secondary.height });
+  });
+
   test('cards open under the selection and keep it readable', () => {
     const card = resolveCompanionCardBounds(paragraph, { width: 444, height: 484 }, area);
     expect(card.y + pad).toBeGreaterThanOrEqual(300);
