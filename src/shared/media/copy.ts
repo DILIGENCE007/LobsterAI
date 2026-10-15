@@ -8,6 +8,7 @@ export const mediaTranslations = {
     mediaVideoConfirmCancel: '取消',
     mediaVideoConfirmLater: '暂不生成',
     mediaGenerationRecoveryFailed: '生成请求未能恢复，请查看任务状态后再试。',
+    mediaGenerationSubmissionUnconfirmed: '尚未确认生成请求的受理结果，客户端正在后台核实并恢复原请求。请勿重新提交或切换模型；这不代表生成失败，恢复后会显示任务状态和结果。',
     mediaTaskFailed: '生成失败',
     mediaTaskTimedOut: '生成超时',
     mediaTaskCancelled: '已取消',
@@ -24,7 +25,7 @@ export const mediaTranslations = {
     mediaTaskRefunded: '本次预扣积分已退回',
     mediaTaskCancelFailed: '取消未成功，请稍后查看任务状态。',
     mediaTaskInputTooLarge: '参考素材过大，请缩小文件后重试。',
-    mediaTaskImageTooSmall: '参考图尺寸过小，请选择至少 {size}×{size} 的图片。',
+    mediaTaskImageTooSmall: '参考图尺寸过小，宽和高均需至少 {size} 像素，请更换图片。',
     mediaTaskVideoUrlRequired: '所选模型的参考视频需要可访问的 HTTP(S) 链接，请先上传视频后再生成。',
   },
   en: {
@@ -36,6 +37,7 @@ export const mediaTranslations = {
     mediaVideoConfirmCancel: 'Cancel',
     mediaVideoConfirmLater: 'Do not generate yet',
     mediaGenerationRecoveryFailed: 'The request could not be recovered. Check the task status before trying again.',
+    mediaGenerationSubmissionUnconfirmed: 'The generation acknowledgement is unconfirmed. The desktop is checking and recovering the original request in the background. Do not resubmit or switch models; this does not mean generation failed. The task status and result will appear after recovery.',
     mediaTaskFailed: 'Generation failed',
     mediaTaskTimedOut: 'Generation timed out',
     mediaTaskCancelled: 'Cancelled',
@@ -52,7 +54,7 @@ export const mediaTranslations = {
     mediaTaskRefunded: 'Reserved credits have been refunded',
     mediaTaskCancelFailed: 'Cancellation was not confirmed. Check the task status again shortly.',
     mediaTaskInputTooLarge: 'The reference file is too large. Reduce its size and try again.',
-    mediaTaskImageTooSmall: 'The reference image is too small. Choose an image of at least {size}×{size} pixels.',
+    mediaTaskImageTooSmall: 'The reference image is too small. Both width and height must be at least {size} pixels. Choose another image.',
     mediaTaskVideoUrlRequired: 'This model requires an accessible HTTP(S) reference video URL. Upload the video before generating.',
   },
 } as const;

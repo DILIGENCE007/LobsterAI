@@ -50,6 +50,11 @@ export class MediaTaskStore {
   tasks(): MediaTaskTracker[] { return this.kv.get<MediaTaskTracker[]>(MEDIA_TASK_STORE_KEY) ?? []; }
   intents(): MediaGenerationIntent[] { return this.kv.get<MediaGenerationIntent[]>(MEDIA_INTENT_STORE_KEY) ?? []; }
 
+  findUnacknowledgedIntent(callKey: string, ownerAccountKey: string, serverBaseUrl: string): MediaGenerationIntent | undefined {
+    return this.intents().find(intent => intent.callKey === callKey && intent.ownerAccountKey === ownerAccountKey
+      && intent.serverBaseUrl === serverBaseUrl && !intent.rejected && !intent.taskId);
+  }
+
   findOwnedTask(taskId: string, ownerAccountKey: string, serverBaseUrl: string): MediaTaskTracker | undefined {
     return this.tasks().find(task => task.taskId === taskId && task.ownerAccountKey === ownerAccountKey
       && task.serverBaseUrl === serverBaseUrl);

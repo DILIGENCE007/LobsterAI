@@ -7208,6 +7208,18 @@ if (!gotTheLock) {
         console.warn('[MediaGeneration] blocked media generation because the user is not logged in.');
         return { content: [{ type: 'text', text: t('authLoginRequired') }], isError: true };
       }
+      const unacknowledgedIntent = action === 'generate' && sessionId
+        ? getMediaTaskStore().findUnacknowledgedIntent(`${sessionId}:${request.context.toolCallId}`, requestAccountScope.ownerAccountKey, serverBaseUrl)
+        : undefined;
+      if (unacknowledgedIntent) {
+        console.warn('[MediaGeneration] Submission acknowledgement is unconfirmed; recovering the original intent:', error);
+        return {
+          content: [{ type: 'text', text: t('mediaGenerationSubmissionUnconfirmed') }],
+          details: { status: MediaTaskStatus.Pending, phase: MediaTaskPhase.Verifying,
+            protocolVersion: MediaProtocol.Durable, model: unacknowledgedIntent.model,
+            mediaType: unacknowledgedIntent.mediaType, canCancel: false },
+        };
+      }
       console.error('[MediaGeneration] media generation request failed:', error);
       return { content: [{ type: 'text', text: `Media generation error: ${msg}` }], isError: true };
     }

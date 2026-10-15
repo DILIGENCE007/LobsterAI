@@ -16,6 +16,19 @@ const intent: Omit<MediaGenerationIntent, 'key' | 'createdAt'> = { callKey: 'ses
   serverBaseUrl: task.serverBaseUrl!, sessionId: 'session', mediaType: 'image', model: 'model', toolCallId: 'call', requestBody: '{}' };
 
 describe('durable media task recovery', () => {
+  test('only treats an unacknowledged request from the current call and account as recoverable', () => {
+    const { store, kv } = fixture();
+    const pending = store.beginIntent(intent);
+    const restored = new MediaTaskStore(kv);
+    expect(restored.findUnacknowledgedIntent(intent.callKey, intent.ownerAccountKey, intent.serverBaseUrl)?.key).toBe(pending.key);
+    expect(restored.findUnacknowledgedIntent('another-call', intent.ownerAccountKey, intent.serverBaseUrl)).toBeUndefined();
+    expect(restored.findUnacknowledgedIntent(intent.callKey, 'another-account', intent.serverBaseUrl)).toBeUndefined();
+    expect(restored.findUnacknowledgedIntent(intent.callKey, intent.ownerAccountKey, 'https://another.example')).toBeUndefined();
+    store.saveIntent({ ...pending, rejected: true });
+    expect(restored.findUnacknowledgedIntent(intent.callKey, intent.ownerAccountKey, intent.serverBaseUrl)).toBeUndefined();
+    store.saveIntent({ ...pending, taskId: task.taskId });
+    expect(restored.findUnacknowledgedIntent(intent.callKey, intent.ownerAccountKey, intent.serverBaseUrl)).toBeUndefined();
+  });
   test('keeps stable intent keys across restarts and rejects changed payloads', () => {
     const { store, kv } = fixture();
     const first = store.beginIntent(intent);
