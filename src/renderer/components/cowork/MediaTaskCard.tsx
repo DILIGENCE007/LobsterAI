@@ -21,7 +21,7 @@ export const mediaTaskLabelKey = (details: Record<string, unknown>): string => {
   }
 };
 
-const MediaTaskCard: React.FC<{ details: Record<string, unknown>; startedAt: number }> = ({ details, startedAt }) => {
+const MediaTaskCard: React.FC<{ details: Record<string, unknown>; startedAt?: number }> = ({ details, startedAt }) => {
   const [now, setNow] = useState(Date.now);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState('');
@@ -46,7 +46,7 @@ const MediaTaskCard: React.FC<{ details: Record<string, unknown>; startedAt: num
       <div className="flex items-center gap-2">
         <span className={`h-2 w-2 rounded-full ${success ? 'bg-green-500' : terminal ? 'bg-amber-500' : 'bg-blue-500 animate-pulse'}`} />
         <span className="text-sm font-medium text-foreground">{i18nService.t(mediaTaskLabelKey(details))}</span>
-        {!terminal && <span className="text-xs text-muted">{i18nService.t('mediaTaskElapsed').replace('{seconds}', String(Math.max(0, Math.floor((now - startedAt) / 1000))))}</span>}
+        {!terminal && startedAt !== undefined && <span className="text-xs text-muted">{i18nService.t('mediaTaskElapsed').replace('{seconds}', String(Math.max(0, Math.floor((now - startedAt) / 1000))))}</span>}
       </div>
       <div className="mt-1 text-xs text-muted">{String(details.model ?? '')} · {String(details.taskId)}</div>
       {!terminal && <p className="mt-2 text-xs text-secondary">{i18nService.t('mediaTaskBackground')}</p>}

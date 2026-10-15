@@ -6688,6 +6688,8 @@ if (!gotTheLock) {
         const details = {
           taskId: String(task.taskId),
           protocolVersion: task.protocolVersion,
+          createdAt: task.createdAt,
+          deadlineAt: task.deadlineAt,
           phase: task.phase,
           slow: task.slow,
           canCancel: task.canCancel,
@@ -7187,6 +7189,8 @@ if (!gotTheLock) {
         details: {
           taskId: String(task.taskId),
           protocolVersion: task.protocolVersion,
+          createdAt: task.createdAt,
+          deadlineAt: task.deadlineAt,
           phase: task.phase,
           slow: task.slow,
           canCancel: task.canCancel,
