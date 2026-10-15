@@ -15,6 +15,7 @@ import type { CompanionLanguageClient } from './languageToolClient';
 interface Host {
   createWindow(): BrowserWindow;
   getSelectionAnchor(): CompanionSelectionAnchor | null;
+  getSelectionToolbarBounds(): CompanionRect | null;
   assertSender(id: number): void;
   publish(): void;
   hideSelection(): void;
@@ -32,6 +33,7 @@ export class CompanionLanguageToolsController {
   private input: LanguageToolInput | null = null;
   private status: SpeechStatus = SpeechStatus.Idle;
   private anchor: CompanionSelectionAnchor | null = null;
+  private toolbarBounds: CompanionRect | null = null;
   private size: CompanionSize = { ...DesktopCompanionSize.Answer };
   private pinned = false;
   /** The user dragged the card away from the selection. */
@@ -92,6 +94,7 @@ export class CompanionLanguageToolsController {
     if (typeof input.text !== 'string' || !input.text.trim()) return;
     const cursor = screen.getCursorScreenPoint();
     this.anchor = this.host.getSelectionAnchor() ?? companionPointerAnchor(cursor);
+    this.toolbarBounds = this.host.getSelectionToolbarBounds();
     this.host.hideSelection();
     if (this.window) this.host.abortFollowUp(this.window.webContents.id);
     this.cardHeight = companionCardSlot(this.anchor, this.workArea()).room;
@@ -160,7 +163,7 @@ export class CompanionLanguageToolsController {
       this.window.setBounds(clampCompanionBounds({ ...this.size, x, y }, workArea));
       return;
     }
-    this.window.setBounds(resolveCompanionCardBounds(this.anchor, this.size, workArea));
+    this.window.setBounds(resolveCompanionCardBounds(this.anchor, this.size, workArea, this.toolbarBounds));
   }
   command(command: SpeechCommand): void {
     if (!this.input || !this.window?.isVisible() || !Object.values(SpeechCommand).includes(command)) return;

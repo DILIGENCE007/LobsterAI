@@ -14,9 +14,13 @@ export const DesktopCompanionIpc = {
   GetSelectionExcludedApps: 'desktop-companion:get-selection-excluded-apps',
   SetDraft: 'desktop-companion:set-draft',
   SelectSession: 'desktop-companion:select-session',
+  ToggleOrb: 'desktop-companion:toggle-orb',
   TogglePanel: 'desktop-companion:toggle-panel',
   HidePanel: 'desktop-companion:hide-panel',
   OpenMain: 'desktop-companion:open-main',
+  OpenMainPage: 'desktop-companion:open-main-page',
+  ConsumeMainPage: 'desktop-companion:consume-main-page',
+  MainPageRequested: 'desktop-companion:main-page-requested',
   ContextMenu: 'desktop-companion:context-menu',
   Drag: 'desktop-companion:drag',
   Changed: 'desktop-companion:changed',
@@ -39,6 +43,12 @@ export const DesktopCompanionIpc = {
   /** Reserve the welcome dialog's own size while login is open in the composer. */
   PanelLoginVisible: 'desktop-companion:panel-login-visible',
 } as const;
+
+export const DesktopCompanionMainPage = {
+  Kits: 'kits',
+  Skills: 'skills',
+} as const;
+export type DesktopCompanionMainPage = typeof DesktopCompanionMainPage[keyof typeof DesktopCompanionMainPage];
 
 export const DesktopCompanionSurface = {
   Mascot: 'mascot',
@@ -294,9 +304,14 @@ export interface DesktopCompanionBridge extends LanguageToolsBridge, CompanionSc
   getSelectionExcludedApps(): Promise<CompanionSelectionApp[]>;
   setDraft(draft: DesktopCompanionDraft): Promise<DesktopCompanionState>;
   selectSession(sessionId: string | null): Promise<DesktopCompanionState>;
+  /** Pointer activation uses the main process snapshot captured by drag(Start). */
+  toggleOrb(fromPointer?: boolean): Promise<void>;
   togglePanel(): Promise<void>;
   hidePanel(): Promise<void>;
   openMain(sessionId?: string | null): Promise<void>;
+  openMainPage(page: DesktopCompanionMainPage): Promise<void>;
+  consumeMainPage(): Promise<DesktopCompanionMainPage | null>;
+  onMainPageRequested(callback: () => void): () => void;
   showContextMenu(): Promise<void>;
   drag(phase: DesktopCompanionDragPhase): void;
   orbFileDrag(phase: DesktopCompanionFileDragPhase, kinds: CompanionFileKind[]): void;

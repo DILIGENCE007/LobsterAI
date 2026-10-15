@@ -1,5 +1,8 @@
 /* Translate and read-aloud cards; the shared card parts live in selectionSurface.css. */
 
+/* Native popup options need explicit colors; some platforms keep a light menu background in dark mode. */
+.lt-select option, .lt-rate option { background: var(--s-bg); color: var(--s-ink); }
+
 /* Source and target sit in equal halves under the title bar, so the direction stays in view while answers scroll. */
 .lt-langs { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 10px; flex-shrink: 0; padding: 2px 16px 14px; }
 .lt-lang {

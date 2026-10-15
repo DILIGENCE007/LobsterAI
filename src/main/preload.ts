@@ -170,9 +170,17 @@ contextBridge.exposeInMainWorld('electron', {
     getSelectionExcludedApps: () => ipcRenderer.invoke(DesktopCompanionIpc.GetSelectionExcludedApps),
     setDraft: draft => ipcRenderer.invoke(DesktopCompanionIpc.SetDraft, draft),
     selectSession: id => ipcRenderer.invoke(DesktopCompanionIpc.SelectSession, id),
+    toggleOrb: fromPointer => ipcRenderer.invoke(DesktopCompanionIpc.ToggleOrb, fromPointer),
     togglePanel: () => ipcRenderer.invoke(DesktopCompanionIpc.TogglePanel),
     hidePanel: () => ipcRenderer.invoke(DesktopCompanionIpc.HidePanel),
     openMain: id => ipcRenderer.invoke(DesktopCompanionIpc.OpenMain, id),
+    openMainPage: page => ipcRenderer.invoke(DesktopCompanionIpc.OpenMainPage, page),
+    consumeMainPage: () => ipcRenderer.invoke(DesktopCompanionIpc.ConsumeMainPage),
+    onMainPageRequested: callback => {
+      const handler = () => callback();
+      ipcRenderer.on(DesktopCompanionIpc.MainPageRequested, handler);
+      return () => ipcRenderer.removeListener(DesktopCompanionIpc.MainPageRequested, handler);
+    },
     showContextMenu: () => ipcRenderer.invoke(DesktopCompanionIpc.ContextMenu),
     drag: phase => ipcRenderer.send(DesktopCompanionIpc.Drag, phase),
     orbFileDrag: (phase, kinds) => ipcRenderer.send(DesktopCompanionIpc.OrbFileDrag, { phase, kinds }),

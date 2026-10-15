@@ -278,42 +278,53 @@ describe('selection toolbar', () => {
     controller.dispose();
   });
 
-  test('a card opens under the selection so the selected text stays readable', () => {
-    const controller = create();
-    select();
-    vi.advanceTimersByTime(200);
-    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
-    controller.setContentSize({ width: 444, height: 300 });
-    expect(win.bounds.y + PAD).toBeGreaterThanOrEqual(220);
-    expect(sentSelection().cardMaxHeight).toBe(DesktopCompanionSize.Answer.height - PAD * 2);
-    controller.dispose();
-  });
+  test.each([CompanionSelectionAction.Explain, CompanionSelectionAction.Summarize, CompanionSelectionAction.Ask])(
+    '%s replaces the measured toolbar in place, even for a long selection', action => {
+      const controller = create();
+      select('A long selected paragraph', 'com.microsoft.Word', 200, 780);
+      controller.setContentSize({ width: 410, height: 80 });
+      vi.advanceTimersByTime(200);
+      const { x, y } = win.bounds;
+      controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action });
+      controller.setContentSize({ width: 444, height: 300 });
+      expect(win.bounds).toMatchObject({ x, y });
+      expect(sentSelection().cardMaxHeight).toBe(DesktopCompanionSize.Answer.height - PAD * 2);
+      controller.setContentSize(DesktopCompanionSize.Answer);
+      expect(win.bounds).toMatchObject({ x, y });
+      controller.dispose();
+    },
+  );
 
-  test('with little room on either side, a long answer slides the card over the selection instead of scrolling it', () => {
+  test('a growing answer stays by the toolbar until it reaches the screen edge', () => {
     const controller = create();
-    // A long passage from y=300 to y=600 leaves about 316px on each side.
-    select('ambient co-worker', 'com.microsoft.Word', 300, 580);
+    select('ambient co-worker', 'com.microsoft.Word', 450, 580);
     vi.advanceTimersByTime(200);
+    const { x, y } = win.bounds;
     controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
     expect(sentSelection().cardMaxHeight).toBe(DesktopCompanionSize.Answer.height - PAD * 2);
     controller.setContentSize({ width: 444, height: 280 });
-    expect(win.bounds.y + PAD).toBeGreaterThanOrEqual(600);
+    expect(win.bounds).toMatchObject({ x, y });
     controller.setContentSize({ width: 444, height: 900 });
     expect(win.bounds).toMatchObject({ y: 900 - DesktopCompanionSize.Answer.height, height: DesktopCompanionSize.Answer.height });
     controller.dispose();
   });
 
-  test('a card above the selection starts about its measured size, so measuring it does not move it', () => {
+  test('a bottom-edge card uses the toolbar position without inheriting the upward menu offset', () => {
     const controller = create();
     select('ambient co-worker', 'com.microsoft.Word', 800);
     vi.advanceTimersByTime(200);
+    expect(sentSelection().menuUp).toBe(true);
+    const toolbar = controller.selectionToolbarBounds!;
+    expect(toolbar.y).toBeGreaterThan(win.bounds.y);
     controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
     expect(win.bounds.height).toBe(DesktopCompanionSize.AnswerStartHeight);
     const bottom = visibleBottom();
-    expect(bottom).toBeLessThanOrEqual(800);
+    expect(bottom).toBe(900 - PAD);
     controller.setContentSize({ width: 444, height: 236 });
     expect(visibleBottom()).toBe(bottom);
     expect(win.bounds.height).toBe(236);
+    controller.hide();
+    expect(controller.selectionToolbarBounds).toBeNull();
     controller.dispose();
   });
 

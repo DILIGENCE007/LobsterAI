@@ -206,6 +206,11 @@ export class CompanionSelectionController {
     return this.selection && this.anchor ? { ...this.anchor } : null;
   }
 
+  /** The measured toolbar only, without the transparent space reserved for its menu. */
+  get selectionToolbarBounds(): CompanionRect | null {
+    return this.selection && this.toolbarBounds ? { ...this.toolbarBounds } : null;
+  }
+
   /** A screenshot shortcut was pressed and its shot is not taken yet; nothing should close for it. */
   get capturing(): boolean {
     return Date.now() < this.captureUntil;
@@ -636,7 +641,7 @@ export class CompanionSelectionController {
       const { x, y } = this.window.getBounds();
       this.window.setBounds(clampCompanionBounds({ ...this.size, x, y }, workArea));
     } else {
-      this.window.setBounds(resolveCompanionCardBounds(this.anchor, this.size, workArea));
+      this.window.setBounds(resolveCompanionCardBounds(this.anchor, this.size, workArea, this.toolbarBounds));
     }
   }
 

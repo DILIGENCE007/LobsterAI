@@ -5,6 +5,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { buildSessionTitleFromInput } from '../../../common/sessionTitle';
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
 import {
+  DesktopCompanionMainPage,
   DesktopCompanionPanelPlacement,
   DesktopCompanionSize,
   type DesktopCompanionState,
@@ -247,7 +248,8 @@ export default function CompanionComposer() {
     }
   }, [activeKitIds, activeSkillIds, api, dispatch, installedKits, marketplaceKits, mediaSelection, placement, playExit, showToast, skills, start]);
 
-  const openMain = useCallback(() => { void api.openMain(null); }, [api]);
+  const openSkills = useCallback(() => { void api.openMainPage(DesktopCompanionMainPage.Skills); }, [api]);
+  const openKits = useCallback(() => { void api.openMainPage(DesktopCompanionMainPage.Kits); }, [api]);
 
   // The card sits in the window's corner by the orb; the rest of the window is room for menus.
   const cardAlignClass = placement === DesktopCompanionPanelPlacement.Left ? 'items-end' : 'items-start';
@@ -275,8 +277,8 @@ export default function CompanionComposer() {
             showModelSelector
             showAgentSelector
             onLoginPromptVisibilityChange={api.setPanelLoginVisible}
-            onManageSkills={openMain}
-            onManageKits={openMain}
+            onManageSkills={openSkills}
+            onManageKits={openKits}
             onGoalCommand={command => submit(command)}
           />
         </div>
