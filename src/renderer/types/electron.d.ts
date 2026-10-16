@@ -107,6 +107,7 @@ import type {
   InstalledKitRecord,
   KitReference,
   KitSkillMetadata,
+  KitStoreResponse,
   ResolvedKitCapabilities,
 } from '../../shared/kit/constants';
 import type {
@@ -800,7 +801,7 @@ interface IElectronAPI {
     onChanged: (callback: () => void) => () => void;
   };
   kits: {
-    fetchStore: () => Promise<{ success: boolean; data?: string; error?: string }>;
+    fetchStore: () => Promise<KitStoreResponse>;
     install: (params: {
       kitId: string;
       bundleUrl: string;

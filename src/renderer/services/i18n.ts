@@ -2871,6 +2871,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     kitReinstallRequiredDetail:
       '已安装版本 v{installedVersion}，当前版本 v{currentVersion}。请先卸载后重新安装以使用新版本。',
     kitLoading: '加载中...',
+    kitStoreLoadFailed: '在线套件加载失败，请检查网络后重试。',
     kitEmpty: '暂无套件',
     kitBack: '返回',
     kitTryAsking: '试试这样问...',
@@ -7568,6 +7569,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     kitReinstallRequiredDetail:
       'Installed version v{installedVersion}, current version v{currentVersion}. Uninstall and install again to use the new version.',
     kitLoading: 'Loading...',
+    kitStoreLoadFailed: 'Unable to load online kits. Check your connection and try again.',
     kitEmpty: 'No kits available',
     kitBack: 'Back',
     kitTryAsking: 'Try asking...',

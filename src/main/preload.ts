@@ -89,10 +89,12 @@ import {
   type HtmlShareSourceType,
   type HtmlShareStatus,
 } from '../shared/htmlShare/constants';
-import type {
-  KitReference,
-  KitSkillMetadata,
-  ResolvedKitCapabilities,
+import {
+  KitIpcChannel,
+  type KitReference,
+  type KitSkillMetadata,
+  type KitStoreResponse,
+  type ResolvedKitCapabilities,
 } from '../shared/kit/constants';
 import { LibraryIpc } from '../shared/library/constants';
 import type {
@@ -283,7 +285,7 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
   kits: {
-    fetchStore: () => ipcRenderer.invoke('kits:fetchStore'),
+    fetchStore: (): Promise<KitStoreResponse> => ipcRenderer.invoke(KitIpcChannel.FetchStore),
     install: (params: {
       kitId: string;
       bundleUrl: string;
