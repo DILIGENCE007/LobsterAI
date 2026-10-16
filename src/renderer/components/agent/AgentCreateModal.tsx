@@ -1,6 +1,7 @@
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import { DefaultAgentAvatarIcon } from '@shared/agent/avatar';
 import { ExpertUiEvent } from '@shared/agent/presets';
+import { ENABLE_EXPERT_PLAZA_UI } from '@shared/featureFlags';
 import type { Platform } from '@shared/platform';
 import { PlatformRegistry } from '@shared/platform';
 import { ProviderName } from '@shared/providers';
@@ -563,19 +564,21 @@ const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
           </div>
         </div>
         <div className="mt-1 flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              reportAgentCreateAction('open_expert_plaza', {
-                isDirty: isDirty(),
-              });
-              openPlazaOnCloseRef.current = true;
-              handleClose();
-            }}
-            className="h-8 rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-surface-raised transition-colors"
-          >
-            {i18nService.t('expertChooseFromPlaza')}
-          </button>
+          {ENABLE_EXPERT_PLAZA_UI && (
+            <button
+              type="button"
+              onClick={() => {
+                reportAgentCreateAction('open_expert_plaza', {
+                  isDirty: isDirty(),
+                });
+                openPlazaOnCloseRef.current = true;
+                handleClose();
+              }}
+              className="h-8 rounded-lg border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-surface-raised transition-colors"
+            >
+              {i18nService.t('expertChooseFromPlaza')}
+            </button>
+          )}
           <button type="button" onClick={handleClose} className="p-2 rounded-lg hover:bg-surface-raised transition-colors">
             <XMarkIcon className="h-5 w-5 text-secondary" />
           </button>

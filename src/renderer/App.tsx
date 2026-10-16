@@ -15,6 +15,7 @@ import {
 import { BrowserPasskeyUiEvent } from '../shared/browserWebAccess/passkeys';
 import { OpenClawQuestion } from '../shared/cowork/openclawQuestion';
 import { DesktopCompanionMainPage } from '../shared/desktopCompanion/constants';
+import { ENABLE_EXPERT_PLAZA_UI } from '../shared/featureFlags';
 import {
   LibraryNavigationEvent,
   LibrarySourceFilter,
@@ -777,6 +778,7 @@ const App: React.FC = () => {
   }, []);
 
   const handleShowExperts = useCallback(() => {
+    if (!ENABLE_EXPERT_PLAZA_UI) return;
     setMainView(MainView.Experts);
   }, []);
 
@@ -2226,7 +2228,7 @@ const App: React.FC = () => {
                 onNewChat={handleNewChat}
                 updateBadge={collapsedHeaderUpdateBadge}
               />
-            ) : mainView === MainView.Experts ? (
+            ) : ENABLE_EXPERT_PLAZA_UI && mainView === MainView.Experts ? (
               <ExpertPlazaView
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}

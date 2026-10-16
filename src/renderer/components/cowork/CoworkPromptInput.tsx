@@ -15,6 +15,7 @@ import {
   type CoworkBrowserAnnotationMessageBatch,
   normalizeBrowserAnnotationBatches,
 } from '@shared/cowork/browserAnnotations';
+import { ENABLE_EXPERT_PLAZA_UI } from '@shared/featureFlags';
 import { ProviderName } from '@shared/providers';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -3128,7 +3129,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             <PaperClipIcon className="h-5 w-5 shrink-0 text-secondary" />
             <span className="min-w-0 truncate">{i18nService.t('coworkAddFile')}</span>
           </button>
-          {showAgentSelector && !sessionId && <ExpertPickerMenuItem
+          {ENABLE_EXPERT_PLAZA_UI && showAgentSelector && !sessionId && <ExpertPickerMenuItem
             disabled={disabled || voiceInputLocksEditing}
             menuItem={{ open: foldedTool === PromptFoldedTool.Experts, side: submenuSide, onOpenChange: handleExpertsMenuItemChange }}
             onSelect={agentId => {

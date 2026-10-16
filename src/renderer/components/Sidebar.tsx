@@ -1,5 +1,6 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { AgentId } from '@shared/agent';
+import { ENABLE_EXPERT_PLAZA_UI } from '@shared/featureFlags';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
@@ -768,25 +769,27 @@ const Sidebar: React.FC<SidebarProps> = ({
             <SidebarAutomationIcon className={sidebarNavIconClassName} />
             {i18nService.t('scheduledTasks')}
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              reportSidebarAction('open_experts', { activeView, isCollapsed });
-              setIsSearchOpen(false);
-              dismissExpertsNewBadge();
-              onShowExperts();
-            }}
-            className={activeView === MainView.Experts ? activeSidebarNavItemClassName : sidebarNavItemClassName}
-            aria-current={activeView === MainView.Experts ? 'page' : undefined}
-          >
-            <ExpertIcon className={sidebarNavIconClassName} />
-            <span className="min-w-0 truncate">{i18nService.t('expertPlaza')}</span>
-            {showExpertsNewBadge && (
-              <span className="inline-flex h-4 shrink-0 items-center rounded-[4px] bg-[#ff4f6d] px-1.5 text-[10px] font-semibold leading-none text-white">
-                {i18nService.t('newFeatureBadge')}
-              </span>
-            )}
-          </button>
+          {ENABLE_EXPERT_PLAZA_UI && (
+            <button
+              type="button"
+              onClick={() => {
+                reportSidebarAction('open_experts', { activeView, isCollapsed });
+                setIsSearchOpen(false);
+                dismissExpertsNewBadge();
+                onShowExperts();
+              }}
+              className={activeView === MainView.Experts ? activeSidebarNavItemClassName : sidebarNavItemClassName}
+              aria-current={activeView === MainView.Experts ? 'page' : undefined}
+            >
+              <ExpertIcon className={sidebarNavIconClassName} />
+              <span className="min-w-0 truncate">{i18nService.t('expertPlaza')}</span>
+              {showExpertsNewBadge && (
+                <span className="inline-flex h-4 shrink-0 items-center rounded-[4px] bg-[#ff4f6d] px-1.5 text-[10px] font-semibold leading-none text-white">
+                  {i18nService.t('newFeatureBadge')}
+                </span>
+              )}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {
