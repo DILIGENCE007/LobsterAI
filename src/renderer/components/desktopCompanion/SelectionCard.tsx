@@ -2,7 +2,7 @@ import './selectionSurface.css';
 
 import { ArrowUpIcon } from '@heroicons/react/16/solid';
 import { Bars2Icon, ExclamationCircleIcon, XMarkIcon } from '@heroicons/react/24/outline';
-import { type ComponentType, type ReactNode, type Ref, type SVGProps, useState } from 'react';
+import { type ComponentType, type ReactNode, type Ref, type SVGProps, useLayoutEffect, useRef, useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
 import CompanionMarkdown, { type CompanionMarkdownProps } from './CompanionMarkdown';
@@ -73,18 +73,34 @@ export function SelectionCardHeader({ icon: Icon, title, pinned, onPin, onClose,
   );
 }
 
-/** The selected text, two lines tall until clicked. */
+/** The selected text, expandable only when the collapsed quote is truncated. */
 export function SourceQuote({ text, lines = 2 }: { text: string; lines?: number }) {
   const [expanded, setExpanded] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  const quoteRef = useRef<HTMLQuoteElement>(null);
+
+  useLayoutEffect(() => {
+    const quote = quoteRef.current;
+    if (!quote || expanded) return;
+    const measure = () => setTruncated(quote.scrollHeight > quote.clientHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(quote);
+    return () => observer.disconnect();
+  }, [text, lines, expanded]);
+
+  const canToggle = expanded || truncated;
   // Selecting part of the quote to copy it should not also toggle it.
   const toggle = () => { if (window.getSelection()?.isCollapsed !== false) setExpanded(value => !value); };
   return (
     <blockquote
+      ref={quoteRef}
       className="sel-quote"
       data-expanded={expanded}
+      data-expandable={canToggle}
       style={{ WebkitLineClamp: expanded ? 'unset' : lines }}
-      title={expanded ? undefined : t('desktopCompanionSelectionShowSource')}
-      onClick={toggle}
+      title={!expanded && truncated ? t('desktopCompanionSelectionShowSource') : undefined}
+      onClick={canToggle ? toggle : undefined}
     >
       {text}
     </blockquote>

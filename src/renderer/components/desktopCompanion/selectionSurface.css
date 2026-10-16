@@ -152,14 +152,15 @@
 .sel-scroll::-webkit-scrollbar-thumb { border-radius: 3px; background: transparent; }
 .sel-scroll:hover::-webkit-scrollbar-thumb { background: var(--s-fill-strong); }
 
-/* The selected text: two lines until clicked. */
+/* The selected text: clamped until clicked when there is hidden content. */
 .sel-quote {
   margin: 0 0 12px; padding: 1px 0 1px 10px; border-left: 2px solid var(--s-line-strong);
   color: var(--s-ink-3); font-size: 12.5px; line-height: 1.6;
   display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
-  cursor: pointer; user-select: text; transition: color 0.12s;
+  cursor: auto; user-select: text; transition: color 0.12s;
 }
-.sel-quote:hover { color: var(--s-ink-2); }
+.sel-quote[data-expandable="true"] { cursor: pointer; }
+.sel-quote[data-expandable="true"]:hover { color: var(--s-ink-2); }
 .sel-quote[data-expanded="true"] { display: block; max-height: 160px; overflow-y: auto; white-space: pre-wrap; cursor: auto; scrollbar-width: thin; }
 
 .sel-markdown { color: var(--s-ink); font-size: 14px; line-height: 1.7; user-select: text; }
