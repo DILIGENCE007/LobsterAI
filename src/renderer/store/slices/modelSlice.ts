@@ -76,12 +76,12 @@ function selectPreferredAccessibleModel(
   currentModel: Model,
 ): Model {
   const matchedModel = allAvailableModels.find(m => isSameModelIdentity(m, currentModel));
-  if (!matchedModel?.presetId && isModelAccessible(matchedModel)) {
+  if (isModelAccessible(matchedModel)) {
     return matchedModel;
   }
-  return allAvailableModels.find(model => !model.presetId && isModelAccessible(model))
-    ?? (matchedModel && !matchedModel.presetId ? matchedModel : undefined)
-    ?? allAvailableModels.find(model => !model.presetId) ?? currentModel;
+  return allAvailableModels.find(model => isModelAccessible(model))
+    ?? matchedModel
+    ?? allAvailableModels[0] ?? currentModel;
 }
 
 // 从 providers 配置中构建初始可用模型列表
@@ -142,7 +142,7 @@ export function selectAgentSelectedModel(
   if (isModelAccessible(modelState.defaultSelectedModel)) {
     return modelState.defaultSelectedModel;
   }
-  return modelState.availableModels.find(model => !model.presetId && isModelAccessible(model)) ?? modelState.defaultSelectedModel;
+  return modelState.availableModels.find(model => isModelAccessible(model)) ?? modelState.defaultSelectedModel;
 }
 
 /**
@@ -183,7 +183,7 @@ const modelSlice = createSlice({
       state.selectedModelByAgent[action.payload.agentId] = action.payload.model;
     },
     setDefaultSelectedModel: (state, action: PayloadAction<Model>) => {
-      if (action.payload.presetId || !isModelAccessible(action.payload)) return;
+      if (!isModelAccessible(action.payload)) return;
       state.defaultSelectedModel = action.payload;
     },
     clearAgentSelectedModel: (state, action: PayloadAction<string>) => {

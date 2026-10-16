@@ -8,9 +8,9 @@ export type LanguageType = 'zh' | 'en';
 // 语言文本映射
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
-    modelPresetBalanced: '均衡',
+    modelPresetBalanced: '快速',
     modelPresetUltimate: '旗舰',
-    modelPresetBalancedDescription: '速度与效果均衡，高效胜任日常工作',
+    modelPresetBalancedDescription: '快速响应，高效胜任日常工作',
     modelPresetUltimateDescription: '全能旗舰，擅长深度推理与精准分析',
     modelPresetThinkingDefault: '模型默认',
     modelPresetLoginRequired: '请登录后选择模型模式。',
@@ -4558,9 +4558,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     workspaceDiffIncomplete: '部分文件超出读取限额，行数统计不完整。',
   },
   en: {
-    modelPresetBalanced: 'Balanced',
+    modelPresetBalanced: 'Fast',
     modelPresetUltimate: 'Flagship',
-    modelPresetBalancedDescription: 'Balances speed and quality to handle everyday work efficiently',
+    modelPresetBalancedDescription: 'Fast responses for efficient everyday work',
     modelPresetUltimateDescription: 'An all-round flagship for deep reasoning and precise analysis',
     modelPresetThinkingDefault: 'Model default',
     modelPresetLoginRequired: 'Sign in to choose a model preset.',

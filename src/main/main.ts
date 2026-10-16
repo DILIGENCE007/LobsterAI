@@ -6070,8 +6070,21 @@ if (!gotTheLock) {
     },
   });
 
+  const modelPresetClient = createModelPresetClient({
+    fetchWithAuth,
+    serverBaseUrl: getServerApiBaseUrl,
+    headers: () => buildServerModelCapabilityHeaders(app.getVersion()),
+    isAccountCurrent: () => {
+      const generation = authAccountGeneration;
+      const scope = getCurrentMediaAccountScope();
+      return () => generation === authAccountGeneration
+        && isMediaAccountScopeSnapshotCurrent(scope, getCurrentMediaAccountScope());
+    },
+  });
+
   type AvailableServerModel = ServerModelMetadataInput & {
     modelId: string;
+    presetId?: ModelPresetId;
     modelName: string;
     provider: string;
     apiFormat: string;
@@ -6124,7 +6137,12 @@ if (!gotTheLock) {
       throw new Error(data.message || 'Server model response is invalid.');
     }
 
-    const serverModelsChanged = updateServerModelMetadata(data.data);
+    const presetContextWindows = Object.fromEntries(data.data
+      .filter(model => model.presetId)
+      .map(model => [model.presetId!, model.contextWindow]));
+    const serverModelsChanged = updateServerModelMetadata(data.data.map(model => ({
+      ...model, presetContextWindows,
+    })));
     const serverModelIds = data.data.map(model => model.modelId);
     const serverModelsMissingFromConfig = !openClawConfigHasServerModels(serverModelIds);
     const configSyncOptions = {
@@ -8622,17 +8640,6 @@ if (!gotTheLock) {
     }
   });
 
-  const modelPresetClient = createModelPresetClient({
-    fetchWithAuth,
-    serverBaseUrl: getServerApiBaseUrl,
-    headers: () => buildServerModelCapabilityHeaders(app.getVersion()),
-    isAccountCurrent: () => {
-      const generation = authAccountGeneration;
-      const scope = getCurrentMediaAccountScope();
-      return () => generation === authAccountGeneration
-        && isMediaAccountScopeSnapshotCurrent(scope, getCurrentMediaAccountScope());
-    },
-  });
   const modelPresetSelection = registerModelPresetIpc({
     ipcMain, client: modelPresetClient, getStore, getSessions: getCoworkStore,
     getRuntime: getCoworkEngineRouter,
@@ -11861,6 +11868,9 @@ if (!gotTheLock) {
         patch.model = normalizeOpenClawModelRef(patch.model);
       }
       const previousSession = getCoworkStore().getSession(sessionId);
+      if (patch.model !== undefined && previousSession?.modelPresetId) {
+        patch.contextWindow = null;
+      }
       const runtime = getCoworkEngineRouter();
       const patchResult = await runtime.patchSession(sessionId, patch);
 
