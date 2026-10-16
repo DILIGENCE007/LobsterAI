@@ -56,10 +56,12 @@ import {
   resolveCompanionBounds,
   resolveCompanionComposerLayout,
   resolveCompanionLoginLayout,
+  snapCompanionOrbToEdge,
 } from '../../shared/desktopCompanion/geometry';
 import { companionHintCopyKeys, type CompanionHintTopic } from '../../shared/desktopCompanion/hintPolicy';
 import { isSpeechActive, LanguageTool } from '../../shared/desktopCompanion/languageTools';
 import type { CompanionTaskInfo } from '../../shared/desktopCompanion/results';
+import { normalizeSelectionTaskContext } from '../../shared/desktopCompanion/selectionTaskContext';
 import { normalizeCompanionToolbarOrder } from '../../shared/desktopCompanion/selectionToolbar';
 import { COMPANION_SKINS, companionOrbSize, normalizeCompanionSkin } from '../../shared/desktopCompanion/skins';
 import { t } from '../i18n';
@@ -109,7 +111,7 @@ interface DesktopCompanionOptions {
 export function normalizeCompanionPreferences(value: unknown): DesktopCompanionPreferences {
   const stored = (value && typeof value === 'object' ? value : {}) as Partial<DesktopCompanionPreferences>;
   return {
-    enabled: stored.enabled === true,
+    enabled: typeof stored.enabled === 'boolean' ? stored.enabled : DEFAULT_DESKTOP_COMPANION_PREFERENCES.enabled,
     shortcut: typeof stored.shortcut === 'string' ? stored.shortcut : DEFAULT_DESKTOP_COMPANION_PREFERENCES.shortcut,
     skin: normalizeCompanionSkin(stored.skin),
     selectionToolbar: stored.selectionToolbar !== false,
@@ -128,6 +130,7 @@ export function normalizeCompanionDraft(value: unknown): DesktopCompanionDraft {
   return {
     prompt: typeof draft?.prompt === 'string' ? draft.prompt.slice(0, 64_000) : EMPTY_DESKTOP_COMPANION_DRAFT.prompt,
     workingDirectory: typeof draft?.workingDirectory === 'string' ? draft.workingDirectory.slice(0, 4096) : '',
+    selectionContext: normalizeSelectionTaskContext(draft?.selectionContext),
     attachments: Array.isArray(draft?.attachments) ? draft.attachments.filter(file => (
       file && typeof file.path === 'string' && typeof file.name === 'string'
       && file.path.length > 0 && file.path.length <= 4096
@@ -568,11 +571,12 @@ export class DesktopCompanionManager {
       x: this.dragOrigin.position.x + cursor.x - this.dragOrigin.cursor.x,
       y: this.dragOrigin.position.y + cursor.y - this.dragOrigin.cursor.y,
     }, workArea);
-    // Stays where it is dropped, wholly on the display under the cursor: no edge snapping or tucking.
-    this.orb.setBounds(moved);
+    // Follow the pointer freely; settle near the left or right edge only after release.
+    const settled = phase === DesktopCompanionDragPhase.End ? snapCompanionOrbToEdge(moved, workArea) : moved;
+    this.orb.setBounds(settled, settled.x !== moved.x);
     if (phase === DesktopCompanionDragPhase.End) {
       this.dragOrigin = null;
-      this.savePosition(moved);
+      this.savePosition(settled);
       this.publish();
     } else {
       this.position = { x: moved.x, y: moved.y };

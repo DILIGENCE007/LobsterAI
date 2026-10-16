@@ -39,6 +39,16 @@ export function resolveCompanionBounds(position: unknown, workArea: CompanionRec
   }, workArea);
 }
 
+/** Settles a dropped orb against the nearer left or right edge, keeping it whole and at the same height. */
+export function snapCompanionOrbToEdge(bounds: CompanionRect, workArea: CompanionRect): CompanionRect {
+  const visible = clampCompanionBounds(bounds, workArea);
+  const rightEdge = workArea.x + workArea.width - visible.width;
+  const leftDistance = visible.x - workArea.x;
+  const rightDistance = rightEdge - visible.x;
+  if (Math.min(leftDistance, rightDistance) > DesktopCompanionSize.OrbSnapDistance) return visible;
+  return { ...visible, x: leftDistance <= rightDistance ? workArea.x : rightEdge };
+}
+
 /** Stages open toward the middle of the screen. */
 export function companionStageOpensLeft(orb: CompanionRect, workArea: CompanionRect): boolean {
   return orb.x + orb.width / 2 >= workArea.x + workArea.width / 2;

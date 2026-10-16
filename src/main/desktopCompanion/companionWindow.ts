@@ -21,10 +21,11 @@ const PANEL_BLUR_DELAY_MS = 120;
 /** Dismiss an inactive composer, preserving native file pickers and brief focus handoffs. */
 export function dismissCompanionPanelOnBlur(win: BrowserWindow, dismiss: () => void): void {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let focusTimer: ReturnType<typeof setInterval> | undefined;
   let sheetOpen = false;
   const cancel = () => { clearTimeout(timer); timer = undefined; };
-  win.on('blur', () => {
-    cancel();
+  const scheduleDismiss = () => {
+    if (timer) return;
     // Native dialogs may begin just after blur. Allow them to establish their
     // sheet/disabled-owner state before deciding this was an outside click.
     timer = setTimeout(() => {
@@ -33,12 +34,32 @@ export function dismissCompanionPanelOnBlur(win: BrowserWindow, dismiss: () => v
       if (win.getChildWindows().some(child => !child.isDestroyed() && child.isVisible() && child.isModal())) return;
       dismiss();
     }, PANEL_BLUR_DELAY_MS);
-  });
+  };
+  const stop = () => {
+    cancel();
+    clearInterval(focusTimer);
+    focusTimer = undefined;
+  };
+  // macOS nonactivating panels can lose key-window status without resigning
+  // main-window status (the source of Electron's blur event). Check key focus
+  // only while this composer is shown; showing it always requests focus.
+  const watchFocus = () => {
+    stop();
+    if (process.platform !== 'darwin') return;
+    focusTimer = setInterval(() => {
+      if (win.isDestroyed() || !win.isVisible()) { stop(); return; }
+      if (win.isFocused()) cancel();
+      else scheduleDismiss();
+    }, PANEL_BLUR_DELAY_MS);
+  };
+  win.on('blur', scheduleDismiss);
+  win.on('show', watchFocus);
   win.on('sheet-begin', () => { sheetOpen = true; cancel(); });
   win.on('sheet-end', () => { sheetOpen = false; });
   win.on('focus', cancel);
-  win.on('hide', cancel);
-  win.on('closed', cancel);
+  // A delayed native hide notification may belong to an earlier opening.
+  win.on('hide', () => { if (!win.isVisible()) stop(); });
+  win.on('closed', stop);
 }
 
 /** Companion surfaces are transparent, frameless, always-on-top windows. */

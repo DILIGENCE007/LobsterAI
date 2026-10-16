@@ -6,6 +6,7 @@ import type { CompanionResultsBridge, CompanionResultState } from './results';
 import type { CompanionScreenshotBridge } from './screenshot';
 import type { CompanionSelectionAction } from './selectionActions';
 import type { CompanionSelectionApp } from './selectionApps';
+import type { CompanionSelectionTaskContext } from './selectionTaskContext';
 import { type CompanionToolbarItem, DEFAULT_COMPANION_TOOLBAR_ORDER } from './selectionToolbar';
 
 export const DesktopCompanionIpc = {
@@ -120,6 +121,7 @@ export interface DesktopCompanionDraft {
   prompt: string;
   attachments: DesktopCompanionAttachment[];
   workingDirectory: string;
+  selectionContext?: CompanionSelectionTaskContext;
 }
 
 export const DesktopCompanionStageKind = { None: 'none', Hint: 'hint', Drop: 'drop', Task: 'task' } as const;
@@ -332,7 +334,7 @@ export interface DesktopCompanionBridge extends LanguageToolsBridge, CompanionSc
 }
 
 export const DEFAULT_DESKTOP_COMPANION_PREFERENCES: DesktopCompanionPreferences = {
-  enabled: false,
+  enabled: true,
   // Electron's Alt accelerator maps to Option on macOS and Alt on Windows.
   shortcut: 'Alt+Space',
   skin: DEFAULT_COMPANION_SKIN,
@@ -351,6 +353,8 @@ export const EMPTY_DESKTOP_COMPANION_DRAFT: DesktopCompanionDraft = {
 
 export const DesktopCompanionSize = {
   Orb: { width: 84, height: 84 },
+  // Logical pixels from the work area's left or right edge; applied when an orb drag ends.
+  OrbSnapDistance: 48,
   // Keep the default disc easy to see and grab alongside other desktop assistants.
   BrandMark: 40,
   // Window for the brand disc, status badge and shadow. Cards beside the orb
@@ -373,8 +377,8 @@ export const DesktopCompanionSize = {
   Hint: { width: 320, height: 168 },
   // A 420px card with generous drop targets, plus its transparent shadow margin.
   Drop: { width: 464, height: 188 },
-  // A 42px toolbar plus the margin; the window always reserves ToolbarMenu space below or above it.
-  Toolbar: { width: 680, height: 86 },
+  // A 48px toolbar plus the margin; the window always reserves ToolbarMenu space below or above it.
+  Toolbar: { width: 680, height: 92 },
   ToolbarMenu: 200,
   // A card up to 400 × 600 plus the margin.
   Answer: { width: 444, height: 644 },

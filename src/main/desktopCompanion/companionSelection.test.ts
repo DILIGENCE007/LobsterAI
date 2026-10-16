@@ -256,6 +256,55 @@ describe('selection toolbar', () => {
     controller.dispose();
   });
 
+  test.each([450, 800])('a dragged toolbar keeps its hit area, menu and answer at the new position from line %i', lineTop => {
+    const controller = create();
+    select('ambient co-worker', 'com.microsoft.Word', lineTop);
+    controller.setContentSize({ width: 450, height: 92 });
+    vi.advanceTimersByTime(200);
+    const original = controller.selectionToolbarBounds!;
+    win.emit('will-move');
+    win.bounds = { ...win.bounds, x: win.bounds.x + 120, y: win.bounds.y - 100 };
+    win.emit('move');
+    const moved = { ...original, x: original.x + 120, y: original.y - 100 };
+    expect(controller.selectionToolbarBounds).toEqual(moved);
+    expect(sentSelection().pinned).toBe(false);
+    FakeHook.last!.emit('mouse-up', { x: moved.x + PAD + 10, y: moved.y + PAD + 4, button: 0 });
+    FakeHook.last!.emit('mouse-down', { x: moved.x + PAD + 10, y: moved.y + PAD + 4, button: 0 });
+    expect(win.visible).toBe(true);
+    controller.setContentSize({ width: 470, height: 92 });
+    expect(controller.selectionToolbarBounds).toMatchObject({ x: moved.x, y: moved.y });
+    const bounds = { ...win.bounds };
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.More, open: true });
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.More, open: false });
+    expect(win.bounds).toEqual(bounds);
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
+    expect(win.bounds).toMatchObject({ x: moved.x, y: moved.y });
+    controller.dispose();
+  });
+
+  test('a toolbar dragged to the bottom moves menu space above without shifting the visible bar', () => {
+    const controller = create();
+    select();
+    controller.setContentSize({ width: 450, height: 92 });
+    vi.advanceTimersByTime(200);
+    expect(sentSelection().menuUp).toBe(false);
+    win.emit('will-move');
+    win.bounds = { ...win.bounds, x: 600, y: 780 };
+    win.emit('move');
+    FakeHook.last!.emit('mouse-up', { x: 630, y: 806, button: 0 });
+    expect(sentSelection()).toMatchObject({ menuUp: true, pinned: false });
+    expect(controller.selectionToolbarBounds).toEqual({ x: 600, y: 780, width: 450, height: 92 });
+    expect(win.bounds).toEqual({ x: 600, y: 580, width: 450, height: 292 });
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.More, open: true });
+    FakeHook.last!.emit('mouse-down', { x: 630, y: 806, button: 0 });
+    expect(win.visible).toBe(true);
+    select('a new selection');
+    controller.setContentSize({ width: 450, height: 92 });
+    expect(controller.selectionToolbarBounds!.x).not.toBe(600);
+    expect(visibleBottom()).toBeLessThanOrEqual(200);
+    controller.dispose();
+  });
+
   test('a card the user drags is pinned and keeps its new spot as the answer grows', () => {
     const controller = create();
     select();

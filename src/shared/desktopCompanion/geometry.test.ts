@@ -12,6 +12,7 @@ import {
   resolveCompanionStageBounds,
   resolveCompanionToolbarBounds,
   resolveCompanionToolbarMenuBounds,
+  snapCompanionOrbToEdge,
 } from './geometry';
 
 const orb = DesktopCompanionSize.Orb;
@@ -37,6 +38,50 @@ describe('orb placement', () => {
     const area = { x: 0, y: 0, width: 1440, height: 900 };
     expect(clampCompanionBounds({ ...orb, x: 1440 - orb.width / 2, y: 300 }, area)).toEqual({ ...orb, x: 1440 - orb.width, y: 300 });
     expect(clampCompanionBounds({ ...orb, x: -20, y: -10 }, area)).toEqual({ ...orb, x: 0, y: 0 });
+  });
+
+  test.each([DesktopCompanionSize.BrandOrb, DesktopCompanionSize.Orb])('snaps a %j orb within the left threshold on an offset display', size => {
+    for (const distance of [0, 20, DesktopCompanionSize.OrbSnapDistance]) {
+      expect(snapCompanionOrbToEdge({ ...size, x: workArea.x + distance, y: 300 }, workArea))
+        .toEqual({ ...size, x: workArea.x, y: 300 });
+    }
+  });
+
+  test.each([DesktopCompanionSize.BrandOrb, DesktopCompanionSize.Orb])('snaps a %j orb within the right threshold on offset displays', size => {
+    for (const x of [-1920, 1440]) {
+      const area = { ...workArea, x };
+      const rightEdge = area.x + area.width - size.width;
+      for (const distance of [0, 20, DesktopCompanionSize.OrbSnapDistance]) {
+        expect(snapCompanionOrbToEdge({ ...size, x: rightEdge - distance, y: 300 }, area))
+          .toEqual({ ...size, x: rightEdge, y: 300 });
+      }
+    }
+  });
+
+  test('leaves drops outside both thresholds and near the top and bottom edges in place', () => {
+    for (const position of [
+      { x: workArea.x + DesktopCompanionSize.OrbSnapDistance + 1, y: 300 },
+      { x: -orb.width - DesktopCompanionSize.OrbSnapDistance - 1, y: 300 },
+      { x: -900, y: workArea.y + 10 },
+      { x: -900, y: workArea.y + workArea.height - orb.height - 10 },
+    ]) {
+      const bounds = { ...orb, ...position };
+      expect(snapCompanionOrbToEdge(bounds, workArea)).toEqual(bounds);
+    }
+  });
+
+  test('uses the usable edges and keeps the whole orb visible at both corners', () => {
+    const area = { x: 80, y: 25, width: 1360, height: 875 };
+    expect(snapCompanionOrbToEdge({ ...orb, x: 110, y: 880 }, area))
+      .toEqual({ ...orb, x: 80, y: 900 - orb.height });
+    expect(snapCompanionOrbToEdge({ ...orb, x: 1340, y: 880 }, area))
+      .toEqual({ ...orb, x: 1440 - orb.width, y: 900 - orb.height });
+  });
+
+  test('chooses the nearer edge when both thresholds overlap on a narrow work area', () => {
+    const area = { x: 100, y: 25, width: orb.width + 60, height: 875 };
+    expect(snapCompanionOrbToEdge({ ...orb, x: 120, y: 300 }, area).x).toBe(100);
+    expect(snapCompanionOrbToEdge({ ...orb, x: 140, y: 300 }, area).x).toBe(160);
   });
 });
 

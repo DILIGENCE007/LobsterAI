@@ -11,6 +11,7 @@ import {
   type DesktopCompanionState,
   EMPTY_DESKTOP_COMPANION_DRAFT,
 } from '../../../shared/desktopCompanion/constants';
+import { buildSelectionTaskPrompt } from '../../../shared/desktopCompanion/selectionTaskContext';
 import { authService } from '../../services/auth';
 import { coworkService } from '../../services/cowork';
 import { buildCoworkCapabilitySelection } from '../../services/coworkCapabilitySelection';
@@ -26,6 +27,7 @@ import { buildCoworkStartPlan, COWORK_START_BLOCK_MESSAGE_KEYS, resolveCoworkSta
 import { useHomeStartContext } from '../cowork/useHomeStartContext';
 import Toast, { type ToastEventDetail } from '../Toast';
 import { bootstrapCompanionComposer, refreshCompanionComposer } from './companionComposerBootstrap';
+import SelectionTaskContextCard from './SelectionTaskContextCard';
 import { ComposerExit, useComposerMotion } from './useComposerMotion';
 import { useMeasuredSurface } from './useMeasuredSurface';
 
@@ -78,6 +80,7 @@ export default function CompanionComposer() {
   const homePrompt = useSelector((state: RootState) => state.cowork.draftPrompts[HOME_DRAFT_KEY] ?? '');
   const homeAttachments = useSelector((state: RootState) => state.cowork.draftAttachments[HOME_DRAFT_KEY]);
   const visible = companion?.panelVisible ?? false;
+  const selectionContext = companion?.draft.selectionContext;
   const placement = companion?.panelPlacement ?? DesktopCompanionPanelPlacement.Left;
   useMeasuredSurface(cardRef, visible);
   const playExit = useComposerMotion(motionRef, ready && visible, placement);
@@ -143,8 +146,17 @@ export default function CompanionComposer() {
       const merged = new Map([...(homeAttachmentsRef.current ?? []), ...incoming].map(file => [file.path, file]));
       dispatch(setDraftAttachments({ draftKey: HOME_DRAFT_KEY, attachments: [...merged.values()] }));
     }
-    void api.setDraft(EMPTY_DESKTOP_COMPANION_DRAFT);
+    void api.setDraft({ ...EMPTY_DESKTOP_COMPANION_DRAFT, selectionContext: draft.selectionContext });
   }, [api, dispatch, draft, ready]);
+
+  const clearSelectionContext = useCallback(async () => {
+    if (!selectionContext) return;
+    const current = await api.getState();
+    // A newer handoff can arrive while a task is starting; keep that new material.
+    if (current.draft.selectionContext?.id === selectionContext.id) {
+      await api.setDraft({ ...current.draft, selectionContext: undefined });
+    }
+  }, [api, selectionContext]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -208,7 +220,7 @@ export default function CompanionComposer() {
       }
       const kitIds = [...activeKitIds];
       const plan = buildCoworkStartPlan({
-        prompt,
+        prompt: buildSelectionTaskPrompt(prompt, selectionContext, t),
         title: buildSessionTitleFromInput(prompt, t('coworkDefaultSessionTitle')),
         skillPrompt,
         configSystemPrompt: start.config.systemPrompt,
@@ -237,6 +249,7 @@ export default function CompanionComposer() {
       dispatch(clearActiveKits());
       dispatch(setDraftKitIds({ draftKey: HOME_DRAFT_KEY, kitIds: [] }));
       dispatch(setDraftSkillIds({ draftKey: HOME_DRAFT_KEY, skillIds: [] }));
+      await clearSelectionContext().catch(error => console.error('[CompanionComposer] failed to clear selection context', error));
       await api.taskStarted(session.id);
       return true;
     } catch (error) {
@@ -246,7 +259,7 @@ export default function CompanionComposer() {
     } finally {
       submittingRef.current = false;
     }
-  }, [activeKitIds, activeSkillIds, api, dispatch, installedKits, marketplaceKits, mediaSelection, placement, playExit, showToast, skills, start]);
+  }, [activeKitIds, activeSkillIds, api, clearSelectionContext, dispatch, installedKits, marketplaceKits, mediaSelection, placement, playExit, selectionContext, showToast, skills, start]);
 
   const openSkills = useCallback(() => { void api.openMainPage(DesktopCompanionMainPage.Skills); }, [api]);
   const openKits = useCallback(() => { void api.openMainPage(DesktopCompanionMainPage.Kits); }, [api]);
@@ -266,10 +279,20 @@ export default function CompanionComposer() {
           ref={motionRef}
           className={`rounded-2xl bg-surface shadow-popover ring-1 ring-black/10 transition-shadow focus-within:ring-primary/25 dark:ring-white/10 ${TAIL_CORNER_CLASS[placement]}`}
         >
+          {selectionContext && (
+            <SelectionTaskContextCard
+              key={selectionContext.id}
+              context={selectionContext}
+              onRemove={() => {
+                void clearSelectionContext().then(() => inputRef.current?.focus())
+                  .catch(() => showToast(t('desktopCompanionRequestFailed')));
+              }}
+            />
+          )}
           <CoworkPromptInput
             ref={inputRef}
             onSubmit={submit}
-            placeholder={t('coworkPlaceholder')}
+            placeholder={t(selectionContext ? 'desktopCompanionTaskContextPlaceholder' : 'coworkPlaceholder')}
             disabled={!ready}
             size="large"
             narrow
