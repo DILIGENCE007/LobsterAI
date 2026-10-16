@@ -484,7 +484,7 @@ import {
   DEFAULT_MANAGED_AGENT_ID,
   OpenClawChannelSessionSync,
 } from './libs/openclawChannelSessionSync';
-import { createOpenClawRepairBackupDirectory, OpenClawRepairFailure, runOpenClawCompatibilityRepair, runOpenClawDoctorRepair } from './libs/openclawCompatibilityRepair';
+import { createOpenClawRepairBackupDirectory, OpenClawRepairFailure, pruneOpenClawRepairBackups, runOpenClawCompatibilityRepair, runOpenClawDoctorRepair } from './libs/openclawCompatibilityRepair';
 import { OpenClawModelRuntimeChange, resolveOpenClawModelRuntimeChange } from './libs/openclawConfigAdmission';
 import { createOpenClawConfigAutoRestoreHandler } from './libs/openclawConfigAutoRestore';
 import {
@@ -3786,6 +3786,12 @@ const repairOpenClawGatewayState = (): Promise<OpenClawGatewayRepairResult> => {
       openClawManualRepairActive = false;
       releaseConfigMaintenance?.();
       openClawManualRepairBarrier = null;
+      if (backupPath) {
+        // Each run snapshots the whole state directory; keep only recent runs.
+        void pruneOpenClawRepairBackups(manager.getBaseDir(), { currentBackupDir: backupPath }).then(({ removedRuns }) => {
+          if (removedRuns.length) console.log(`[OpenClawRepair] removed ${removedRuns.length} old repair backup(s).`);
+        });
+      }
     }
   })().finally(() => {
     if (openClawGatewayRepairPromise === promise) {

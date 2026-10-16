@@ -55,6 +55,7 @@ import { migrateAllFtsOnlyMemoryIndexes } from './openclawMemoryIndexMigration';
 import { migrateLegacySessionStorageWithDoctor } from './openclawSessionLegacyMigration';
 import { describeStartupMigrationCheckpoint, readStartupMigrationCheckpointStamp } from './openclawStartupCheckpoint';
 import { extractOpenClawBindingSchemaFailure, extractOpenClawCliFailure, hasLegacyOpenClawDiscovery, isOpenClawBindingSchemaFailure, runOpenClawStartupCompatibility } from './openclawStartupCompatibility';
+import { scheduleOpenClawStartupDiskCleanup } from './openclawStartupDiskCleanup';
 import { configRequiresStartupCompatibility, OPENCLAW_STARTUP_PREP_MARKER_FILE, OpenClawStartupPrepMarker, resolveStartupPrepIdentity } from './openclawStartupPrep';
 import { migrateLegacyStateBeforeStartup, stopStartupStateMigrations } from './openclawStartupStateMigration';
 import { ensureOpenClawWorkerShims, getMissingOpenClawWorkerTargets } from './openclawWorkerShims';
@@ -1143,6 +1144,7 @@ export class OpenClawEngineManager extends EventEmitter {
 
     const compileCacheDir = path.join(this.stateDir, '.compile-cache');
     console.log(`[OpenClaw] compile cache dir: ${compileCacheDir}`);
+    scheduleOpenClawStartupDiskCleanup({ baseDir: this.baseDir, stateDir: this.stateDir, compileCacheDir });
     const electronNodeRuntimePath = getElectronNodeRuntimePath();
     const cliShimDir = this.ensureBundledCliShims();
     const skillsRoot = getSkillsRoot().replace(/\\/g, '/');
