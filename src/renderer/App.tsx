@@ -2179,6 +2179,8 @@ const App: React.FC = () => {
           onShowCowork={handleShowCowork}
           onShowScheduledTasks={handleShowScheduledTasks}
           onShowKits={handleShowKits}
+          onShowSkills={handleShowSkills}
+          onShowConnectors={handleShowMcp}
           onShowExperts={handleShowExperts}
           onShowLibrary={handleShowLibrary}
           onNewChat={handleNewChat}

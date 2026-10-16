@@ -37,10 +37,10 @@ import ExpertIcon from './icons/ExpertIcon';
 import SidebarAutomationIcon from './icons/SidebarAutomationIcon';
 import SidebarLibraryIcon from './icons/SidebarLibraryIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
-import SkillIcon from './icons/SkillIcon';
 import TrashIcon from './icons/TrashIcon';
 import LoginButton from './LoginButton';
 import LowCreditPurchaseOfferCard from './LowCreditPurchaseOfferCard';
+import SidebarCapabilitiesMenu from './SidebarCapabilitiesMenu';
 import SidebarExperienceSlot from './SidebarExperienceSlot';
 import { useSidebarPurchaseGuide } from './useSidebarPurchaseGuide';
 
@@ -51,6 +51,8 @@ interface SidebarProps {
   onShowCowork: () => void;
   onShowScheduledTasks: () => void;
   onShowKits: () => void;
+  onShowSkills: () => void;
+  onShowConnectors: () => void;
   onShowExperts: () => void;
   onShowLibrary: () => void;
   onNewChat: () => void;
@@ -248,6 +250,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   onShowCowork,
   onShowScheduledTasks,
   onShowKits,
+  onShowSkills,
+  onShowConnectors,
   onShowExperts,
   onShowLibrary,
   onNewChat,
@@ -790,19 +794,24 @@ const Sidebar: React.FC<SidebarProps> = ({
               )}
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              reportSidebarAction('open_kits', { activeView, isCollapsed });
+          <SidebarCapabilitiesMenu
+            activeView={activeView}
+            isCollapsed={isCollapsed}
+            className={sidebarNavItemClassName}
+            activeClassName={activeSidebarNavItemClassName}
+            iconClassName={sidebarNavIconClassName}
+            onSelect={(view) => {
+              const destinations = {
+                [MainView.Kits]: { action: 'open_kits', navigate: onShowKits },
+                [MainView.Skills]: { action: 'open_skills', navigate: onShowSkills },
+                [MainView.Connectors]: { action: 'open_mcp', navigate: onShowConnectors },
+              };
+              const destination = destinations[view];
+              reportSidebarAction(destination.action, { activeView, isCollapsed });
               setIsSearchOpen(false);
-              onShowKits();
+              destination.navigate();
             }}
-            className={activeView === MainView.Kits || activeView === MainView.Skills || activeView === MainView.Connectors ? activeSidebarNavItemClassName : sidebarNavItemClassName}
-            aria-current={activeView === MainView.Kits || activeView === MainView.Skills || activeView === MainView.Connectors ? 'page' : undefined}
-          >
-            <SkillIcon className={sidebarNavIconClassName} />
-            <span className="min-w-0 truncate">{i18nService.t('skillsAndConnectors')}</span>
-          </button>
+          />
           <button
             type="button"
             onClick={() => {
