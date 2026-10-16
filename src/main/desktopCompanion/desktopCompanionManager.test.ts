@@ -24,6 +24,7 @@ import { CompanionFileKind } from '../../shared/desktopCompanion/fileKinds';
 import { CompanionHintRule } from '../../shared/desktopCompanion/hintPolicy';
 import { LanguageTool, LanguageToolCode, LanguageToolsIpc, SpeechCommand, SpeechStatus } from '../../shared/desktopCompanion/languageTools';
 import { COMPANION_RECENT_TASK_LIMIT, COMPANION_RECENT_TASKS_KEY, CompanionResultIpc, type CompanionTaskInfo } from '../../shared/desktopCompanion/results';
+import { CompanionSelectionAction } from '../../shared/desktopCompanion/selectionActions';
 import { CompanionToolbarItem, DEFAULT_COMPANION_TOOLBAR_ORDER } from '../../shared/desktopCompanion/selectionToolbar';
 import { CompanionScreenshotController } from './companionScreenshot';
 import { CompanionSelectionController } from './companionSelection';
@@ -175,7 +176,11 @@ beforeEach(() => {
   vi.mocked(globalShortcut.register).mockReturnValue(true);
   mocks.windows.length = 0;
   mocks.handlers.clear();
-  values = new Map([[DesktopCompanionStoreKey.Greeted, true]]);
+  // Most lifecycle cases start with the orb explicitly disabled and open surfaces on demand.
+  values = new Map<string, unknown>([
+    [DesktopCompanionStoreKey.Greeted, true],
+    [DesktopCompanionStoreKey.Preferences, { enabled: false }],
+  ]);
 });
 afterEach(() => {
   manager?.dispose();
@@ -184,7 +189,101 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe('orb edge snapping', () => {
+  const rightEdge = 1280 - DesktopCompanionSize.BrandOrb.width;
+  const drag = (phase: DesktopCompanionDragPhase, x: number, y = 330) => {
+    vi.spyOn(screen, 'getCursorScreenPoint').mockReturnValue({ x, y });
+    ipcMain.emit(DesktopCompanionIpc.Drag,
+      { sender: orb().webContents, senderFrame: orb().webContents.mainFrame }, phase);
+  };
+
+  beforeEach(() => {
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    values.set(DesktopCompanionStoreKey.Position, { x: 200, y: 300 });
+  });
+
+  test.each([
+    { edgeX: 0, releaseX: 30, placement: DesktopCompanionPanelPlacement.Right },
+    { edgeX: rightEdge, releaseX: rightEdge - 30, placement: DesktopCompanionPanelPlacement.Left },
+  ])('snaps to x=$edgeX on release, aligns the panel and restores the saved position', ({ edgeX, releaseX, placement }) => {
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows.at(-1);
+    drag(DesktopCompanionDragPhase.Start, 230);
+    drag(DesktopCompanionDragPhase.Move, releaseX + 30);
+    expect(orb().bounds).toMatchObject({ x: releaseX, y: 300 });
+    expect(values.get(DesktopCompanionStoreKey.Position)).toEqual({ x: 200, y: 300 });
+    drag(DesktopCompanionDragPhase.End, releaseX + 30);
+    expect(orb().bounds).toMatchObject({ x: edgeX, y: 300 });
+    expect(values.get(DesktopCompanionStoreKey.Position)).toEqual({ x: edgeX, y: 300 });
+    expect(manager.getState().panelPlacement).toBe(placement);
+    if (placement === DesktopCompanionPanelPlacement.Right) {
+      expect(panel.bounds.x + DesktopCompanionSize.SurfacePad).toBe(edgeX + DesktopCompanionSize.BrandOrb.width);
+    } else {
+      expect(panel.bounds.x + panel.bounds.width - DesktopCompanionSize.SurfacePad).toBe(edgeX);
+    }
+    manager.dispose();
+    mocks.windows.length = 0;
+    create();
+    expect(orb().bounds).toMatchObject({ x: edgeX, y: 300 });
+  });
+
+  test.each([0, rightEdge])('can drag directly away from the snapped edge at x=%i', edgeX => {
+    values.set(DesktopCompanionStoreKey.Position, { x: edgeX, y: 300 });
+    create();
+    drag(DesktopCompanionDragPhase.Start, edgeX + 30);
+    const distance = DesktopCompanionSize.OrbSnapDistance + 1;
+    const x = edgeX === 0 ? distance : edgeX - distance;
+    drag(DesktopCompanionDragPhase.Move, x + 30);
+    drag(DesktopCompanionDragPhase.End, x + 30);
+    expect(orb().bounds).toMatchObject({ x, y: 300 });
+    expect(values.get(DesktopCompanionStoreKey.Position)).toEqual({ x, y: 300 });
+  });
+
+  test.each([30, rightEdge - 30])('a click near an edge at x=%i does not move the orb', x => {
+    values.set(DesktopCompanionStoreKey.Position, { x, y: 300 });
+    create();
+    drag(DesktopCompanionDragPhase.Start, x + 30);
+    drag(DesktopCompanionDragPhase.Cancel, x + 30);
+    expect(orb().bounds).toMatchObject({ x, y: 300 });
+    expect(values.get(DesktopCompanionStoreKey.Position)).toEqual({ x, y: 300 });
+  });
+
+  test.each([
+    { displayX: -1440, cursorX: -1380, edgeX: -1440 },
+    { displayX: 1280, cursorX: 2660, edgeX: 2660 },
+  ])('snaps to the display at x=$displayX under the cursor when crossing monitors', ({ displayX, cursorX, edgeX }) => {
+    create();
+    drag(DesktopCompanionDragPhase.Start, 230);
+    vi.spyOn(screen, 'getDisplayNearestPoint').mockReturnValue({
+      workArea: { x: displayX, y: 25, width: 1440, height: 875 },
+    } as Electron.Display);
+    drag(DesktopCompanionDragPhase.End, cursorX, 430);
+    expect(orb().bounds).toMatchObject({ x: edgeX, y: 400 });
+    expect(values.get(DesktopCompanionStoreKey.Position)).toEqual({ x: edgeX, y: 400 });
+  });
+});
+
 describe('desktop companion lifecycle', () => {
+  test('selection task references survive panel dismissal and draft persistence until explicitly removed', () => {
+    create();
+    const selectionContext = {
+      id: 'selection-task', action: CompanionSelectionAction.Summarize, sourceText: 'Selected report',
+      turns: [{ role: 'assistant', content: 'Report summary' }],
+    };
+    invoke(DesktopCompanionIpc.SetDraft, {
+      prompt: '', attachments: [], workingDirectory: '/tasks', selectionContext,
+    });
+    invoke(DesktopCompanionIpc.TogglePanel);
+    invoke(DesktopCompanionIpc.HidePanel);
+    expect(manager.getState().draft.selectionContext).toEqual(selectionContext);
+    manager.dispose();
+    create();
+    expect(manager.getState().draft.selectionContext).toEqual(selectionContext);
+    invoke(DesktopCompanionIpc.SetDraft, { ...manager.getState().draft, selectionContext: undefined });
+    expect(manager.getState().draft.selectionContext).toBeUndefined();
+  });
+
   test.each([LanguageTool.Translate, LanguageTool.Tts])('%s follows the current toolbar through resize, drag and reuse', tool => {
     create();
     const anchor = vi.spyOn(CompanionSelectionController.prototype, 'selectionAnchor', 'get')
@@ -340,7 +439,19 @@ describe('desktop companion lifecycle', () => {
     expect(menu().some(item => item.label === 'desktopToolsPlayback')).toBe(false);
   });
 
-  test('a new profile creates no floating window and opening a temporary panel does not opt in', () => {
+  test.each([undefined, {}, { shortcut: '' }])('starts with a visible orb when saved preferences omit enabled: %j', preferences => {
+    values.set(DesktopCompanionStoreKey.Preferences, preferences);
+    create();
+    expect(manager.getState().preferences.enabled).toBe(true);
+    expect(mocks.windows).toHaveLength(2);
+    orb().emit('ready-to-show');
+    expect(orb().visible).toBe(true);
+    expect(foreground.start).toHaveBeenCalled();
+    expect(fileDrag.start).toHaveBeenCalled();
+    expect(manager.getState().panelVisible).toBe(false);
+  });
+
+  test('a disabled profile creates no floating window and opening a temporary panel does not opt in', () => {
     create();
     expect(manager.getState().preferences.enabled).toBe(false);
     expect(mocks.windows).toHaveLength(1);

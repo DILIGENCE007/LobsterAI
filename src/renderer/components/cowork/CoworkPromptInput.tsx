@@ -4040,7 +4040,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 data-onboarding-target="home-prompt"
                 className={narrow
                   ? 'relative z-10 rounded-t-2xl'
-                  : 'relative z-10 rounded-3xl border border-border bg-surface shadow-composer transition-[border-color,box-shadow] duration-200 focus-within:border-primary/35 focus-within:shadow-elevated'}
+                  : 'relative z-10 rounded-3xl border border-border bg-surface shadow-composer'}
               >
                 {largeAttachmentPreview}
                 {selectedTextSnippetPreview}

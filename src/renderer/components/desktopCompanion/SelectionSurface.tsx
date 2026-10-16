@@ -227,12 +227,19 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
 
   const toTask = async () => {
     const current = selectionRef.current;
-    if (!current) return;
-    const prompt = t('desktopCompanionTaskFromSelection').replace('{text}', current.text).replace('{answer}', latestAnswer);
-    await api.setDraft({ prompt, attachments: [], workingDirectory: state.draft.workingDirectory });
-    await api.selectSession(null);
-    await api.selectionCommand({ type: DesktopCompanionSelectionCommandType.Dismiss });
-    if (!state.panelVisible) await api.togglePanel();
+    if (!current?.action) return;
+    try {
+      await api.setDraft({
+        ...state.draft,
+        selectionContext: {
+          id: crypto.randomUUID(), action: current.action, sourceText: current.text,
+          turns: [...(question ? [{ role: 'user' as const, content: question }] : []), ...turns],
+        },
+      });
+      await api.selectSession(null);
+      await api.selectionCommand({ type: DesktopCompanionSelectionCommandType.Dismiss });
+      if (!state.panelVisible) await api.togglePanel();
+    } catch { setError(t('desktopCompanionRequestFailed')); }
   };
 
   // Re-sends whatever went unanswered: the pending follow-up, or the first request.

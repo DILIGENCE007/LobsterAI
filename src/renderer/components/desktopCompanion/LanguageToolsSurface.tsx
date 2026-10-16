@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { type DesktopCompanionState } from '../../../shared/desktopCompanion/constants';
 import { LanguageTool, LanguageToolCode, SpeechStatus, TranslationTarget } from '../../../shared/desktopCompanion/languageTools';
+import { CompanionSelectionAction } from '../../../shared/desktopCompanion/selectionActions';
 import { i18nService } from '../../services/i18n';
 import {
   SelectionAnswer,
@@ -86,11 +87,14 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
   const progress = total > 0 ? Math.round((completedSegments / total) * 100) : 0;
 
   const toTask = async () => {
-    const conversation = [translation, ...followUp.turns.map(turn =>
-      t(turn.role === 'user' ? 'desktopToolsQuestion' : 'desktopToolsReply') + ': ' + turn.content)].join('\n\n');
-    const prompt = t('desktopCompanionTaskFromSelection').replace('{text}', source).replace('{answer}', conversation);
     try {
-      await api.setDraft({ prompt, attachments: [], workingDirectory: state.draft.workingDirectory });
+      await api.setDraft({
+        ...state.draft,
+        selectionContext: {
+          id: crypto.randomUUID(), action: CompanionSelectionAction.Translate, sourceText: source,
+          turns: [{ role: 'assistant', content: translation }, ...followUp.turns],
+        },
+      });
       await api.selectSession(null);
       await api.closeLanguageTool();
       if (!state.panelVisible) await api.togglePanel();
