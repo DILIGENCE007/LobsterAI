@@ -3005,6 +3005,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         allowPresets={!sessionId || !currentSession || isChatPresetSession(currentSession)}
         compact={useHomeContextLayout}
         iconOnly={narrow}
+        anchorAccessPrompt={narrow}
         onLoginRequired={narrow ? () => setShowChatLoginExperiencePrompt(true) : undefined}
         dropdownDirection="up"
         alignDropdownToTriggerEnd={useHomeContextLayout}
@@ -3967,7 +3968,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   );
 
   return (
-    <div data-skin-prompt-input="true" className="relative">
+    <div data-skin-prompt-input="true" data-model-access-anchor={narrow || undefined} className="relative">
       {goalEditModalOpen && (
         <Modal
           onClose={handleCloseGoalEditModal}
