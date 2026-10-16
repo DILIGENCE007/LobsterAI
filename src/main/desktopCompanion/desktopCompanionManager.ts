@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import {
   type BrowserWindow,
   dialog,
@@ -112,6 +113,7 @@ interface DesktopCompanionOptions {
   openSettings?(): void;
   onPreferencesChanged(): void;
   reportAnalytics?: CompanionAnalyticsReporter;
+  getAnalyticsOwner?: () => string | null;
   services?: DesktopCompanionServices;
 }
 
@@ -179,6 +181,7 @@ export class DesktopCompanionManager {
   private panelVisible = false;
   private panelShowRevision: number | null = null;
   private panelOpenRevision = 0;
+  private panelJourneyId?: string;
   private orbPressVisible = false;
   private panelLoginVisible = false;
   /** Height of the composer card plus its shadow margin, as the panel last reported it. */
@@ -216,7 +219,7 @@ export class DesktopCompanionManager {
   private readonly analytics: CompanionAnalytics;
 
   constructor(private readonly options: DesktopCompanionOptions) {
-    this.analytics = new CompanionAnalytics(options.reportAnalytics);
+    this.analytics = new CompanionAnalytics(options.reportAnalytics, options.getAnalyticsOwner);
     const { store } = options;
     this.preferences = normalizeCompanionPreferences(store.get(DesktopCompanionStoreKey.Preferences));
     this.draft = normalizeCompanionDraft(store.get(DesktopCompanionStoreKey.Draft));
@@ -395,7 +398,11 @@ export class DesktopCompanionManager {
     else this.showPanel(source);
   }
 
-  resetLanguageTools(): void { this.languageTools.reset(); }
+  resetLanguageTools(): void { this.languageTools.reset(); this.clearTaskAnalytics(); }
+
+  clearTaskAnalytics(): void { this.analytics.clearTasks(); this.panelJourneyId = undefined; }
+
+  captureTaskAnalytics(senderId: number): ReturnType<CompanionAnalytics['captureTask']> { return this.analytics.captureTask(senderId); }
 
   hidePanel(): void {
     if (!this.panelVisible) return;
@@ -632,12 +639,13 @@ export class DesktopCompanionManager {
 
   private showPanel(source: AnalyticsSource = AnalyticsSource.System): void {
     const opening = !this.panelVisible || !this.panel || this.panel.isDestroyed();
+    if (opening) this.panelJourneyId = randomUUID();
     this.results.hide();
     const stageKind = this.stage.stage.kind;
     if (stageKind === DesktopCompanionStageKind.Hint || stageKind === DesktopCompanionStageKind.Task) this.stage.clear();
     if (!this.panelVisible) {
       this.analytics.report({ action: AnalyticsAction.Action, source, interactionType: Interaction.Open,
-        surface: DesktopCompanionSurface.Panel, enabled: this.preferences.enabled });
+        surface: DesktopCompanionSurface.Panel, enabled: this.preferences.enabled, journeyId: this.panelJourneyId });
       // Without the orb, the panel opens on the display in use and stays there while it is open.
       this.panelWorkArea = this.orbBounds() ? null : screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
     }
@@ -927,7 +935,8 @@ export class DesktopCompanionManager {
       const source = this.analyticsSource(sender.id);
       // Renderer-owned task/drop interactions only; native events have one owner.
       if (event.action === AnalyticsAction.Task && [AnalyticsSource.Panel, AnalyticsSource.FileDrop, AnalyticsSource.Result].some(item => item === source)) {
-        this.analytics.report({ ...event, source });
+        this.analytics.task(event, sender.id, source,
+          source === AnalyticsSource.Panel ? this.panelJourneyId : undefined);
       } else if (event.action === AnalyticsAction.FileDrop && source === AnalyticsSource.FileDrop) {
         this.analytics.report({ ...event, source });
       } else if (event.action === AnalyticsAction.Action && event.interactionType === Interaction.Stop && source === AnalyticsSource.Result) {

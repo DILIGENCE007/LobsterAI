@@ -1,6 +1,7 @@
 /** Versioned additions to rlog. Existing action names retain their original meaning. */
 export const UsageAnalytics = {
   SchemaVersion: 1,
+  MediaSchemaVersion: 2,
   ResourceSaltStoreKey: 'usage_analytics_resource_salt',
   MaxTrackedItems: 500,
 } as const;
@@ -28,6 +29,7 @@ export const UsageStage = {
   Accepted: 'accepted',
   Generated: 'generated',
   Saved: 'saved',
+  DeliveryAttempt: 'delivery_attempt',
   Discovered: 'discovered',
 } as const;
 export type UsageStage = (typeof UsageStage)[keyof typeof UsageStage];

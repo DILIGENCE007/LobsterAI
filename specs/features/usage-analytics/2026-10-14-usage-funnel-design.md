@@ -16,7 +16,7 @@
 
 ### 1.3 范围
 
-本次沿用 `rlog → wisdom`，补充专家发现、草稿、任务运行、能力调用与产物使用的关联数据。新增事件使用 `schemaVersion=1`；不改变现有事件的名称和业务含义，不增加持久队列、重试或数仓写入。
+本次沿用 `rlog → wisdom`，补充专家发现、草稿、任务运行、能力调用与产物使用的关联数据。初始事件使用 `schemaVersion=1`；2026-10-16 的媒体生成口径修订使用 `schemaVersion=2`，详见第 8 节。不增加日志投递队列、日志重试或数仓写入。
 
 不以完成事件推断用户满意度，不根据旧 Agent 名称或提示词补造专家归属，不重跑历史数据。新增明细字段由数仓配置承接，客户端改动不等于数据已可查询。
 
@@ -188,3 +188,46 @@ FROM runs GROUP BY preset_id;
 ### 7.3 上线后的核验边界
 
 自动化测试验证端侧事件与关联字段。Hive 延迟入库、ETL 对新增字段的保留和生产丢报率需要上线后检查。当前发送仍为 best effort；主进程并发上限、网络失败、客户端退出或不可用的安装标识都可能造成数据缺口。本次没有增加可靠投递承诺。
+
+## 8. 2026-10-16 媒体与悬浮球漏斗修订
+
+基于 `release/2026.10.13` 的 `03a9e9082`，复用已有媒体默认策略和六类悬浮球事件。本次只修正媒体生命周期口径及恢复关联，并为悬浮球任务补充逐次提交关联；不扩展朗读实际播放、首响应或详细登录流程。
+
+### 8.1 媒体生成口径 v2
+
+主进程生成链路的 `lobsterai_media_lifecycle` 使用 `schemaVersion=2`。渲染层已有的入口、选择等事件仍沿用原版本。分析生成漏斗时应筛选版本，并按 `mediaJobId` 聚合；`selectionSource=user/default/off` 和 `policyVersion` 继续来自本轮实际生效的媒体选择。
+
+| 阶段 | 口径 |
+| --- | --- |
+| `start / started` | 一次生成工具调用开始；同一次调用重入复用 `mediaJobId` |
+| `submit / started` | 即将发出服务请求；`protocolVersion` 区分旧接口与持久任务协议 |
+| `submit / unknown` | 响应丢失、持久任务 5xx 等情况下接单结果待确认；不是接单成功或最终失败 |
+| `accepted / succeeded` | 已取得有效服务端任务 ID；恢复原意图后可补充这一阶段，分析 ID 保持不变 |
+| `generated / succeeded/failed/cancelled/timeout` | 实际生成终态；取消接口返回成功只表示取消请求被接收，须等待状态查询或轮询确认终态 |
+| `delivery_attempt / failed` | 持久任务一次本地保存失败或部分成功；记录 `attemptCount`、`savedCount`、`outputCount`、`partial`，后续仍可重试 |
+| `saved / succeeded` | 本地保存数量等于预期数量且大于零，只计一次；`attemptCount` 包含此前失败的保存尝试 |
+
+旧协议保留原有一次性 `saved / failed` 行为。持久任务首次下载失败不再锁死保存结果，后续完整保存可以产生 `saved / succeeded`。没有完整保存事件的任务归为“尚未确认交付”，不能将一次 `delivery_attempt / failed` 当作最终交付失败；同样不能用所有保存尝试条数计算任务数。
+
+持久任务在发请求前保存一份本地关联快照，包含随机分析 ID、原始分析上下文、模型/策略摘要、终态与保存去重标记。恢复查询与后台轮询共同使用它，避免重启后重复受理、生成或保存计数。快照按账号和服务地址隔离，最多 500 条，仅恢复 7 日内记录，过期记录在后续保存时淘汰；关闭统计时清除快照并使在途结果失效。不会从升级前的业务任务补造分析起点。
+
+服务端任务 ID、工具调用原始 ID 和账号范围仅作本地索引，不进入 rlog；快照不包含提示词、请求正文、输出 URL 或文件路径。无法确认桌面轮次的原生 OpenClaw run 不借用同一会话的最近桌面归因。快照不是可靠投递队列：先更新去重标记再尝试上报，退出或网络失败仍可能丢报，不能据此承诺端到端 exactly-once。
+
+### 8.2 悬浮球提交与执行关联
+
+复用 `lobsterai_desktop_companion_action` 和 `lobsterai_desktop_companion_task`，不新增事件族或 IPC 通道。
+
+- 每次面板打开请求生成 `journeyId`，放入已有 `interactionType=open, surface=panel` 事件；同次面板提交沿用该 ID。打开请求仍不能当作完成渲染的曝光。
+- 每次任务提交生成随机 `callId`，`submit` 与 `result` 共用；来源由主进程确认。一次提交最多产生一个结果，跨窗口、账号变化或关闭统计后的旧结果不关联。
+- 主进程在 Cowork IPC 入口捕获当前窗口的提交，并在运行时派发的同步阶段保存实际 `taskId / turnId`。成功的 `result` 使用这份快照，不在回调时读取会话最新轮次；拒绝提交或没有新轮次时不猜测任务归因。
+- 文件拖放快捷任务与结果卡追问各有本次提交的 `journeyId`；本次未将它们与文件条、通知或提示气泡曝光逐次串联。
+
+面板漏斗按 `journeyId` 连接打开请求和提交，再按 `callId` 连接提交结果；成功结果按 `taskId + turnId` 连接 `lobsterai_task_lifecycle` 的运行开始与结束。文件快捷任务和追问从 `desktop_companion_task.submit` 起算。`result/success` 仍只表示创建/续聊被接收；执行成功、失败、取消和未知由已有运行事件判断。
+
+这些 ID 都是独立的随机分析 ID，不上传本地会话 ID。悬浮球的 `journeyId` 表示入口操作，不能假定等于任务原有的专家发现 `journeyId`；二者通过 `taskId + turnId` 关联。UUID 不可用时允许退回无关联的旧事件，不能将这种样本用于逐次转化率。
+
+### 8.3 验收与数据映射
+
+自动化回归覆盖：待确认不能计为受理、重启恢复同一分析 ID、保存失败后重试成功、重复状态去重、取消请求与真实终态、账号/服务地址隔离、关闭统计后再启用不恢复旧追踪，以及悬浮球晚到结果不能串到下一轮。
+
+上线验收须确认实时日志和数仓同时保留 `schemaVersion / protocolVersion / attemptCount / selectionSource / policyVersion / mediaJobId / callId / journeyId / taskId / turnId` 及阶段结果字段。已有工单字段映射不等于这些增量字段已经入库；本次只修改客户端和文档，未修改数仓。按实际发布版本和生产环境筛选后再计算漏斗。

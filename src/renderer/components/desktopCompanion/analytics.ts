@@ -13,11 +13,13 @@ export function reportCompanionAnalytics(event: CompanionAnalyticsEvent): void {
 export function beginCompanionTask(source: CompanionAnalyticsSource, isFollowUp = false): (success: boolean) => void {
   const startedAt = Date.now();
   let finished = false;
-  reportCompanionAnalytics({ action: CompanionAnalyticsAction.Task, source, isFollowUp, stage: CompanionAnalyticsStage.Submit });
+  let callId: string | undefined;
+  try { callId = crypto.randomUUID(); } catch { /* Retain uncorrelated reporting if UUID creation is unavailable. */ }
+  reportCompanionAnalytics({ action: CompanionAnalyticsAction.Task, source, isFollowUp, callId, stage: CompanionAnalyticsStage.Submit });
   return success => {
     if (finished) return;
     finished = true;
-    reportCompanionAnalytics({ action: CompanionAnalyticsAction.Task, source, isFollowUp, stage: CompanionAnalyticsStage.Result,
+    reportCompanionAnalytics({ action: CompanionAnalyticsAction.Task, source, isFollowUp, callId, stage: CompanionAnalyticsStage.Result,
       outcome: success ? CompanionAnalyticsOutcome.Success : CompanionAnalyticsOutcome.Failed,
       durationMs: Math.max(0, Date.now() - startedAt) });
   };

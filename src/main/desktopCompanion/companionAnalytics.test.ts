@@ -1,6 +1,8 @@
+import { randomUUID } from 'crypto';
 import { describe, expect, test, vi } from 'vitest';
 
 import { LogReporterAction, LogReporterStoreKey } from '../../shared/analytics/constants';
+import { UsageEntry } from '../../shared/analytics/usage';
 import {
   CompanionAnalyticsAction as Action, CompanionAnalyticsOutcome as Outcome, CompanionAnalyticsSetting as Setting,
   CompanionAnalyticsSource as Source, CompanionAnalyticsStage as Stage, CompanionAnalyticsTool as Tool,
@@ -80,4 +82,95 @@ describe('companion analytics privacy and reporting', () => {
     }
     await Promise.resolve();
   });
+});
+
+function taskSetup() {
+  const report = vi.fn();
+  const context = { taskId: randomUUID(), turnId: randomUUID(), entry: UsageEntry.Runtime };
+  const state = { owner: 'private-account:1' as string | null };
+  const analytics = new CompanionAnalytics(report, () => state.owner);
+  const submit = { action: Action.Task, source: Source.Panel, stage: Stage.Submit, callId: randomUUID() };
+  const result = { ...submit, stage: Stage.Result, outcome: Outcome.Success };
+  return { analytics, report, state, context, submit, result, events: () => report.mock.calls.map(([event]) => event) };
+}
+
+test('links a panel opening and one submission to runtime IDs without reporting the local session', () => {
+  const s = taskSetup();
+  const journeyId = randomUUID();
+  s.analytics.task(s.submit, 10, Source.Panel, journeyId);
+  s.analytics.task(s.submit, 10, Source.Panel, randomUUID());
+  s.analytics.captureTask(10)(s.context);
+  s.analytics.captureTask(10)({ ...s.context, turnId: randomUUID() });
+  s.analytics.task({ ...s.result, taskId: randomUUID(), turnId: randomUUID() }, 10, Source.Panel);
+  s.analytics.task(s.result, 10, Source.Panel);
+  expect(s.events()).toEqual([
+    { ...s.submit, journeyId, isFollowUp: false },
+    { ...s.submit, stage: Stage.Result, outcome: Outcome.Success, journeyId, isFollowUp: false,
+      taskId: s.context.taskId, turnId: s.context.turnId },
+  ]);
+  expect(JSON.stringify(s.events())).not.toContain('private');
+});
+
+test('failed and undispatched submissions do not borrow another task context', () => {
+  for (const outcome of [Outcome.Failed, Outcome.Success]) {
+    const s = taskSetup();
+    s.analytics.task(s.submit, 10, Source.Panel);
+    if (outcome === Outcome.Failed) s.analytics.captureTask(10)(s.context);
+    s.analytics.task({ ...s.result, outcome }, 10, Source.Panel);
+    expect(s.events()).toHaveLength(2);
+    expect(s.events()[1].taskId).toBeUndefined();
+    expect(s.events()[1].turnId).toBeUndefined();
+  }
+});
+
+test('late follow-up completion retains the dispatched turn even when a later turn has started', () => {
+  const s = taskSetup();
+  s.analytics.task({ ...s.submit, isFollowUp: true }, 10, Source.Result);
+  const dispatchedTurnId = s.context.turnId;
+  s.analytics.captureTask(10)(s.context);
+  s.context.turnId = randomUUID();
+  s.analytics.task(s.result, 10, Source.Result);
+  expect(s.events()[1].turnId).toBe(dispatchedTurnId);
+  expect(s.events()[1].isFollowUp).toBe(true);
+});
+
+test('another window, account or an opt-out cannot complete a captured submission', () => {
+  const s = taskSetup();
+  s.analytics.task(s.submit, 10, Source.Panel);
+  const capture = s.analytics.captureTask(10);
+  s.analytics.task(s.result, 11, Source.Panel);
+  s.state.owner = 'private-account:2';
+  capture(s.context);
+  s.analytics.task(s.result, 10, Source.Panel);
+  s.state.owner = null;
+  s.analytics.clearTasks();
+  s.state.owner = 'private-account:1';
+  s.analytics.task(s.result, 10, Source.Panel);
+  expect(s.events()).toHaveLength(1);
+});
+
+test('only UUID correlation fields survive the reporting allowlist', () => {
+  const callId = randomUUID();
+  const journeyId = randomUUID();
+  expect(normalizeCompanionAnalyticsEvent({ action: Action.Task, source: Source.Panel, callId, journeyId,
+    sessionId: randomUUID(), taskId: 'private-business-id', turnId: 'private-text' })).toEqual({
+    action: Action.Task, source: Source.Panel, callId, journeyId,
+  });
+});
+
+test('each window captures only its own dispatch, including simultaneous submissions', () => {
+  const s = taskSetup();
+  const second = { ...s.submit, callId: randomUUID() };
+  const otherContext = { ...s.context, taskId: randomUUID(), turnId: randomUUID() };
+  s.analytics.task(s.submit, 10, Source.Panel);
+  s.analytics.task(second, 11, Source.FileDrop);
+  const firstDispatch = s.analytics.captureTask(10);
+  const secondDispatch = s.analytics.captureTask(11);
+  secondDispatch(otherContext);
+  firstDispatch(s.context);
+  s.analytics.task({ ...second, stage: Stage.Result, outcome: Outcome.Success }, 11, Source.FileDrop);
+  s.analytics.task(s.result, 10, Source.Panel);
+  expect(s.events().slice(-2).map(event => [event.callId, event.turnId])).toEqual([
+    [second.callId, otherContext.turnId], [s.submit.callId, s.context.turnId],
+  ]);
 });

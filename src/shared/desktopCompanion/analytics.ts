@@ -1,4 +1,5 @@
 import { LogReporterAction } from '../analytics/constants';
+import { isUsageId } from '../analytics/usage';
 import { CompanionAppCategory } from './appCategories';
 import { DesktopCompanionSnoozeMode, DesktopCompanionSurface } from './constants';
 import { CompanionDropAction, CompanionFileKind } from './fileKinds';
@@ -71,6 +72,10 @@ export interface CompanionAnalyticsEvent {
   recentTaskCount?: number;
   durationMs?: number;
   fileKinds?: string;
+  callId?: string;
+  journeyId?: string;
+  taskId?: string;
+  turnId?: string;
 }
 
 const enumFields = {
@@ -92,6 +97,9 @@ export function normalizeCompanionAnalyticsEvent(input: unknown): CompanionAnaly
     if (typeof value[key] === 'string' && (values as readonly string[]).includes(value[key])) event[key] = value[key];
   }
   if (!event.action || !event.source) return null;
+  for (const key of ['callId', 'journeyId', 'taskId', 'turnId']) {
+    if (isUsageId(value[key])) event[key] = value[key];
+  }
   for (const key of ['enabled', 'hasShortcut', 'hasSession', 'isFollowUp', 'pinned']) {
     if (typeof value[key] === 'boolean') event[key] = value[key];
   }
