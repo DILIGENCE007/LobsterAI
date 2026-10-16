@@ -170,6 +170,8 @@ export class DesktopCompanionManager {
   private orb: BrowserWindow | null = null;
   private panel: BrowserWindow | null = null;
   private panelVisible = false;
+  private panelShowRevision: number | null = null;
+  private panelOpenRevision = 0;
   private orbPressVisible = false;
   private panelLoginVisible = false;
   /** Height of the composer card plus its shadow margin, as the panel last reported it. */
@@ -305,6 +307,7 @@ export class DesktopCompanionManager {
         selectionToolbarOrder: [...this.preferences.selectionToolbarOrder],
       },
       panelVisible: this.panelVisible,
+      panelOpenRevision: this.panelOpenRevision,
       sessionId: this.sessionId,
       draft: { ...this.draft, attachments: [...this.draft.attachments] },
       shortcutUnavailable: this.shortcutUnavailable,
@@ -381,6 +384,7 @@ export class DesktopCompanionManager {
   hidePanel(): void {
     if (!this.panelVisible) return;
     this.panelVisible = false;
+    this.panelShowRevision = null;
     this.panel?.hide();
     this.flushDraft();
     this.publish();
@@ -604,6 +608,7 @@ export class DesktopCompanionManager {
   // ── Panel ─────────────────────────────────────────────────
 
   private showPanel(): void {
+    const opening = !this.panelVisible || !this.panel || this.panel.isDestroyed();
     this.results.hide();
     const stageKind = this.stage.stage.kind;
     if (stageKind === DesktopCompanionStageKind.Hint || stageKind === DesktopCompanionStageKind.Task) this.stage.clear();
@@ -621,27 +626,26 @@ export class DesktopCompanionManager {
         this.hidePanel();
       });
       // A native hide notification can arrive after a rapid reopen.
-      win.on('hide', () => { if (!win.isVisible()) this.hidePanel(); });
+      win.on('hide', () => { if (!win.isVisible() && this.panelShowRevision === null) this.hidePanel(); });
       win.on('closed', () => {
         if (this.panel !== win) return;
         this.panel = null;
         this.panelLoginVisible = false;
-      });
-      win.once('ready-to-show', () => {
-        if (this.disposing || win.isDestroyed() || !this.panelVisible) return;
-        win.show();
-        win.focus();
+        this.panelShowRevision = null;
       });
       this.panel = win;
+    }
+    if (opening) {
+      this.panelOpenRevision = this.revision + 1;
+      this.panelShowRevision = this.panelOpenRevision;
     }
     this.panelVisible = true;
     // Clicks go through the empty room above the card only while the pointer is there.
     this.panel.setIgnoreMouseEvents(false);
     this.positionPanel();
-    if (!this.panel.webContents.isLoadingMainFrame()) {
-      this.panel.show();
-      this.panel.focus();
-    }
+    // The renderer prepares each opening before showing the window. Showing here
+    // would expose the previous frame before the new fade-in starts.
+    if (this.panel.isVisible()) this.panel.focus();
     this.publish();
   }
 
@@ -897,6 +901,17 @@ export class DesktopCompanionManager {
     handle(DesktopCompanionIpc.ToggleOrb, value => this.toggleOrb(value === true));
     handle(DesktopCompanionIpc.TogglePanel, () => this.togglePanel());
     handle(DesktopCompanionIpc.HidePanel, () => this.hidePanel());
+    handle(DesktopCompanionIpc.PanelReady, (value, sender) => {
+      const win = this.panel;
+      if (!win || win.isDestroyed() || this.disposing || sender.id !== win.webContents.id || !this.panelVisible
+        || value !== this.panelOpenRevision) return false;
+      // A renderer remount may prepare the same opening again; do not show or focus twice.
+      if (this.panelShowRevision === null) return win.isVisible();
+      this.panelShowRevision = null;
+      win.show();
+      win.focus();
+      return true;
+    });
     handle(DesktopCompanionIpc.OpenMain, (value, sender) => {
       if (sender.id === this.selection.webContentsId) this.selection.hide();
       if (sender.id === this.results.webContentsId) this.results.hide();

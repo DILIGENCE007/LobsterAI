@@ -171,6 +171,10 @@ function clickMenu(label: string) {
   return menu().find(item => item.label === label)!.click!(null as never, undefined, {} as never);
 }
 
+function readyPanel(panel = mocks.windows.at(-1)) {
+  return invoke(DesktopCompanionIpc.PanelReady, manager.getState().panelOpenRevision, panel.webContents);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(globalShortcut.register).mockReturnValue(true);
@@ -691,6 +695,60 @@ describe('desktop companion lifecycle', () => {
     expect(manager.isComposerWebContents(recreated.webContents)).toBe(false);
   });
 
+  test('first open and reuse wait for the current composer frame instead of showing a cached frame', () => {
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows.at(-1);
+    const show = vi.spyOn(panel, 'show');
+    const focus = vi.spyOn(panel, 'focus');
+    panel.emit('ready-to-show');
+    expect(panel.visible).toBe(false);
+    expect(readyPanel(panel)).toBe(true);
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(readyPanel(panel)).toBe(true);
+    expect(show).toHaveBeenCalledTimes(1);
+
+    manager.hidePanel();
+    manager.togglePanel();
+    expect(panel.visible).toBe(false);
+    expect(readyPanel(panel)).toBe(true);
+    expect(show).toHaveBeenCalledTimes(2);
+    expect(focus).toHaveBeenCalledTimes(2);
+  });
+
+  test('closing during preparation invalidates the old frame, including a rapid reopen', () => {
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows.at(-1);
+    const previousOpening = manager.getState().panelOpenRevision;
+    manager.hidePanel();
+    expect(invoke(DesktopCompanionIpc.PanelReady, previousOpening, panel.webContents)).toBe(false);
+    manager.togglePanel();
+    expect(manager.getState().panelOpenRevision).toBeGreaterThan(previousOpening);
+    expect(invoke(DesktopCompanionIpc.PanelReady, previousOpening, panel.webContents)).toBe(false);
+    expect(panel.visible).toBe(false);
+    // Delayed native notifications must not cancel the new preparation.
+    panel.emit('hide');
+    expect(manager.getState().panelVisible).toBe(true);
+    expect(readyPanel(panel)).toBe(true);
+  });
+
+  test('only the current composer and opening can reveal the panel', () => {
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows.at(-1);
+    const opening = manager.getState().panelOpenRevision;
+    expect(invoke(DesktopCompanionIpc.PanelReady, opening, main.webContents)).toBe(false);
+    for (const value of [null, undefined, true, String(opening), NaN, opening + 1]) {
+      expect(invoke(DesktopCompanionIpc.PanelReady, value, panel.webContents)).toBe(false);
+    }
+    invoke(DesktopCompanionIpc.SetDraft, { prompt: 'Keep my draft', attachments: [] });
+    expect(manager.getState().panelOpenRevision).toBe(opening);
+    expect(panel.visible).toBe(false);
+    expect(readyPanel(panel)).toBe(true);
+  });
+
   test('hiding the panel flushes unsent materials and keeps the window alive', () => {
     create();
     manager.togglePanel();
@@ -711,6 +769,7 @@ describe('desktop companion lifecycle', () => {
     create();
     manager.togglePanel();
     const panel = mocks.windows[1];
+    readyPanel(panel);
     invoke(DesktopCompanionIpc.SetDraft, { prompt: 'Keep my draft', attachments: [{ path: '/tmp/a.pdf', name: 'a.pdf' }] });
     panel.blur();
     vi.advanceTimersByTime(200);
@@ -719,6 +778,7 @@ describe('desktop companion lifecycle', () => {
     expect(values.get(DesktopCompanionStoreKey.Draft)).toMatchObject({ prompt: 'Keep my draft', attachments: [{ path: '/tmp/a.pdf' }] });
     manager.togglePanel();
     expect(mocks.windows).toHaveLength(2);
+    readyPanel(panel);
     expect(panel.visible).toBe(true);
     expect(panel.focused).toBe(true);
   });
@@ -728,6 +788,7 @@ describe('desktop companion lifecycle', () => {
     create();
     manager.togglePanel();
     const panel = mocks.windows[1];
+    readyPanel(panel);
     panel.blur();
     panel.emit('sheet-begin');
     vi.advanceTimersByTime(200);
@@ -744,6 +805,7 @@ describe('desktop companion lifecycle', () => {
     create();
     manager.togglePanel();
     const panel = mocks.windows[1];
+    readyPanel(panel);
     panel.enabled = false;
     panel.blur();
     vi.advanceTimersByTime(200);
@@ -757,6 +819,7 @@ describe('desktop companion lifecycle', () => {
     panel.blur();
     manager.hidePanel();
     manager.togglePanel();
+    readyPanel(panel);
     vi.advanceTimersByTime(200);
     expect(manager.getState().panelVisible).toBe(true);
   });
@@ -894,6 +957,7 @@ describe('orb surface toggle', () => {
           result: { visible: visible && !!status },
           draft: { prompt: 'Keep my draft' },
         });
+        if (visible && !status) readyPanel();
         expect(mocks.windows.at(-1).visible).toBe(visible);
       }
       expect(manager.getState().result.recentTasks).toEqual(status ? [{ sessionId: 'task', viewedAt: 0 }] : []);
@@ -908,6 +972,7 @@ describe('orb surface toggle', () => {
     create();
     invoke(DesktopCompanionIpc.ToggleOrb, undefined, orb().webContents);
     const surface = mocks.windows.at(-1);
+    if (!results) readyPanel(surface);
     press();
     surface.blur();
     vi.advanceTimersByTime(200);
@@ -916,11 +981,13 @@ describe('orb surface toggle', () => {
     expect(manager.getState()).toMatchObject({ panelVisible: false, result: { visible: false } });
     expect(surface.visible).toBe(false);
     invoke(DesktopCompanionIpc.ToggleOrb, undefined, orb().webContents);
+    if (!results) readyPanel(surface);
     expect(surface.visible).toBe(true);
     press();
     surface.blur();
     release();
     invoke(DesktopCompanionIpc.ToggleOrb, undefined, orb().webContents);
+    if (!results) readyPanel(surface);
     vi.advanceTimersByTime(200);
     expect(surface.visible).toBe(true);
   });
@@ -930,6 +997,7 @@ describe('orb surface toggle', () => {
     values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
     create();
     invoke(DesktopCompanionIpc.ToggleOrb, undefined, orb().webContents);
+    readyPanel();
     press();
     ipcMain.emit(DesktopCompanionIpc.Drag,
       { sender: orb().webContents, senderFrame: orb().webContents.mainFrame }, DesktopCompanionDragPhase.Cancel);
@@ -948,6 +1016,7 @@ describe('orb surface toggle', () => {
     press(); release();
     press(); release();
     surface.emit('hide');
+    if (!results) readyPanel(surface);
     expect(surface.visible).toBe(true);
     expect(manager.getState()).toMatchObject({ panelVisible: !results, result: { visible: results } });
     surface.hide();

@@ -43,6 +43,8 @@ export const DesktopCompanionIpc = {
   PanelPassThrough: 'desktop-companion:panel-pass-through',
   /** Reserve the welcome dialog's own size while login is open in the composer. */
   PanelLoginVisible: 'desktop-companion:panel-login-visible',
+  /** The composer has painted its opening frame and can reveal the native window. */
+  PanelReady: 'desktop-companion:panel-ready',
 } as const;
 
 export const DesktopCompanionMainPage = {
@@ -171,6 +173,8 @@ export interface DesktopCompanionState {
   revision: number;
   preferences: DesktopCompanionPreferences;
   panelVisible: boolean;
+  /** Identifies an opening even when a rapid close/reopen is batched by the renderer. */
+  panelOpenRevision: number;
   sessionId: string | null;
   draft: DesktopCompanionDraft;
   shortcutUnavailable: boolean;
@@ -321,6 +325,7 @@ export interface DesktopCompanionBridge extends LanguageToolsBridge, CompanionSc
   taskUpdated(): void;
   setPanelPassThrough(passThrough: boolean): void;
   setPanelLoginVisible(visible: boolean): void;
+  panelReady(revision: number): Promise<boolean>;
   stageCommand(command: DesktopCompanionStageCommand): Promise<void>;
   resizeSurface(size: CompanionSurfaceSize): void;
   selectionCommand(command: DesktopCompanionSelectionCommand): Promise<void>;
