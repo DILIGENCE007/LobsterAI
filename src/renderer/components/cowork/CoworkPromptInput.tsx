@@ -66,6 +66,7 @@ import {
 import { getOnboardingErrorCode, reportOnboardingAction } from '../../services/onboardingAnalytics';
 import { resolveLocalizedText, skillService } from '../../services/skill';
 import { getDraftAnalytics } from '../../services/usageAnalytics';
+import { useMediaPreferences } from '../../services/useMediaPreferences';
 import { RootState } from '../../store';
 import { selectDraftPrompts } from '../../store/selectors/coworkSelectors';
 import {
@@ -533,6 +534,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         || EMPTY_BROWSER_ANNOTATION_BATCHES
       ),
     );
+    useMediaPreferences(draftKey, !remoteManaged);
     const queuedMediaSelection = useSelector((state: RootState) => state.cowork.mediaSelection[draftKey]);
     const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
     const agents = useSelector((state: RootState) => state.agent.agents);
@@ -1681,7 +1683,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         resolvedKitCapabilities: activeKitIds.length > 0
           ? queuedCapabilities.resolvedKitCapabilities
           : undefined,
-        mediaSelection: queuedMediaSelection?.mode !== 'none' ? queuedMediaSelection : undefined,
+        mediaSelection: queuedMediaSelection,
         status: CoworkSteerStatus.Pending,
         createdAt: now,
         updatedAt: now,

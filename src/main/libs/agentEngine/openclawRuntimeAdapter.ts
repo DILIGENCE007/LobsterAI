@@ -851,6 +851,8 @@ type ActiveTurn = {
 };
 
 const PLAN_MODE_BLOCKED_TOOL_NAMES = new Set([
+  MediaGenerationTool.Image,
+  MediaGenerationTool.Video,
   'apply_patch',
   'bash',
   'cmd',

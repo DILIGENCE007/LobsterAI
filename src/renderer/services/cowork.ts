@@ -1150,6 +1150,7 @@ class CoworkService {
       prompt: options.prompt,
       systemPrompt: options.systemPrompt,
       activeSkillIds: options.activeSkillIds,
+      inheritedSkillIds: options.inheritedSkillIds,
       runtimeSkillIds: options.runtimeSkillIds,
       kitIds: options.kitIds,
       kitReferences: options.kitReferences,

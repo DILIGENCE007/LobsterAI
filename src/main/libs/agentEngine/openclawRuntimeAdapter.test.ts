@@ -4,6 +4,8 @@ import path from 'node:path';
 
 import { expect, test, vi } from 'vitest';
 
+import { MediaGenerationTool } from '../../mediaGenerationPolicy';
+
 vi.mock('electron', () => ({
   app: {
     getAppPath: () => process.cwd(),
@@ -3432,6 +3434,10 @@ function createRunTurnAdapter(options: {
   }> = [];
   const store = {
     getSession: (sessionId: string) => (sessionId === session.id ? session : null),
+    getLatestUserMessage: (sessionId: string) => {
+      expect(sessionId).toBe(session.id);
+      return session.messages.findLast(message => message.type === 'user') ?? null;
+    },
     updateSession: (sessionId: string, patch: Record<string, unknown>) => {
       expect(sessionId).toBe(session.id);
       Object.assign(session, patch);
@@ -10037,7 +10043,7 @@ test('repeated blocked mutation in one plan turn stops instead of looping recove
   expect(session.status).toBe('idle');
 });
 
-test.each(['write_file', 'create_file', 'delete_file', 'powershell'])(
+test.each(['write_file', 'create_file', 'delete_file', 'powershell', MediaGenerationTool.Image, MediaGenerationTool.Video])(
   'plan mode blocks the mutating or opaque tool alias %s',
   async (toolName) => {
     const { session, store } = createReconcileStore([

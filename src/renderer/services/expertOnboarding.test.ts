@@ -39,6 +39,19 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
+test('expert skill provenance survives draft sync and removal followed by re-selection becomes explicit', () => {
+  const imageExpert = { ...expert, skillIds: ['canvas-design', 'seedream'] };
+  openExpertDraft(imageExpert, 'Make an image');
+  expect(store.getState().cowork.draftInheritedSkillIds.__home__).toEqual(imageExpert.skillIds);
+  store.dispatch(setDraftSkillIds({ draftKey: '__home__', skillIds: [...imageExpert.skillIds, 'seedance'] }));
+  expect(store.getState().cowork.draftInheritedSkillIds.__home__).toEqual(imageExpert.skillIds);
+  store.dispatch(setDraftSkillIds({ draftKey: '__home__', skillIds: ['canvas-design'] }));
+  store.dispatch(setDraftSkillIds({ draftKey: '__home__', skillIds: ['canvas-design', 'seedream'] }));
+  expect(store.getState().cowork.draftInheritedSkillIds.__home__).toEqual(['canvas-design']);
+  store.dispatch(setDraftSkillIds({ draftKey: '__home__', skillIds: [] }));
+  expect(store.getState().cowork.draftInheritedSkillIds.__home__).toBeUndefined();
+});
+
 test('switching an installed expert carries the latest text and preserves draft context', () => {
   store.dispatch(setAgents([expert]));
   store.dispatch(setDraftPrompt({ sessionId: '__home__', draft: 'Stale debounced text' }));

@@ -31,6 +31,16 @@ const base: CoworkStartRequestInput = {
 const engine = (phase: OpenClawEngineStatus['phase']) => ({ phase }) as OpenClawEngineStatus;
 
 describe('cowork start plan', () => {
+  test('preserves expert skill provenance separately from runtime skill selection', () => {
+    const plan = buildCoworkStartPlan({
+      ...base,
+      capabilities: { ...capabilities, directSkillIds: ['seedream'], runtimeSkillIds: ['seedream'] },
+      inheritedSkillIds: ['seedream'],
+    });
+    expect(plan.options.activeSkillIds).toEqual(['seedream']);
+    expect(plan.options.runtimeSkillIds).toEqual(['seedream']);
+    expect(plan.options.inheritedSkillIds).toEqual(['seedream']);
+  });
   test('sends the selected skills, kits, agent, model and folder with the combined system prompt', () => {
     const { options, runtimeSkillIds, suppressedCapabilities } = buildCoworkStartPlan(base);
     expect(options).toMatchObject({
@@ -73,7 +83,7 @@ describe('cowork start plan', () => {
     expect(options.kitIds).toBeUndefined();
     expect(options.kitReferences).toBeUndefined();
     expect(options.cwd).toBeUndefined();
-    expect(options.mediaSelection).toBeUndefined();
+    expect(options.mediaSelection).toEqual({ mode: 'none' });
   });
 });
 

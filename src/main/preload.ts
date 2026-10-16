@@ -113,6 +113,12 @@ import {
 } from '../shared/localWebServices/constants';
 import { McpIpcChannel } from '../shared/mcp/constants';
 import type { McpToolDiscoveryRequest } from '../shared/mcp/toolDiscovery';
+import type {
+  MediaPreference,
+  MediaPreferenceResult,
+  MediaSelection,
+  MediaType,
+} from '../shared/media/defaultPolicy';
 import { type ModelPresetId, ModelPresetIpc } from '../shared/modelPresets/constants';
 import { OpenClawEngineIpc } from '../shared/openclawEngine/constants';
 import { PermissionIpcChannel } from '../shared/permissions/constants';
@@ -629,6 +635,7 @@ contextBridge.exposeInMainWorld('electron', {
       systemPrompt?: string;
       title?: string;
       activeSkillIds?: string[];
+      inheritedSkillIds?: string[];
       runtimeSkillIds?: string[];
       kitIds?: string[];
       kitReferences?: KitReference[];
@@ -640,7 +647,7 @@ contextBridge.exposeInMainWorld('electron', {
       modelPresetId?: ModelPresetId;
       thinkingLevel?: string;
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string; sizeBytes?: number; localPath?: string; previewMimeType?: string; previewBase64Data?: string }>;
-      mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string }; mediaReferences?: Array<{ token: string; mediaType: string; index: number; fileId: string; fileName: string; mimeType: string; localPath?: string; remoteUrl?: string; dataUrl?: string; role?: string }>;
+      mediaSelection?: MediaSelection; mediaReferences?: Array<{ token: string; mediaType: string; index: number; fileId: string; fileName: string; mimeType: string; localPath?: string; remoteUrl?: string; dataUrl?: string; role?: string }>;
     }) => ipcRenderer.invoke(CoworkIpcChannel.SessionStart, options),
     continueSession: (options: {
       analytics?: UsageContext;
@@ -648,6 +655,7 @@ contextBridge.exposeInMainWorld('electron', {
       prompt: string;
       systemPrompt?: string;
       activeSkillIds?: string[];
+      inheritedSkillIds?: string[];
       runtimeSkillIds?: string[];
       kitIds?: string[];
       kitReferences?: KitReference[];
@@ -655,7 +663,7 @@ contextBridge.exposeInMainWorld('electron', {
       selectedTextSnippets?: Array<{ id: string; text: string; sourceMessageId?: string; sourceMessageType?: 'assistant' | 'artifact_markdown' | 'artifact_text' | 'artifact_sheet' | 'artifact_word' | 'artifact_slides'; sourceId?: string; sourceType?: 'assistant' | 'artifact_markdown' | 'artifact_text' | 'artifact_sheet' | 'artifact_word' | 'artifact_slides'; sourceTitle?: string; sourcePath?: string; artifactId?: string; createdAt: number; startOffset?: number; endOffset?: number }>;
       browserAnnotations?: CoworkBrowserAnnotationMessageBatch[];
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string; sizeBytes?: number; localPath?: string; previewMimeType?: string; previewBase64Data?: string }>;
-      mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
+      mediaSelection?: MediaSelection;
       mediaReferences?: Array<{
         token: string;
         mediaType: string;
@@ -1514,6 +1522,10 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
   media: {
+    getPreferences: (owner: string) =>
+      ipcRenderer.invoke(CoworkIpcChannel.GetMediaPreferences, owner) as Promise<MediaPreferenceResult>,
+    setPreference: (owner: string, type: MediaType, preference: MediaPreference) =>
+      ipcRenderer.invoke(CoworkIpcChannel.SetMediaPreference, owner, type, preference) as Promise<MediaPreferenceResult>,
     getModels: (type: 'image' | 'video') =>
       ipcRenderer.invoke(CoworkIpcChannel.GetMediaModels, type) as Promise<{ success: boolean; models?: unknown[]; error?: string }>,
     getTaskStatus: (taskId: number, type: 'image' | 'video') =>

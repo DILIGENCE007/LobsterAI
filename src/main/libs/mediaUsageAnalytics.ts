@@ -16,6 +16,8 @@ interface MediaJob {
   owner: string;
   context?: UsageContext;
   mediaType: string;
+  selectionSource?: string;
+  policyVersion?: string;
   startedAt: number;
   terminal: boolean;
   saved: boolean;
@@ -49,6 +51,8 @@ export class MediaUsageAnalytics {
       sessionId: string | null;
       mediaType: string;
       action: string;
+      selectionSource?: string;
+      policyVersion?: string;
       taskId?: unknown;
       callId: string;
     },
@@ -64,6 +68,8 @@ export class MediaUsageAnalytics {
           owner,
           context: info.sessionId ? this.deps.context(info.sessionId) : undefined,
           mediaType: info.mediaType,
+          selectionSource: info.selectionSource,
+          policyVersion: info.policyVersion,
           startedAt: this.now(),
           terminal: false,
           saved: false,
@@ -231,6 +237,8 @@ export class MediaUsageAnalytics {
       mediaJobId: job.id,
       mediaType: job.mediaType,
       modelId: job.modelId,
+      selectionSource: job.selectionSource,
+      policyVersion: job.policyVersion,
       stage,
       outcome,
       durationMs: Math.max(0, this.now() - job.startedAt),

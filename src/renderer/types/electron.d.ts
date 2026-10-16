@@ -135,6 +135,12 @@ import type {
   LocalWebService,
 } from '../../shared/localWebServices/constants';
 import type { McpToolDiscoveryRequest, McpToolDiscoveryResult } from '../../shared/mcp/toolDiscovery';
+import type {
+  MediaPreference,
+  MediaPreferenceResult,
+  MediaSelection,
+  MediaType,
+} from '../../shared/media/defaultPolicy';
 import type { AvailableModelPreset, ModelPresetId, ModelPresetPreference } from '../../shared/modelPresets/constants';
 import type { OfficeBridges } from '../../shared/office/editors';
 import type {
@@ -1008,6 +1014,7 @@ interface IElectronAPI {
       systemPrompt?: string;
       title?: string;
       activeSkillIds?: string[];
+      inheritedSkillIds?: string[];
       runtimeSkillIds?: string[];
       kitIds?: string[];
       kitReferences?: KitReference[];
@@ -1019,7 +1026,7 @@ interface IElectronAPI {
       modelPresetId?: ModelPresetId;
       thinkingLevel?: string;
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string; sizeBytes?: number; localPath?: string; previewMimeType?: string; previewBase64Data?: string }>;
-      mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
+      mediaSelection?: MediaSelection;
       mediaReferences?: Array<{ token: string; mediaType: string; index: number; fileId: string; fileName: string; mimeType: string; localPath?: string; remoteUrl?: string; dataUrl?: string; role?: string }>;
     }) => Promise<{
       success: boolean;
@@ -1034,6 +1041,7 @@ interface IElectronAPI {
       prompt: string;
       systemPrompt?: string;
       activeSkillIds?: string[];
+      inheritedSkillIds?: string[];
       runtimeSkillIds?: string[];
       kitIds?: string[];
       kitReferences?: KitReference[];
@@ -1041,7 +1049,7 @@ interface IElectronAPI {
       selectedTextSnippets?: Array<{ id: string; text: string; sourceMessageId?: string; sourceMessageType?: 'assistant' | 'artifact_markdown' | 'artifact_text' | 'artifact_sheet' | 'artifact_word' | 'artifact_slides'; sourceId?: string; sourceType?: 'assistant' | 'artifact_markdown' | 'artifact_text' | 'artifact_sheet' | 'artifact_word' | 'artifact_slides'; sourceTitle?: string; sourcePath?: string; artifactId?: string; createdAt: number; startOffset?: number; endOffset?: number }>;
       browserAnnotations?: CoworkBrowserAnnotationMessageBatch[];
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string; sizeBytes?: number; localPath?: string; previewMimeType?: string; previewBase64Data?: string }>;
-      mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
+      mediaSelection?: MediaSelection;
       mediaReferences?: Array<{ token: string; mediaType: string; index: number; fileId: string; fileName: string; mimeType: string; localPath?: string; remoteUrl?: string; dataUrl?: string; role?: string }>;
     }) => Promise<{
       success: boolean;
@@ -2201,6 +2209,8 @@ interface IElectronAPI {
     onLifecycleEvent: (callback: (event: AuthLifecycleEvent) => void) => () => void;
   };
   media: {
+    getPreferences: (owner: string) => Promise<MediaPreferenceResult>;
+    setPreference: (owner: string, type: MediaType, preference: MediaPreference) => Promise<MediaPreferenceResult>;
     getModels: (type: 'image' | 'video') => Promise<{ success: boolean; models?: Array<{ modelId: string; displayName: string; provider: string; mediaType: string; generationTimeout: number; pricing: Record<string, unknown> }>; error?: string }>;
     getTaskStatus: (taskId: number, type: 'image' | 'video') => Promise<{ success: boolean; task?: Record<string, unknown>; error?: string }>;
   };

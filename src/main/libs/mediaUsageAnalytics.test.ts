@@ -1,6 +1,7 @@
 import { expect, test, vi } from 'vitest';
 
 import { UsageEntry, UsageOutcome, UsageStage } from '../../shared/analytics/usage';
+import { MediaSelectionSource } from '../../shared/media/defaultPolicy';
 import { MediaUsageAnalytics } from './mediaUsageAnalytics';
 
 function setup(now?: () => number) {
@@ -30,7 +31,7 @@ const request = {
 
 test('async acceptance is not generation success; status and background polling share terminal deduplication', async () => {
   const s = setup();
-  await s.tracker.run(request, async () => ({
+  await s.tracker.run({ ...request, selectionSource: MediaSelectionSource.Default, policyVersion: 'policy-v1' }, async () => ({
     content: [],
     details: { taskId: 'private-task', upstreamTaskId: 'private-upstream', status: 'running' },
   }));
@@ -48,6 +49,9 @@ test('async acceptance is not generation success; status and background polling 
     UsageStage.Saved,
   ]);
   expect(new Set(s.events().map(event => event.mediaJobId)).size).toBe(1);
+  for (const event of s.events()) {
+    expect(event).toMatchObject({ selectionSource: MediaSelectionSource.Default, policyVersion: 'policy-v1' });
+  }
   expect(JSON.stringify(s.events())).not.toContain('private');
 });
 
