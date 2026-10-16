@@ -8,7 +8,6 @@ import {
   DesktopCompanionMainPage,
   DesktopCompanionPanelPlacement,
   DesktopCompanionSize,
-  type DesktopCompanionState,
   EMPTY_DESKTOP_COMPANION_DRAFT,
 } from '../../../shared/desktopCompanion/constants';
 import { buildSelectionTaskPrompt } from '../../../shared/desktopCompanion/selectionTaskContext';
@@ -29,6 +28,7 @@ import Toast, { type ToastEventDetail } from '../Toast';
 import { bootstrapCompanionComposer, refreshCompanionComposer } from './companionComposerBootstrap';
 import SelectionTaskContextCard from './SelectionTaskContextCard';
 import { ComposerExit, useComposerMotion } from './useComposerMotion';
+import { useDesktopCompanionState } from './useDesktopCompanionState';
 import { useMeasuredSurface } from './useMeasuredSurface';
 
 const t = (key: string) => i18nService.t(key);
@@ -62,7 +62,7 @@ export default function CompanionComposer() {
   const api = window.electron.desktopCompanion;
   const dispatch = useDispatch();
   const [ready, setReady] = useState(false);
-  const [companion, setCompanion] = useState<DesktopCompanionState | null>(null);
+  const { state: companion } = useDesktopCompanionState();
   const [toast, setToast] = useState<ToastEventDetail | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
   const cardRef = useRef<HTMLDivElement>(null);
@@ -83,7 +83,7 @@ export default function CompanionComposer() {
   const selectionContext = companion?.draft.selectionContext;
   const placement = companion?.panelPlacement ?? DesktopCompanionPanelPlacement.Left;
   useMeasuredSurface(cardRef, visible);
-  const playExit = useComposerMotion(motionRef, ready && visible, placement);
+  const playExit = useComposerMotion(motionRef, ready && visible, placement, companion?.panelOpenRevision ?? 0);
 
   const showToast = useCallback((value: string | ToastEventDetail) => {
     const detail = typeof value === 'string' ? { message: value } : value;
@@ -98,11 +98,9 @@ export default function CompanionComposer() {
     void bootstrapCompanionComposer()
       .catch(error => console.error('[CompanionComposer] failed to load the composer state', error))
       .finally(() => { if (active) setReady(true); });
-    void api.getState().then(state => { if (active) setCompanion(state); });
     const onToast = (event: Event) => showToast((event as CustomEvent<string | ToastEventDetail>).detail);
     window.addEventListener('app:showToast', onToast);
     const stops = [
-      api.onChanged(setCompanion),
       window.electron.auth.onSessionChanged(event => { void authService.handleSessionChanged(event); }),
     ];
     return () => {

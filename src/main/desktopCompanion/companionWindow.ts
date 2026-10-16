@@ -93,10 +93,18 @@ export function createCompanionWindow(env: CompanionWindowEnvironment, options: 
       webSecurity: true,
       navigateOnDragDrop: false,
       spellcheck: false,
+      // Reopening waits for a freshly painted composer frame while the window is hidden.
+      ...(options.surface === DesktopCompanionSurface.Panel ? { backgroundThrottling: false } : {}),
       ...(options.surface === DesktopCompanionSurface.LanguageTools ? { autoplayPolicy: 'no-user-gesture-required' as const } : {}),
     },
   });
   win.setMenu(null);
+  if (process.platform === 'win32' && isScreenshot) {
+    // Windows clamps initial bounds to the work area, even for frameless windows.
+    // Restore the full display before loading the image, otherwise it is squeezed
+    // above the real taskbar and both the preview and crop coordinates are wrong.
+    win.setBounds(options.bounds);
+  }
   // The selection toolbar sits above menus of the app it is attached to.
   win.setAlwaysOnTop(true, isScreenshot ? 'screen-saver' : isSelection ? 'pop-up-menu' : 'floating');
   if (process.platform === 'darwin') {

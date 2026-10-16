@@ -1,5 +1,6 @@
-import { BrowserWindow, desktopCapturer, nativeImage, screen, systemPreferences } from 'electron';
+import { BrowserWindow, desktopCapturer, nativeImage, type Rectangle, screen, systemPreferences } from 'electron';
 import fs from 'fs/promises';
+import path from 'path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { DesktopCompanionSurface } from '../../shared/desktopCompanion/constants';
@@ -18,10 +19,19 @@ vi.mock('electron', async () => {
   class Window extends EventEmitter {
     visible = false;
     destroyed = false;
+    bounds: Rectangle;
     webContents = Object.assign(new EventEmitter(), {
       id: mocks.windows.length + 1, mainFrame: {}, setWindowOpenHandler: vi.fn(),
     });
-    constructor() { super(); mocks.windows.push(this); }
+    constructor(options: Partial<Rectangle> = {}) {
+      super();
+      const { x = 0, y = 0, width = 800, height = 600 } = options;
+      // Windows constrains the initial window to the work area (48px taskbar).
+      this.bounds = { x, y, width, height: process.platform === 'win32' ? Math.min(height, 852) : height };
+      mocks.windows.push(this);
+    }
+    getBounds() { return this.bounds; }
+    setBounds(bounds: Rectangle) { this.bounds = { ...bounds }; }
     isDestroyed() { return this.destroyed; }
     isVisible() { return this.visible; }
     showInactive() { this.visible = true; }
@@ -76,6 +86,26 @@ afterEach(() => {
 });
 
 describe('desktop screenshot capture', () => {
+  test('Windows overlays cover the full display instead of squeezing the captured taskbar into the work area', async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
+    try {
+      const { result, overlay } = await start();
+      const displayBounds = screen.getAllDisplays()[0].bounds;
+      // Include a negative monitor origin and a 2x image scale. The viewport must
+      // match the display before Ready so preview pixels and crop coordinates agree.
+      expect(overlay.getBounds()).toEqual(displayBounds);
+      expect(overlay.isVisible()).toBe(false);
+      invoke(CompanionScreenshotIpc.Ready);
+      expect(overlay.getBounds()).toEqual(displayBounds);
+      invoke(CompanionScreenshotIpc.Finish, { x: 0, y: 852, width: 1440, height: 48 });
+      await result;
+      expect(mocks.image.crop).toHaveBeenCalledWith({ x: 0, y: 1704, width: 2880, height: 96 });
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+    }
+  });
+
   test('hides companion windows, waits for the image to render, saves only a retina crop and restores the orb', async () => {
     const { result, overlay } = await start();
     expect(orb.isVisible()).toBe(false);
@@ -93,7 +123,7 @@ describe('desktop screenshot capture', () => {
 
   test('preparing the overlay avoids full-screen PNG encoding and caches the preview only for this capture', async () => {
     const { result, overlay } = await start();
-    expect(overlay.loadFile).toHaveBeenCalledWith('/dist/companion-screenshot.html', { query: { surface: DesktopCompanionSurface.Screenshot } });
+    expect(overlay.loadFile).toHaveBeenCalledWith(path.join('/dist', 'companion-screenshot.html'), { query: { surface: DesktopCompanionSurface.Screenshot } });
     expect(nativeImage.createFromBitmap).toHaveBeenCalledWith(Buffer.from('pixels'), { width: 2880, height: 1800 });
     const firstPreview = invoke(CompanionScreenshotIpc.GetFrame);
     expect(invoke(CompanionScreenshotIpc.GetFrame)).toBe(firstPreview);

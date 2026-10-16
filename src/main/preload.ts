@@ -188,6 +188,7 @@ contextBridge.exposeInMainWorld('electron', {
     taskUpdated: () => ipcRenderer.send(DesktopCompanionIpc.TaskUpdated),
     setPanelPassThrough: passThrough => ipcRenderer.send(DesktopCompanionIpc.PanelPassThrough, passThrough),
     setPanelLoginVisible: visible => ipcRenderer.send(DesktopCompanionIpc.PanelLoginVisible, visible),
+    panelReady: revision => ipcRenderer.invoke(DesktopCompanionIpc.PanelReady, revision),
     stageCommand: command => ipcRenderer.invoke(DesktopCompanionIpc.StageCommand, command),
     resizeSurface: size => ipcRenderer.send(DesktopCompanionIpc.ResizeSurface, size),
     selectionCommand: command => ipcRenderer.invoke(DesktopCompanionIpc.SelectionCommand, command),
