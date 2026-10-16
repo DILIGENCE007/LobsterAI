@@ -3434,6 +3434,10 @@ function createRunTurnAdapter(options: {
   }> = [];
   const store = {
     getSession: (sessionId: string) => (sessionId === session.id ? session : null),
+    getLatestUserMessage: (sessionId: string) => {
+      expect(sessionId).toBe(session.id);
+      return session.messages.findLast(message => message.type === 'user') ?? null;
+    },
     updateSession: (sessionId: string, patch: Record<string, unknown>) => {
       expect(sessionId).toBe(session.id);
       Object.assign(session, patch);
