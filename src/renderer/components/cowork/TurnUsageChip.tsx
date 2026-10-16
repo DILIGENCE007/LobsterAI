@@ -23,6 +23,7 @@ import { coworkService } from '../../services/cowork';
 import { getEnterpriseMemberProfileUrl, getPortalProfileUrl } from '../../services/endpoints';
 import { i18nService } from '../../services/i18n';
 import type { RootState } from '../../store';
+import { formatModelDisplayName } from '../../utils/modelDisplayName';
 import CreditsIcon from '../icons/CreditsIcon';
 import {
   buildTurnModelTokenRows,
@@ -269,7 +270,11 @@ const TurnUsageChip: React.FC<TurnUsageChipProps> = ({ userMessageId, turnUsage,
                               {formatTurnCredits(model.displayCreditsUsed ?? model.creditsUsed, true)}
                             </span>
                           </div>
-                          {model.model && <div className="truncate text-secondary" title={model.model}>{model.model}</div>}
+                          {model.model && (
+                            <div className="truncate text-secondary" title={formatModelDisplayName(model.model)}>
+                              {formatModelDisplayName(model.model)}
+                            </div>
+                          )}
                           {model.type === TurnUsageModelType.Text && (
                             <div className="mt-1.5 border-l border-border pl-2 text-secondary">
                               {buildTurnModelTokenRows(model).map(row => (

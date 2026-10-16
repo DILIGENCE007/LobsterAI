@@ -2429,6 +2429,7 @@ export class OpenClawConfigSync {
     );
     const hasAskUserPlugin = isBundledPluginAvailable('ask-user-question');
     const hasMediaGenPlugin = isBundledPluginAvailable('lobster-media-generation');
+    const hasModelRoutingPlugin = isBundledPluginAvailable('lobster-model-routing');
     const hasDecisionPlugin = isBundledPluginAvailable(DECISION_MODEL_PLUGIN_ID);
     // Runtime-bundled xai extension (dist/extensions/xai): provides the Grok
     // model compat hooks (e.g. only grok-4.3 accepts reasoningEffort) plus the
@@ -2684,6 +2685,15 @@ export class OpenClawConfigSync {
             : {}),
           ...(hasAskUserPlugin ? { 'ask-user-question': { enabled: true } } : {}),
           ...(hasMediaGenPlugin ? { 'lobster-media-generation': { enabled: true } } : {}),
+          ...(hasModelRoutingPlugin && getOpenClawTokenProxyPort() ? {
+            'lobster-model-routing': {
+              enabled: true,
+              config: {
+                proxyUrl: `http://127.0.0.1:${getOpenClawTokenProxyPort()}`,
+                token: '${LOBSTER_PROXY_TOKEN}',
+              },
+            },
+          } : {}),
           // Experimental; enabled below only once the user turns it on.
           ...(hasDecisionPlugin ? { [DECISION_MODEL_PLUGIN_ID]: { enabled: false } } : {}),
           ...(hasModelCompatConfig
@@ -2733,6 +2743,7 @@ export class OpenClawConfigSync {
           // plugins we rely on must be listed here explicitly or they never
           // load — entries.enabled alone is not enough.
           ...(hasXaiPlugin ? ['xai'] : []),
+          ...(hasModelRoutingPlugin ? ['lobster-model-routing'] : []),
           ...(hasModelCompatConfig
             ? [OPENCLAW_MODEL_COMPAT_PLUGIN_ID]
             : []),

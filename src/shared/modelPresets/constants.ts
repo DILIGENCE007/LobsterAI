@@ -17,7 +17,16 @@ export function parseModelPresetId(value: unknown): ModelPresetId | null {
   return value === ModelPresetId.Balanced || value === ModelPresetId.Ultimate ? value : null;
 }
 
-export const modelPresetModelId = (presetId: ModelPresetId): string => `model-preset:${presetId}`;
+export const modelPresetModelId = (presetId: ModelPresetId): string =>
+  presetId === ModelPresetId.Balanced ? 'yd-fast' : 'yd-ultra';
+
+export function parseModelPresetModelId(value: unknown): ModelPresetId | null {
+  if (typeof value !== 'string') return null;
+  const modelId = value.trim().split('/').pop();
+  if (modelId === modelPresetModelId(ModelPresetId.Balanced)) return ModelPresetId.Balanced;
+  if (modelId === modelPresetModelId(ModelPresetId.Ultimate)) return ModelPresetId.Ultimate;
+  return null;
+}
 export const modelPresetPreferenceKey = (ownerAccountKey: string): string => `chat_model_presets:${ownerAccountKey}`;
 
 export interface AvailableModelPreset {

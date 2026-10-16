@@ -6078,6 +6078,7 @@ if (!gotTheLock) {
 
   type AvailableServerModel = ServerModelMetadataInput & {
     modelId: string;
+    presetId?: ModelPresetId;
     modelName: string;
     provider: string;
     apiFormat: string;
@@ -6130,21 +6131,11 @@ if (!gotTheLock) {
       throw new Error(data.message || 'Server model response is invalid.');
     }
 
-    const presets = await modelPresetClient.available().catch((error): null => {
-      console.warn('[Auth:getModels] failed to refresh model preset context windows:', error);
-      return null;
-    });
-    if (authAccountGeneration !== requestAccountGeneration
-      || !isMediaAccountScopeSnapshotCurrent(requestAccountScope, getCurrentMediaAccountScope())) {
-      throw new Error('Account changed while loading model preset context windows');
-    }
-    const presetContextWindows = presets && presets.length > 0
-      ? Object.fromEntries(presets.map(preset => [preset.presetId, preset.contextWindow]))
-      : undefined;
+    const presetContextWindows = Object.fromEntries(data.data
+      .filter(model => model.presetId)
+      .map(model => [model.presetId!, model.contextWindow]));
     const serverModelsChanged = updateServerModelMetadata(data.data.map(model => ({
-      ...model,
-      presetContextWindows: presets === null
-        ? getServerModelMetadata(model.modelId)?.presetContextWindows : presetContextWindows,
+      ...model, presetContextWindows,
     })));
     const serverModelIds = data.data.map(model => model.modelId);
     const serverModelsMissingFromConfig = !openClawConfigHasServerModels(serverModelIds);

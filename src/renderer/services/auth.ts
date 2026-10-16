@@ -18,7 +18,7 @@ import {
 import type { ModelRuntimeProfile } from '@shared/providers/modelRuntimeProfiles';
 
 import type { EnterpriseAccountContext } from '../../shared/enterpriseAccount/types';
-import { ModelPresetId, parseModelPresetPreference } from '../../shared/modelPresets/constants';
+import { parseModelPresetId, parseModelPresetPreference } from '../../shared/modelPresets/constants';
 import {
   applyEnterpriseAccountContext,
   refreshEnterpriseAccountContext,
@@ -50,7 +50,6 @@ import {
 import { i18nService } from './i18n';
 import { LogReporterAction, reportYdAnalyzer } from './logReporter';
 import { getCreditQuotaSnapshot } from './lowCreditPurchaseOffer';
-import { modelPresetToModel } from './modelPresets';
 import {
   clearPendingPublishingConversionAttribution,
   reportPendingPublishingSubscriptionObserved,
@@ -117,6 +116,7 @@ export interface PricingCatalogResponse {
 
 export interface AvailableServerModelEntry {
   modelId: string;
+  presetId?: unknown;
   modelName: string;
   provider: string;
   apiFormat: string;
@@ -272,6 +272,7 @@ export function mapAvailableServerModelsToModels(
     const requestCapabilities = parseLobsterAIRequestCapabilities(model.requestCapabilities);
     return {
       id: model.modelId,
+      presetId: parseModelPresetId(model.presetId) ?? undefined,
       name: model.modelName,
       provider: model.provider,
       providerKey: ProviderName.LobsteraiServer,
@@ -1142,9 +1143,8 @@ class AuthService {
     requestSnapshot: AuthAccountRequestSnapshot,
   ): Promise<ServerModelLoadOutcome> {
     try {
-      const [modelsResult, presetResult, preferences] = await Promise.all([
+      const [modelsResult, preferences] = await Promise.all([
         window.electron.auth.getModels(),
-        window.electron.modelPresets?.available().catch(() => ({ success: false, data: [] })),
         window.electron.modelPresets?.getPreferences().catch(() => ({ success: false, data: {} })),
       ]);
       if (!isAuthAccountRequestCurrent(requestSnapshot, store.getState().auth)) {
@@ -1153,10 +1153,8 @@ class AuthService {
       }
       if (modelsResult.success && Array.isArray(modelsResult.models)) {
         const serverModels = mapAvailableServerModelsToModels(modelsResult.models);
-        const presets = presetResult?.success ? presetResult.data ?? [] : [];
-        presets.sort((a, b) => (a.presetId === ModelPresetId.Balanced ? 0 : 1) - (b.presetId === ModelPresetId.Balanced ? 0 : 1));
-        const presetModels = presets.map(preset => modelPresetToModel(preset));
-        store.dispatch(setServerModels([...presetModels, ...serverModels]));
+        const presetModels = serverModels.filter(model => model.presetId);
+        store.dispatch(setServerModels(serverModels));
         if (preferences?.success) {
           for (const [agentId, rawPreference] of Object.entries(preferences.data ?? {})) {
             const preference = parseModelPresetPreference(rawPreference);

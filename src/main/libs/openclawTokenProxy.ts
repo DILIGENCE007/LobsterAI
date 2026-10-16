@@ -420,7 +420,9 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
 
     // Build upstream URL: serverBaseUrl + request path
     // OpenClaw sends to /v1/chat/completions, upstream is /api/proxy/v1/chat/completions
-    const upstreamPath = `/api/proxy${req.url || '/'}`;
+    // Only the two virtual-model resolution routes share this authenticated loopback transport.
+    const resolutionPath = /^\/models\/(yd-fast|yd-ultra)\/resolve$/.test(req.url ?? '');
+    const upstreamPath = resolutionPath ? `/api${req.url}` : `/api/proxy${req.url || '/'}`;
     const upstreamUrl = `${serverBaseUrl}${upstreamPath}`;
 
     const clientVersion = clientVersionGetter?.() ?? '';

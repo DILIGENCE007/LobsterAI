@@ -1,4 +1,4 @@
-import { type AvailableModelPreset, isChatPresetSession, type ModelPresetId, ModelPresetIpc, modelPresetPreferenceKey, parseModelPresetId, parseModelPresetPreference } from '../../shared/modelPresets/constants';
+import { type AvailableModelPreset, isChatPresetSession, type ModelPresetId, ModelPresetIpc, modelPresetModelId, modelPresetPreferenceKey, parseModelPresetId, parseModelPresetPreference } from '../../shared/modelPresets/constants';
 import { type ModelThinkingLevel, OpenClawProviderId, parseModelThinkingConfig, parseModelThinkingLevel } from '../../shared/providers';
 import { getServerModelMetadata, type ServerModelMetadataInput } from './claudeSettings';
 import { presetContextWindowSelection } from './modelPresetContext';
@@ -19,7 +19,7 @@ export function createModelPresetClient(dependencies: Dependencies) {
   return {
     async available(): Promise<AvailableModelPreset[]> {
       const isCurrent = dependencies.isAccountCurrent();
-      const response = await dependencies.fetchWithAuth(`${dependencies.serverBaseUrl()}/api/model-presets/available`, {
+      const response = await dependencies.fetchWithAuth(`${dependencies.serverBaseUrl()}/api/models/available`, {
         headers: dependencies.headers(),
       });
       if (!isCurrent()) throw new Error('Account changed while loading model presets');
@@ -35,7 +35,7 @@ export function createModelPresetClient(dependencies: Dependencies) {
       if (existing) return existing;
       const isCurrent = dependencies.isAccountCurrent();
       const request = (async () => {
-        const response = await dependencies.fetchWithAuth(`${dependencies.serverBaseUrl()}/api/model-presets/${presetId}/resolve`, {
+        const response = await dependencies.fetchWithAuth(`${dependencies.serverBaseUrl()}/api/models/${modelPresetModelId(presetId)}/resolve`, {
           method: 'POST',
           headers: { ...dependencies.headers(), 'Content-Type': 'application/json' },
           body: JSON.stringify({ sessionId, requiresImage }),
