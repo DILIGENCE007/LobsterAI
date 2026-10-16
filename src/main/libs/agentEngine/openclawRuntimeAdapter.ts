@@ -98,6 +98,7 @@ import type { SubagentRunStore } from '../../subagentRunStore';
 import { setCoworkProxySessionId } from '../coworkOpenAICompatProxy';
 import { getServerApiBaseUrl } from '../endpoints';
 import { createCoworkLlmTrace, createLlmTraceparent } from '../llmTrace';
+import { registerLlmUsageContext } from '../llmUsageContext';
 import { extractOpenClawAssistantStreamParts,extractOpenClawAssistantStreamText } from '../openclawAssistantText';
 import {
   buildManagedSessionKey,
@@ -4859,6 +4860,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         question: normalizedQuestion,
       });
       const btwTrace = createCoworkLlmTrace();
+      registerLlmUsageContext(btwTrace.traceId, normalizedSessionId, normalizedQuestion, {
+        modelPresetId: session.modelPresetId,
+        resolvedModelId: session.modelOverride?.split('/').slice(1).join('/'),
+      });
       console.log(
         '[CoworkBtw] submitting side question.',
         `Session ${normalizedSessionId}.`,
@@ -5733,6 +5738,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.confirmationModeBySession.set(sessionId, confirmationMode);
 
     let llmTrace: CoworkLlmTrace;
+    let usageModelSelection: CoworkMessageMetadata | undefined;
     if (!options.skipInitialUserMessage) {
       llmTrace = createCoworkLlmTrace();
       const messageSkillIds = options.messageSkillIds ?? options.skillIds;
@@ -5770,12 +5776,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         content: prompt,
         metadata: { ...metadata, llmTrace },
       });
+      usageModelSelection = userMessage.metadata;
       this.refreshContinuityCapsule(sessionId, ContinuityCapsuleSource.UserMessage, {
         sourceMessageId: userMessage.id,
       });
       this.emit('message', sessionId, userMessage);
     } else {
       llmTrace = this.ensureLatestUserMessageLlmTrace(session);
+      usageModelSelection = this.store.getLatestUserMessage(sessionId)?.metadata;
     }
 
     const agentId = options.agentId || session.agentId || 'main';
@@ -5802,6 +5810,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     setCoworkProxySessionId(sessionId);
     firstResponseTiming.gatewayReadyStartedAtMs = Date.now();
     await this.ensureGatewayClientReady();
+    registerLlmUsageContext(llmTrace.traceId, sessionId,
+      options.skipInitialUserMessage ? this.store.getLatestUserMessage(sessionId)?.content ?? prompt : prompt,
+      usageModelSelection);
+
     if (this.cancelTurnStartupIfStopped(sessionId, 'gateway client became ready')) {
       return;
     }

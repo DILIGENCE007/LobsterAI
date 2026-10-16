@@ -20,7 +20,7 @@ export type LanguageType = 'zh' | 'en';
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
     modelPresetBalanced: '均衡',
-    modelPresetUltimate: '极致',
+    modelPresetUltimate: '旗舰',
     modelPresetPricingHint: '按候选模型权重选择，当前会话保持固定。实际积分按底层模型扣费。',
     modelPresetLoginRequired: '请登录后选择模型模式。',
     modelPresetInvalidSession: '无效的聊天模型模式或会话。',
@@ -433,7 +433,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
   },
   en: {
     modelPresetBalanced: 'Balanced',
-    modelPresetUltimate: 'Ultimate',
+    modelPresetUltimate: 'Flagship',
     modelPresetPricingHint: 'Weighted model selection stays fixed for this conversation. Credits are charged at the underlying model rate.',
     modelPresetLoginRequired: 'Sign in to choose a model preset.',
     modelPresetInvalidSession: 'Invalid chat model preset or session.',

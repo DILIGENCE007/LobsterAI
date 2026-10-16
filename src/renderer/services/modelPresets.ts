@@ -25,6 +25,8 @@ export function modelPresetToModel(preset: AvailableModelPreset, resolved?: Mode
     requestCapabilities: resolved ? resolved.requestCapabilities : parseLobsterAIRequestCapabilities(preset.requestCapabilities),
     moreModel: false,
     restrictionHint: preset.restrictionHint,
-    description: i18nService.t('modelPresetPricingHint'),
+    description: i18nService.t(preset.presetId === ModelPresetId.Balanced
+      ? 'modelPresetBalancedDescription'
+      : 'modelPresetUltimateDescription'),
   };
 }

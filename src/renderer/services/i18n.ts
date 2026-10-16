@@ -9,9 +9,10 @@ export type LanguageType = 'zh' | 'en';
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
     modelPresetBalanced: '均衡',
-    modelPresetUltimate: '极致',
+    modelPresetUltimate: '旗舰',
+    modelPresetBalancedDescription: '兼顾速度与质量，适合大多数日常工作',
+    modelPresetUltimateDescription: '优先深度与准确性，适合复杂分析和高要求任务',
     modelPresetThinkingDefault: '模型默认',
-    modelPresetPricingHint: '按候选模型权重选择，当前会话保持固定。实际积分按底层模型扣费。',
     modelPresetLoginRequired: '请登录后选择模型模式。',
     modelPresetInvalidSession: '无效的聊天模型模式或会话。',
     modelPresetSessionBusy: '请等待当前回复结束后再切换模型。',
@@ -4554,9 +4555,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
   },
   en: {
     modelPresetBalanced: 'Balanced',
-    modelPresetUltimate: 'Ultimate',
+    modelPresetUltimate: 'Flagship',
+    modelPresetBalancedDescription: 'Balances speed and quality for most everyday work',
+    modelPresetUltimateDescription: 'Prioritizes depth and accuracy for complex analysis and demanding tasks',
     modelPresetThinkingDefault: 'Model default',
-    modelPresetPricingHint: 'Weighted model selection stays fixed for this conversation. Credits are charged at the underlying model rate.',
     modelPresetLoginRequired: 'Sign in to choose a model preset.',
     modelPresetInvalidSession: 'Invalid chat model preset or session.',
     modelPresetSessionBusy: 'Wait for the current reply to finish before switching models.',

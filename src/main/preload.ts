@@ -681,7 +681,7 @@ contextBridge.exposeInMainWorld('electron', {
       forkedFromMessageId?: string | null;
       title?: string;
     }) => ipcRenderer.invoke(CoworkIpcChannel.ForkSession, options),
-    getSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:get', sessionId),
+    getSession: (sessionId: string) => ipcRenderer.invoke(CoworkIpcChannel.GetSession, sessionId),
     markSessionViewed: (sessionId: string) =>
       ipcRenderer.invoke(CoworkIpcChannel.MarkSessionViewed, sessionId),
     setActiveSession: (sessionId: string | null) =>

@@ -24,6 +24,7 @@ import {
 } from '../../shared/providers/modelRuntimeProfiles';
 import type { EnterpriseAuthSessionSnapshot } from '../enterpriseAccount/membershipRevocation';
 import { createLlmSpanId, createLlmTraceId } from './llmTrace';
+import { clearLlmUsageContexts, getLlmUsageHeaders } from './llmUsageContext';
 import { listenOnLoopback } from './loopbackListen';
 
 const PROXY_BIND_HOST = '127.0.0.1';
@@ -174,6 +175,7 @@ export function stopOpenClawTokenProxy(): void {
   proxyPort = null;
   recentQuotaError = null;
   traceStatsById.clear();
+  clearLlmUsageContexts();
   tokenGetter = null;
   tokenRefresher = null;
   serverBaseUrlGetter = null;
@@ -1053,12 +1055,19 @@ async function forwardRequest(
   } catch (error) {
     console.warn('[OpenClawTokenProxy] failed to read account context headers; forwarding with token only:', error);
   }
+  let requestModel: unknown;
+  try {
+    requestModel = (JSON.parse(body.toString('utf8')) as { model?: unknown } | null)?.model;
+  } catch {
+    // Invalid/non-JSON bodies are forwarded unchanged and receive no mode label.
+  }
   const headers = buildUpstreamRequestHeaders(
     accessToken,
     incomingHeaders,
     clientVersion,
     accountContextHeaders,
     traceparent,
+    requestModel,
   );
 
   const resp = await net.fetch(url, {
@@ -1099,6 +1108,7 @@ function buildUpstreamRequestHeaders(
   clientVersion: string,
   accountContextHeaders: Record<string, string> = {},
   traceparent?: string,
+  requestModel?: unknown,
 ): Record<string, string> {
   const headers: Record<string, string> = {
     ...accountContextHeaders,
@@ -1107,6 +1117,7 @@ function buildUpstreamRequestHeaders(
     [LOBSTERAI_CLIENT_CAPABILITIES_HEADER]: LOBSTERAI_CLIENT_CAPABILITIES,
     [LOBSTERAI_CLIENT_VERSION_HEADER]: clientVersion,
     ...(traceparent ? { [LLM_TRACEPARENT_HEADER]: traceparent } : {}),
+    ...getLlmUsageHeaders(traceparent, requestModel),
   };
 
   // Forward accept header for SSE streaming

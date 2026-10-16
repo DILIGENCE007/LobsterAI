@@ -1093,6 +1093,11 @@ export class CoworkStore {
       messageOffset > 0
         ? this.getPagedSessionMessages(id, messageLimit, messageOffset)
         : this.getSessionMessages(id);
+    // Model changes also reload this page; keep usage and timing when its user
+    // message is outside the window. Metadata-only reads need no turn context.
+    const leadingTurn = messageOffset > 0 && messages.length > 0
+      ? this.getTurnContextAt(id, messageOffset)
+      : null;
 
     let activeSkillIds: string[] = [];
     if (row.active_skill_ids) {
@@ -1123,6 +1128,8 @@ export class CoworkStore {
       messages,
       messagesOffset: messageOffset,
       totalMessages,
+      leadingTurnStartTimestamp: leadingTurn?.startTimestamp ?? null,
+      leadingTurnUsage: leadingTurn?.usageAnchor ?? null,
       ...this.getSessionForkMetadata(row.id),
       goal: this.parseGoalJson(row.goal_json),
       createdAt: row.created_at,

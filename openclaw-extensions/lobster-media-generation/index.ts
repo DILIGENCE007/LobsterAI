@@ -1,7 +1,8 @@
 import { Type } from '@sinclair/typebox';
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
 
-import { isLobsterAiDesktopSessionKey } from './sessionKey';
+import { MediaRunContexts } from './runContext';
+import { isLobsterAiDesktopSessionKey, isLobsterAiMediaSessionKey } from './sessionKey';
 import {
   type MediaStatusPollPolicy,
   type MediaStatusResponse,
@@ -22,6 +23,7 @@ type MediaToolRequest = {
   context: {
     sessionKey: string;
     toolCallId: string;
+    runId?: string;
   };
 };
 
@@ -178,6 +180,7 @@ async function executeMediaStatusPolling(options: {
   taskId: string;
   toolCallId: string;
   sessionKey: string;
+  runId?: string;
   signal?: AbortSignal;
   onUpdate?: (result: MediaStatusUpdate) => void;
   log: (message: string) => void;
@@ -199,7 +202,7 @@ async function executeMediaStatusPolling(options: {
     requestStatus: () => callMediaBridge(statusConfig, {
       tool: options.tool,
       args: { action: MediaToolAction.Status, taskId: options.taskId },
-      context: { sessionKey: options.sessionKey, toolCallId: options.toolCallId },
+      context: { sessionKey: options.sessionKey, toolCallId: options.toolCallId, runId: options.runId },
     }),
   });
 }
@@ -337,9 +340,29 @@ const plugin = {
       return;
     }
 
+    const runs = new MediaRunContexts(request => callMediaBridge(
+      { ...config, requestTimeoutMs: 10_000 }, request,
+    ));
+    api.on('before_model_resolve', async (_event, ctx) => {
+      if (isLobsterAiMediaSessionKey(ctx.sessionKey)) await runs.begin(ctx);
+    });
+    api.on('before_tool_call', async (event, ctx) => {
+      if (event.toolName !== MediaToolName.ImageGenerate && event.toolName !== MediaToolName.VideoGenerate) return;
+      if (!await runs.bindTool({
+        sessionKey: ctx.sessionKey, runId: ctx.runId ?? event.runId,
+        toolCallId: ctx.toolCallId ?? event.toolCallId,
+      })) {
+        return { block: true, blockReason: 'Media tool has no authenticated run context' };
+      }
+    });
+    api.on('agent_end', async (event, ctx) => {
+      // Failed attempts may be retried under the same runId. Keep their original owner.
+      if (event.success) await runs.end({ sessionKey: ctx.sessionKey, runId: ctx.runId ?? event.runId });
+    });
+
     api.registerTool((ctx) => {
       const sessionKey = ctx.sessionKey ?? '';
-      if (!isLobsterAiDesktopSessionKey(sessionKey)) {
+      if (!isLobsterAiMediaSessionKey(sessionKey)) {
         return null;
       }
 
@@ -377,6 +400,7 @@ const plugin = {
                 taskId,
                 toolCallId: id,
                 sessionKey,
+                ...runs.forTool(sessionKey, id),
                 signal,
                 waitForResult: args.waitForResult === true,
                 onUpdate,
@@ -395,7 +419,7 @@ const plugin = {
             const result = await callMediaBridge(config, {
               tool: MediaToolName.ImageGenerate,
               args,
-              context: { sessionKey, toolCallId: id },
+              context: { sessionKey, toolCallId: id, ...runs.forTool(sessionKey, id) },
             });
             api.logger.info(`[lobster-media-generation] image tool (${action}) completed: toolCallId=${id} elapsedMs=${Date.now() - startedAt} isError=${result.isError === true}`);
             return result;
@@ -410,7 +434,7 @@ const plugin = {
 
     api.registerTool((ctx) => {
       const sessionKey = ctx.sessionKey ?? '';
-      if (!isLobsterAiDesktopSessionKey(sessionKey)) {
+      if (!isLobsterAiMediaSessionKey(sessionKey)) {
         return null;
       }
 
@@ -456,6 +480,7 @@ const plugin = {
                 taskId,
                 toolCallId: id,
                 sessionKey,
+                ...runs.forTool(sessionKey, id),
                 signal,
                 waitForResult: args.waitForResult === true,
                 onUpdate,
@@ -475,7 +500,7 @@ const plugin = {
             const result = await callMediaBridge(config, {
               tool: MediaToolName.VideoGenerate,
               args,
-              context: { sessionKey, toolCallId: id },
+              context: { sessionKey, toolCallId: id, ...runs.forTool(sessionKey, id) },
             });
             api.logger.info(`[lobster-media-generation] video tool (${action}) completed: toolCallId=${id} elapsedMs=${Date.now() - startedAt} isError=${result.isError === true}`);
             return result;

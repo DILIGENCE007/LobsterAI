@@ -1139,9 +1139,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
 
     const showCostMultiplier = model.costMultiplier != null && (model.costMultiplier > 0 || !!model.presetId || model.limitedFreeActive === true);
     const costMultiplierLabel = showCostMultiplier
-      ? model.presetId
-        ? `${model.costMultiplier?.toFixed(2)}x`
-        : `x${model.costMultiplier?.toFixed(2)}`
+      ? `x${model.costMultiplier?.toFixed(2)}`
       : undefined;
 
     // Keep names, tags and multipliers in fixed columns. Tags and multipliers
@@ -1181,7 +1179,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
           {model.presetId && restricted && model.restrictionHint && (
             <span className="max-w-full truncate text-[10px] text-secondary" title={model.restrictionHint}>{model.restrictionHint}</span>
           )}
-          {model.limitedFreeActive && (
+          {!model.presetId && model.limitedFreeActive && (
             <span className="inline-flex max-w-full items-center gap-[3px] whitespace-nowrap rounded-full bg-red-500/10 px-1.5 py-0.5 text-[10px] leading-none text-red-600 dark:text-red-400" title={i18nService.t('modelLimitedFreeBadge')}>
               <GiftIcon className="h-3 w-3 shrink-0" strokeWidth={1.8} aria-hidden="true" />
               <span className="truncate">{i18nService.t('modelLimitedFreeBadge')}</span>
@@ -1264,11 +1262,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
         <div className="text-[13px] font-semibold text-foreground leading-5">{hoveredModel.presetId ? modelPresetName(hoveredModel.presetId) : hoveredModel.name}</div>
         {hoveredModel.busy && (
           <div className="mt-2 border-t border-border pt-2">
-            <div className="flex items-center justify-between text-[12px]">
-              <span>{i18nService.t('modelBusyLevel')}</span>
-              <span className="text-secondary">{i18nService.t('modelBusyUnavailable')}</span>
-            </div>
-            <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-4 text-red-600 dark:text-red-400">
+            <p className="flex items-start gap-1.5 text-[11px] leading-4 text-red-600 dark:text-red-400">
               <BusyModelIcon className="h-4 w-4 shrink-0" />
               <span>{i18nService.t('modelBusyHint')}</span>
             </p>

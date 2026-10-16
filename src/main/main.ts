@@ -450,6 +450,7 @@ import { getKeyfromAttribution, initializeKeyfromAttribution } from './libs/keyf
 import { LibraryThumbnailRenderer } from './libs/libraryThumbnailRenderer';
 import { LibraryThumbnailService } from './libs/libraryThumbnailService';
 import { shouldRejectNativeLibraryThumbnail } from './libs/libraryThumbnailValidation';
+import { configureUsageTitleReporter, getMediaUsageContext, reportUsageSessionTitle } from './libs/llmUsageContext';
 import {
   resolveLobsterBrowserMcpCommand,
   resolveLobsterBrowserMcpStdioLaunch,
@@ -600,6 +601,7 @@ import {
   setSystemProxyEnabled,
 } from './libs/systemProxy';
 import { TaskUsageAnalytics } from './libs/usageAnalytics';
+import { type UsageTitleOutbox, UsageTitleSync } from './libs/usageTitleSync';
 import { type LoopbackFirewallRepairResult, repairWindowsLoopbackFirewall } from './libs/windowsLoopbackFirewall';
 import { getLogFilePath, getRecentMainLogEntries, initLogger } from './logger';
 import { type AskUserResponse, McpRuntime } from './mcp/mcpRuntime';
@@ -624,6 +626,7 @@ import {
 import {
   MediaGenerationGateReason,
   MediaGenerationTool,
+  MediaSelectionMode,
   type MediaSelectionState,
   resolveMediaGenerationGate,
 } from './mediaGenerationPolicy';
@@ -633,6 +636,7 @@ import {
   MediaGenerationRequestType,
   summarizeMediaGenerationParamsForLog,
 } from './mediaGenerationReferences';
+import { MediaRunAccountScopes, MediaRunLifecycle } from './mediaRunAccountScopes';
 import { MAIN_OFFICE_FORMATS } from './office/formats';
 import { OfficeEditing } from './office/officeEditing';
 import { OpenClawSessionIpc } from './openclawSession/constants';
@@ -4620,6 +4624,7 @@ const activeStreamControllers = new Map<string, AbortController>();
 // Media generation selection and authenticated owner per session turn.
 const mediaSelectionBySession = new Map<string, AccountBoundValue<MediaSelectionState>>();
 const mediaTurnAccountScopeBySession = new Map<string, MediaAccountScope>();
+const mediaRunAccountScopes = new MediaRunAccountScopes();
 let resolveCurrentMediaAccountScope = (): MediaAccountScope | null => null;
 
 // Media attachment references per session (for @ mentions, FR-9)
@@ -6459,9 +6464,21 @@ if (!gotTheLock) {
   const handleMediaGenerationCallback = async (request: {
     tool: string;
     args: Record<string, unknown>;
-    context: { sessionKey: string; toolCallId: string };
+    context: { sessionKey: string; toolCallId: string; runId?: string };
   }): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean; details?: Record<string, unknown> }> => {
     const { tool, args } = request;
+    if (tool === MediaRunLifecycle.Tool) {
+      if (args.action === MediaRunLifecycle.End) {
+        mediaRunAccountScopes.end(request.context);
+        return { content: [] };
+      }
+      if (args.action !== MediaRunLifecycle.Begin || !request.context.runId) {
+        return { content: [], isError: true };
+      }
+      mediaRunAccountScopes.begin(request.context, getCurrentMediaAccountScope());
+      const scope = mediaRunAccountScopes.resolve(request.context, getCurrentMediaAccountScope());
+      return { content: [], isError: scope === null };
+    }
     const skinRuntime = getSkinRuntimeController();
     if (skinRuntime.handlesTool(tool)) {
       return skinRuntime.handleToolRequest(request);
@@ -6469,9 +6486,15 @@ if (!gotTheLock) {
     const action = (args.action as string) || 'generate';
     const serverBaseUrl = getServerApiBaseUrl();
     const sessionId = extractSessionIdFromKey(request.context.sessionKey);
-    const turnUserMessageId = sessionId && action === 'generate'
-      ? getCoworkStore().getLatestUserMessage(sessionId)?.id : undefined;
-    const requestAccountScope = resolveMediaTurnAccountScopeForSession(sessionId);
+    // Native runs must not inherit the latest desktop user's usage/selection.
+    const nativeRun = Boolean(request.context.runId);
+    const turnUserMessage = !nativeRun && sessionId && action === 'generate'
+      ? getCoworkStore().getLatestUserMessage(sessionId) : undefined;
+    const turnUserMessageId = turnUserMessage?.id;
+    const usageContext = getMediaUsageContext(sessionId, turnUserMessage);
+    const requestAccountScope = nativeRun
+      ? mediaRunAccountScopes.resolve(request.context, getCurrentMediaAccountScope())
+      : resolveMediaTurnAccountScopeForSession(sessionId);
     const isRequestAccountCurrent = (): boolean => (
       requestAccountScope !== null
       && isMediaAccountScopeCurrent(requestAccountScope, getCurrentMediaAccountScope())
@@ -6490,7 +6513,9 @@ if (!gotTheLock) {
     ) {
       return staleAccountResult();
     }
-    const selection = resolveMediaSelectionForSession(sessionId);
+    const selection: MediaSelectionState | undefined = nativeRun
+      ? { mode: MediaSelectionMode.Auto }
+      : resolveMediaSelectionForSession(sessionId);
     const prompt = typeof args.prompt === 'string' ? args.prompt : '';
     const explicitModel = canonicalizeMediaModelId(typeof args.model === 'string' ? args.model : '');
     const resolvedModelFromSelection = tool === MediaGenerationTool.Image
@@ -6841,7 +6866,7 @@ if (!gotTheLock) {
         }
       }
 
-      const refs = sessionId ? mediaReferencesBySession.get(sessionId) : undefined;
+      const refs = !nativeRun && sessionId ? mediaReferencesBySession.get(sessionId) : undefined;
       params = applyMediaReferencesToGenerationParams({
         mediaType: mediaType === MediaGenerationRequestType.Video
           ? MediaGenerationRequestType.Video
@@ -6950,6 +6975,7 @@ if (!gotTheLock) {
         ? resolveHappyHorse11Selection(selectedModel, params)
         : null;
       const generateReq = {
+        usageContext,
         model: selectedModel,
         type: mediaType === 'video'
           ? (happyHorse11Selection?.type ?? inferVideoGenerationType())
@@ -7629,15 +7655,6 @@ if (!gotTheLock) {
       } catch (error) { console.debug('[MediaGeneration] Intent recovery deferred:', error); }
     }
   };
-  let mediaRecoveryInFlight = false;
-  const mediaRecoveryTimer = setInterval(() => {
-    if (mediaRecoveryInFlight) return;
-    mediaRecoveryInFlight = true;
-    void recoverMediaTasks().catch(error => console.warn('[MediaGeneration] Recovery failed:', error))
-      .finally(() => { mediaRecoveryInFlight = false; });
-  }, 15_000);
-  app.once('before-quit', () => clearInterval(mediaRecoveryTimer));
-
   const emitMediaTaskMessage = (sessionId: string, content: string, metadata?: Record<string, unknown>, tracker?: MediaTaskTracker) => {
     let message: CoworkMessage = {
       id: `media-task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -10064,7 +10081,6 @@ if (!gotTheLock) {
     getWorkbenchTitle: () => t('dshWorkbenchTitle'),
   });
 
-
   // Cowork IPC handlers
   const sessionTitleGenerator = new SessionTitleGenerator({
     getAuth: () => {
@@ -10079,6 +10095,7 @@ if (!gotTheLock) {
     getSession: sessionId => getCoworkStore().getSession(sessionId),
     setTitle: (sessionId, title) => {
       getCoworkStore().updateSession(sessionId, { title }, { touchUpdatedAt: false });
+      reportUsageSessionTitle(sessionId);
     },
   });
 
@@ -11105,6 +11122,7 @@ if (!gotTheLock) {
         const coworkStoreInstance = getCoworkStore();
         sessionTitleGenerator.cancel(options.sessionId);
         coworkStoreInstance.updateSession(options.sessionId, { title }, { touchUpdatedAt: false });
+        reportUsageSessionTitle(options.sessionId);
         return { success: true };
       } catch (error) {
         return {
@@ -11190,7 +11208,7 @@ if (!gotTheLock) {
     },
   );
 
-  ipcMain.handle('cowork:session:get', async (_event, sessionId: string) => {
+  ipcMain.handle(CoworkIpcChannel.GetSession, async (_event, sessionId: string) => {
     try {
       const store = getCoworkStore();
       const session = store.getSession(sessionId);
@@ -11198,11 +11216,6 @@ if (!gotTheLock) {
         console.log(
           `[CoworkIPC] loaded session ${sessionId}; returned ${session.messages.length} of ${session.totalMessages} messages from offset ${session.messagesOffset}.`,
         );
-        if (session.messagesOffset > 0) {
-          const leadingTurn = store.getTurnContextAt(sessionId, session.messagesOffset);
-          session.leadingTurnStartTimestamp = leadingTurn.startTimestamp;
-          session.leadingTurnUsage = leadingTurn.usageAnchor;
-        }
       } else {
         console.warn(`[CoworkIPC] session ${sessionId} was not found during load.`);
       }
@@ -15508,6 +15521,40 @@ if (!gotTheLock) {
 
     initializeKeyfromAttribution(store);
     refreshEndpointsTestMode(store);
+
+    // Background persistence services require the initialized store and restored endpoints.
+    const usageTitleSync = new UsageTitleSync({
+      load: () => getStore().get<UsageTitleOutbox>('usage_title_outbox_v1'),
+      save: state => getStore().set('usage_title_outbox_v1', state),
+      getOwner: () => {
+        const owner = getCurrentMediaAccountScope()?.ownerAccountKey;
+        return owner ? JSON.stringify([getServerApiBaseUrl(), owner]) : null;
+      },
+      send: ({ sessionId, title, revision }) => fetchWithAuth(`${getServerApiBaseUrl()}/api/usage/session-metadata`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, title, revision }),
+        signal: AbortSignal.timeout(10_000),
+      }),
+    });
+    usageTitleSync.start();
+    app.once('before-quit', () => usageTitleSync.stop());
+    configureUsageTitleReporter(sessionId => {
+      const session = getCoworkStore().getSession(sessionId);
+      if (!session) return;
+      try { usageTitleSync.enqueue(sessionId, session.title); }
+      catch { console.warn('[UsageTitle] could not persist pending title.'); }
+    });
+
+    let mediaRecoveryInFlight = false;
+    const mediaRecoveryTimer = setInterval(() => {
+      if (mediaRecoveryInFlight) return;
+      mediaRecoveryInFlight = true;
+      void recoverMediaTasks().catch(error => console.warn('[MediaGeneration] Recovery failed:', error))
+        .finally(() => { mediaRecoveryInFlight = false; });
+    }, 15_000);
+    app.once('before-quit', () => clearInterval(mediaRecoveryTimer));
+
     sqliteBackupManager = new SqliteBackupManager(app.getPath('userData'));
 
     const startSqliteBackupLoop = async (): Promise<void> => {

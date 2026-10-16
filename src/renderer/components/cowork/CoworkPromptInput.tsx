@@ -3012,7 +3012,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               && message.timestamp >= modelSwitchStartedAt
               && !previousMessageIds.has(message.id)
             ));
-            if (notice) setModelSwitchNotice({ sessionId: updatedSession.id, messageId: notice.id });
+            setModelSwitchNotice(notice ? { sessionId: updatedSession.id, messageId: notice.id } : null);
           };
           const keepsBoundPreset = !!(sessionId && nextModel.presetId && currentSession && currentSession.id === sessionId
             && currentSession.modelPresetId === nextModel.presetId && currentSession.modelOverride);

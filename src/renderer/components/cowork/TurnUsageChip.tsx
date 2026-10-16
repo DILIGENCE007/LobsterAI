@@ -42,7 +42,7 @@ interface TurnUsageChipProps {
   durationMs: number | null;
 }
 
-const POPOVER_WIDTH_PX = 288;
+const POPOVER_WIDTH_PX = 260;
 const POPOVER_ESTIMATED_HEIGHT_PX = 320;
 const COPIED_RESET_MS = 2000;
 const POPOVER_GAP_PX = 8;
@@ -242,7 +242,7 @@ const TurnUsageChip: React.FC<TurnUsageChipProps> = ({ userMessageId, turnUsage,
                   <span className="text-secondary">{i18nService.t(isEnterprise ? 'coworkTurnUsageTeamCreditsUnit' : 'coworkTurnUsageCreditsUnit')}</span>
                 </div>
                 {totalCredits > 0 && (
-                  <div className="mb-2 flex h-1 w-full gap-0.5 overflow-hidden rounded-full" aria-hidden="true">
+                  <div className="mb-2 flex h-[3px] w-full gap-0.5 overflow-hidden rounded-full" aria-hidden="true">
                     {models.filter(model => model.creditsUsed > 0).map(model => (
                       <div
                         key={`${model.type}:${model.model}`}
@@ -256,7 +256,7 @@ const TurnUsageChip: React.FC<TurnUsageChipProps> = ({ userMessageId, turnUsage,
                   {models.map(model => (
                     <div key={`${model.type}:${model.model}`}>
                       <div className="flex items-baseline gap-1.5">
-                        <span className={`h-2 w-2 shrink-0 self-start rounded-full mt-1.5 ${turnUsageModelColors[model.type].dot}`} aria-hidden="true" />
+                        <span className={`h-[6px] w-[6px] shrink-0 self-start rounded-full mt-[8.5px] ${turnUsageModelColors[model.type].dot}`} aria-hidden="true" />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-baseline justify-between gap-2">
                             <span className="font-medium">{modelLabel(model)}</span>

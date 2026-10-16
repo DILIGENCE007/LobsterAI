@@ -13,7 +13,16 @@ function effectiveModelRef(store: CoworkStore, session: CoworkSession): string {
   return providerId ? `${providerId}/${config.model}` : config.model;
 }
 
-/** Persist a display-only notice after a successful, explicit session model change. */
+function isSameModelSelection(change: CoworkModelChange): boolean {
+  if (change.previousPresetId || change.nextPresetId) {
+    return change.previousPresetId === change.nextPresetId;
+  }
+  return change.previousModelRef === change.nextModelRef
+    || ((!change.previousModelRef.includes('/') || !change.nextModelRef.includes('/'))
+      && change.previousModelRef.split('/').slice(-1)[0] === change.nextModelRef.split('/').slice(-1)[0]);
+}
+
+/** Persist the net model change until the conversation continues. */
 export function recordSessionModelChange(
   store: CoworkStore,
   previous: CoworkSession | null,
@@ -23,10 +32,6 @@ export function recordSessionModelChange(
   if (!previous || !store.getLatestUserMessage(previous.id)) return current;
   const previousModelRef = effectiveModelRef(store, previous);
   const nextModelRef = effectiveModelRef(store, current);
-  const sameModel = previousModelRef === nextModelRef
-    || ((!previousModelRef.includes('/') || !nextModelRef.includes('/'))
-      && previousModelRef.split('/').slice(-1)[0] === nextModelRef.split('/').slice(-1)[0]);
-  if (sameModel && (previous.modelPresetId ?? null) === (current.modelPresetId ?? null)) return current;
   if (!previousModelRef || !nextModelRef) return current;
 
   const modelChange: CoworkModelChange = {
@@ -35,10 +40,28 @@ export function recordSessionModelChange(
     previousPresetId: previous.modelPresetId,
     nextPresetId: current.modelPresetId,
   };
-  store.addMessage(current.id, {
-    type: 'system',
-    content: '',
-    metadata: { kind: CoworkSystemMessageKind.ModelChanged, modelChange },
-  });
+  if (isSameModelSelection(modelChange)) return current;
+
+  // Only trailing notices are pending; conversation messages keep earlier changes intact.
+  const pendingNoticeIds: string[] = [];
+  for (let index = current.messages.length - 1; index >= 0; index -= 1) {
+    const message = current.messages[index];
+    const change = message.metadata?.modelChange;
+    if (message.type !== 'system' || message.metadata?.kind !== CoworkSystemMessageKind.ModelChanged || !change) break;
+    pendingNoticeIds.push(message.id);
+    modelChange.previousModelRef = change.previousModelRef;
+    modelChange.previousPresetId = change.previousPresetId;
+  }
+
+  for (const messageId of pendingNoticeIds) {
+    store.deleteMessage(current.id, messageId);
+  }
+  if (!isSameModelSelection(modelChange)) {
+    store.addMessage(current.id, {
+      type: 'system',
+      content: '',
+      metadata: { kind: CoworkSystemMessageKind.ModelChanged, modelChange },
+    });
+  }
   return store.getSession(current.id) ?? current;
 }
