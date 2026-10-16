@@ -39,6 +39,7 @@ import BusyModelIcon from './icons/BusyModelIcon';
 import { CustomProviderIcon } from './icons/providers';
 import UltimateModelIcon from './icons/UltimateModelIcon';
 import VipDiamondLineIcon from './icons/VipDiamondLineIcon';
+import ModelAccessPromptPopover from './modelSelector/ModelAccessPromptPopover';
 import ModelThinkingMenu, {
   getModelThinkingLevelLabel,
 } from './modelSelector/ModelThinkingMenu';
@@ -66,6 +67,8 @@ interface ModelSelectorProps {
   compact?: boolean;
   /** Show just the provider avatar, with the full model name in its tooltip. */
   iconOnly?: boolean;
+  /** Keep access prompts beside the selector in transparent companion windows. */
+  anchorAccessPrompt?: boolean;
   /** Render the dropdown outside the local stacking context. */
   portal?: boolean;
   /** Align the dropdown's trailing edge with the trigger's trailing edge. */
@@ -168,6 +171,8 @@ interface ModelAccessPromptModalProps {
   descriptionKey?: string;
   primaryButtonKey?: string;
   showLearnMore?: boolean;
+  anchorRef?: React.RefObject<HTMLElement>;
+  onChooseModel?: () => void;
 }
 
 export const ModelAccessPromptModal: React.FC<ModelAccessPromptModalProps> = ({
@@ -177,6 +182,8 @@ export const ModelAccessPromptModal: React.FC<ModelAccessPromptModalProps> = ({
   descriptionKey,
   primaryButtonKey,
   showLearnMore = true,
+  anchorRef,
+  onChooseModel,
 }) => {
   const busyPrompt = promptKind === ModelAccessPromptKind.Busy;
   const agenticNotReadyPrompt = promptKind === ModelAccessPromptKind.AgenticNotReady;
@@ -219,6 +226,28 @@ export const ModelAccessPromptModal: React.FC<ModelAccessPromptModalProps> = ({
     }
     await openSubscriptionPage();
   };
+
+  if (anchorRef) {
+    const subscriptionPriority = promptKind === ModelAccessPromptKind.SubscriptionPriority;
+    const purchase = subscriptionPriority || promptKind === ModelAccessPromptKind.Subscribe;
+    return (
+      <ModelAccessPromptPopover
+        anchorRef={anchorRef}
+        title={i18nService.t(subscriptionPriority ? 'modelSelectorSubscriptionRequiredTitle' : resolvedTitleKey)}
+        description={purchaseOffer.description ?? i18nService.t(subscriptionPriority ? 'modelSelectorSubscriptionRequiredDesc' : resolvedDescriptionKey)}
+        primaryLabel={i18nService.t(subscriptionPriority ? 'modelSelectorViewSubscription' : resolvedPrimaryButtonKey)}
+        purchase={purchase}
+        pending={purchaseOffer.isRefreshing}
+        onPrimary={() => { void handlePrimary(); }}
+        onClose={onClose}
+        onChooseModel={onChooseModel}
+      >
+        {purchaseOffer.offer?.expiresAtEpochMs != null && (
+          <div className="mt-3"><PurchaseOfferCountdown offer={purchaseOffer.offer} /></div>
+        )}
+      </ModelAccessPromptPopover>
+    );
+  }
 
   return (
     <Modal
@@ -465,6 +494,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   disabled = false,
   compact = false,
   iconOnly = false,
+  anchorAccessPrompt = false,
   portal = false,
   alignDropdownToTriggerEnd = false,
   triggerMaxWidthClassName,
@@ -1440,6 +1470,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       <ModelAccessPromptModal
         promptKind={restrictedPrompt}
         onClose={() => setRestrictedPrompt(null)}
+        anchorRef={anchorAccessPrompt ? containerRef : undefined}
+        onChooseModel={anchorAccessPrompt ? () => {
+          setRestrictedPrompt(null);
+          toggleOpen();
+        } : undefined}
       />
     );
   };
@@ -1480,7 +1515,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
 
   return (
     <div ref={containerRef} className={`relative ${disabled ? 'cursor-wait' : 'cursor-pointer'}`}>
-      <Tooltip content={triggerLabel} position={TooltipPosition.Top} delay={300} multiline disabled={!iconOnly || isOpen}>
+      <Tooltip content={triggerLabel} position={TooltipPosition.Top} delay={300} multiline disabled={!iconOnly || isOpen || Boolean(restrictedPrompt)}>
         <button
           type="button"
           disabled={disabled}

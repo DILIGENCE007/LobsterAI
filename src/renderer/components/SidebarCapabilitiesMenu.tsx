@@ -14,6 +14,7 @@ const menuItems = [
   { view: MainView.Connectors, label: 'connectors', Icon: SidebarMcpIcon },
 ] as const;
 const MENU_EDGE_GAP = 8;
+const HOVER_CLOSE_DELAY = 180;
 
 type CapabilityView = typeof menuItems[number]['view'];
 
@@ -67,21 +68,44 @@ const SidebarCapabilitiesMenu: React.FC<SidebarCapabilitiesMenuProps> = ({
 
   useEffect(() => {
     if (!isOpen) return;
+    let hoverCloseTimer: ReturnType<typeof setTimeout> | undefined;
+    const cancelHoverClose = () => {
+      clearTimeout(hoverCloseTimer);
+      hoverCloseTimer = undefined;
+    };
+    const isInsideMenu = (target: Node) => (
+      triggerRef.current?.contains(target) || menuRef.current?.contains(target)
+    );
     const dismissOutside = (event: Event) => {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      if (isInsideMenu(event.target as Node)) return;
       setIsOpen(false);
     };
-    const dismissOnReflow = () => setIsOpen(false);
+    const dismissOnPointerMove = (event: PointerEvent) => {
+      if (event.pointerType === 'touch') return;
+      if (isInsideMenu(event.target as Node)) {
+        cancelHoverClose();
+      } else if (hoverCloseTimer === undefined) {
+        // Allow crossing the gap between the trigger and its portaled menu.
+        hoverCloseTimer = setTimeout(() => setIsOpen(false), HOVER_CLOSE_DELAY);
+      }
+    };
+    const dismissMenu = () => setIsOpen(false);
     document.addEventListener('pointerdown', dismissOutside);
     document.addEventListener('focusin', dismissOutside);
-    window.addEventListener('resize', dismissOnReflow);
-    window.addEventListener('scroll', dismissOnReflow, true);
+    document.addEventListener('pointermove', dismissOnPointerMove);
+    document.addEventListener('pointerleave', dismissMenu);
+    window.addEventListener('blur', dismissMenu);
+    window.addEventListener('resize', dismissMenu);
+    window.addEventListener('scroll', dismissMenu, true);
     return () => {
+      cancelHoverClose();
       document.removeEventListener('pointerdown', dismissOutside);
       document.removeEventListener('focusin', dismissOutside);
-      window.removeEventListener('resize', dismissOnReflow);
-      window.removeEventListener('scroll', dismissOnReflow, true);
+      document.removeEventListener('pointermove', dismissOnPointerMove);
+      document.removeEventListener('pointerleave', dismissMenu);
+      window.removeEventListener('blur', dismissMenu);
+      window.removeEventListener('resize', dismissMenu);
+      window.removeEventListener('scroll', dismissMenu, true);
     };
   }, [isOpen]);
 

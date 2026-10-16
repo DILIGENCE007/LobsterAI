@@ -54,13 +54,25 @@ export function companionStageOpensLeft(orb: CompanionRect, workArea: CompanionR
   return orb.x + orb.width / 2 >= workArea.x + workArea.width / 2;
 }
 
+/** Prefer the left whenever the card fits; optional menu space must not force it to the right. */
+function companionCardOpensLeft(orb: CompanionRect, size: CompanionSize, workArea: CompanionRect): boolean {
+  const fitsLeft = orb.x - size.width + DesktopCompanionSize.SurfacePad >= workArea.x;
+  const fitsRight = orb.x + orb.width - DesktopCompanionSize.SurfacePad + size.width <= workArea.x + workArea.width;
+  return fitsLeft || (!fitsRight && companionStageOpensLeft(orb, workArea));
+}
+
 /**
  * Places a bubble, the drop zone or the quick panel right beside the orb, on
- * the side with more room, bottom-aligned so it reads as coming out of the
+ * the selected side (defaulting to more room), bottom-aligned so it reads as coming out of the
  * character.
  */
-export function resolveCompanionStageBounds(orb: CompanionRect, size: CompanionSize, workArea: CompanionRect): CompanionRect {
-  const x = companionStageOpensLeft(orb, workArea) ? orb.x - size.width + DesktopCompanionSize.SurfacePad : orb.x + orb.width - DesktopCompanionSize.SurfacePad;
+export function resolveCompanionStageBounds(
+  orb: CompanionRect,
+  size: CompanionSize,
+  workArea: CompanionRect,
+  opensLeft = companionStageOpensLeft(orb, workArea),
+): CompanionRect {
+  const x = opensLeft ? orb.x - size.width + DesktopCompanionSize.SurfacePad : orb.x + orb.width - DesktopCompanionSize.SurfacePad;
   const y = orb.y + orb.height - size.height + DesktopCompanionSize.SurfacePad / 2;
   return clampCompanionBounds({ ...size, x, y }, workArea);
 }
@@ -85,15 +97,15 @@ export function resolveCompanionComposerLayout(
   workArea: CompanionRect,
 ): CompanionComposerLayout {
   const placement = !orb ? DesktopCompanionPanelPlacement.Center
-    : companionStageOpensLeft(orb, workArea) ? DesktopCompanionPanelPlacement.Left : DesktopCompanionPanelPlacement.Right;
+    : companionCardOpensLeft(orb, card, workArea) ? DesktopCompanionPanelPlacement.Left : DesktopCompanionPanelPlacement.Right;
+  const opensLeft = placement === DesktopCompanionPanelPlacement.Left;
   const cardBounds = orb
-    ? resolveCompanionStageBounds(orb, card, workArea)
+    ? resolveCompanionStageBounds(orb, card, workArea, opensLeft)
     : clampCompanionBounds({
       ...card,
       x: workArea.x + (workArea.width - card.width) / 2,
       y: workArea.y + workArea.height * CENTERED_PANEL_BOTTOM - card.height,
     }, workArea);
-  const opensLeft = placement === DesktopCompanionPanelPlacement.Left;
   const above = Math.max(0, Math.min(room.above, cardBounds.y - workArea.y));
   const side = Math.max(0, Math.min(room.side, opensLeft
     ? cardBounds.x - workArea.x
@@ -107,6 +119,12 @@ export function resolveCompanionComposerLayout(
       height: cardBounds.height + above,
     },
   };
+}
+
+/** Task bubbles prefer the orb's left on every display; use the right only when the left cannot fit. */
+export function resolveCompanionResultBounds(orb: CompanionRect | null, size: CompanionSize, workArea: CompanionRect): CompanionRect {
+  if (!orb) return resolveCompanionComposerLayout(null, size, { above: 0, side: 0 }, workArea).bounds;
+  return resolveCompanionStageBounds(orb, size, workArea, companionCardOpensLeft(orb, size, workArea));
 }
 
 /** The welcome page fills its window, so none of it may overlap the orb's hit area. */
