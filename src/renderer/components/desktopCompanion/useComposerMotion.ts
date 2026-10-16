@@ -51,31 +51,51 @@ export function useComposerMotion(
   ref: RefObject<HTMLElement | null>,
   visible: boolean,
   placement: DesktopCompanionPanelPlacement,
+  revision: number,
 ): (exit: ComposerExit) => Promise<void> {
   const placementRef = useRef(placement);
   placementRef.current = placement;
-  const exitAnimationRef = useRef<Animation | null>(null);
+  const animationRef = useRef<Animation | null>(null);
 
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
-    exitAnimationRef.current?.cancel();
-    exitAnimationRef.current = null;
+    animationRef.current?.cancel();
+    animationRef.current = null;
     // Invisible between openings, so a reopened window never flashes the last frame.
     element.style.opacity = visible ? '' : '0';
-    if (!visible || prefersReducedMotion()) return;
+    if (!visible) return;
     element.style.transformOrigin = MOTION_ORIGIN[placementRef.current];
-    element.animate(ENTER_KEYFRAMES, ENTER_OPTIONS);
-  }, [ref, visible]);
+    const animation = prefersReducedMotion() ? null : element.animate(ENTER_KEYFRAMES, ENTER_OPTIONS);
+    animationRef.current = animation;
+    // Hold the transparent first frame until the native window has been shown.
+    if (animation) { animation.pause(); animation.currentTime = 0; }
+    let active = true;
+    // The first frame also reports the card's measured size. Wait one more frame
+    // so the window is positioned and Chromium has painted before revealing it.
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        void window.electron.desktopCompanion.panelReady(revision).then(shown => {
+          if (active && shown && animationRef.current === animation) animation?.play();
+        }).catch(error => console.error('[CompanionComposer] failed to show the panel', error));
+      });
+    });
+    return () => {
+      active = false;
+      cancelAnimationFrame(frame);
+      animation?.cancel();
+      if (animationRef.current === animation) animationRef.current = null;
+    };
+  }, [ref, visible, revision]);
 
   return useCallback(async (exit: ComposerExit) => {
     const element = ref.current;
     if (!element || prefersReducedMotion()) return;
     element.style.transformOrigin = MOTION_ORIGIN[placementRef.current];
-    exitAnimationRef.current?.cancel();
+    animationRef.current?.cancel();
     const duration = EXIT_DURATION_MS[exit];
     const animation = element.animate(EXIT_KEYFRAMES[exit], { duration, easing: 'ease-in', fill: 'forwards' });
-    exitAnimationRef.current = animation;
+    animationRef.current = animation;
     // Never hold the panel open on an animation the window is not painting.
     await Promise.race([
       animation.finished.then(() => undefined, () => undefined),

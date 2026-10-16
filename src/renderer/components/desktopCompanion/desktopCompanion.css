@@ -94,7 +94,8 @@ svg { flex-shrink: 0; }
 /* ── Orb ───────────────────────────────────────────────── */
 
 .orb-surface { width: 100%; height: 100%; display: grid; place-items: center; user-select: none; }
-.orb-button { position: relative; width: 76px; height: 76px; display: grid; place-items: center; border-radius: 50%; cursor: grab; touch-action: none; }
+/* Use the system pointing hand on hover; reserve the grab cursor for an active drag. */
+.orb-button { position: relative; width: 76px; height: 76px; display: grid; place-items: center; border-radius: 50%; cursor: pointer; touch-action: none; }
 .orb-button[data-moving="true"] { cursor: grabbing; }
 .orb-button:focus-visible { outline-offset: -4px; }
 /* Hover and drag use a slight lift or scale while keeping the character shadow-free. */

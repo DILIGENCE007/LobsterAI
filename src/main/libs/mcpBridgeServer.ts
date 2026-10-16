@@ -57,6 +57,7 @@ export type MediaGenerationRequest = {
   context: {
     sessionKey: string;
     toolCallId: string;
+    runId?: string;
   };
 };
 

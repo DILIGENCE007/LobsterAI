@@ -24,11 +24,14 @@ import { CoworkSystemMessageKind } from '../common/coworkSystemMessages';
 import { AgentAvatarSvg, DefaultAgentAvatarIcon, encodeAgentAvatarIcon } from '../shared/agent/avatar';
 import { AgentId, AgentSource } from '../shared/agent/constants';
 import {
+  COWORK_MESSAGE_PAGE_SIZE,
   COWORK_SEARCH_HISTORY_MAX_MESSAGE_CONTENT_CODE_UNITS,
   COWORK_SEARCH_MESSAGE_PAGE_MAX_CONTENT_BYTES,
   CoworkForkMode,
 } from '../shared/cowork/constants';
+import { buildCoworkTurnUsage, CoworkTurnUsageStatus } from '../shared/cowork/llmTurnUsage';
 import { OpenClawCronRunMetadataKey } from '../shared/cowork/openclawCronSessionKey';
+import { ModelPresetId } from '../shared/modelPresets/constants';
 import { CoworkStore } from './coworkStore';
 import { ContinuityCapsuleSource } from './libs/agentEngine/coworkContinuityCapsule';
 import type { SessionProjectionChanges } from './libs/sessionProjectionNotifications';
@@ -56,6 +59,7 @@ function setupDb(): void {
       cwd TEXT NOT NULL,
       system_prompt TEXT NOT NULL DEFAULT '',
       model_override TEXT NOT NULL DEFAULT '',
+      model_preset_id TEXT,
       thinking_level TEXT NOT NULL DEFAULT '',
       execution_mode TEXT NOT NULL DEFAULT 'local',
       active_skill_ids TEXT,
@@ -834,6 +838,68 @@ test('getTurnStartTimestampAt uses the earliest time when a channel user message
   expect(store.getTurnStartTimestampAt(sid, 3)).toBe(2000);
   // Without an earlier user message the turn starts at its first message.
   expect(store.getTurnStartTimestampAt(sid, 0)).toBe(500);
+});
+
+test.each([null, ModelPresetId.Balanced, ModelPresetId.Ultimate])(
+  'getSession retains paged turn usage after a model-change notice (%s)',
+  (presetId) => {
+    const sid = 'sess-model-change-usage';
+    insertSession(sid);
+    const turnUsage = buildCoworkTurnUsage({
+      requestCount: 1,
+      failedRequestCount: 0,
+      models: ['deepseek-v4.1-flash'],
+      creditsUsed: 1.25,
+      uncachedInputTokens: 100,
+      outputTokens: 50,
+    }, { traceId: '4bf92f3577b34da6a3ce929d0e0e4736', now: 40_000 });
+    expect(turnUsage?.status).toBe(CoworkTurnUsageStatus.Settled);
+    insertMessage('user-1', sid, 'user', 'long task', JSON.stringify({ turnUsage }), 1, 1000);
+    for (let index = 2; index <= COWORK_MESSAGE_PAGE_SIZE; index += 1) {
+      insertMessage(`reply-${index}`, sid, 'assistant', 'reply', null, index, index * 1000);
+    }
+    expect(store.getSession(sid)?.messages[0]?.metadata?.turnUsage).toEqual(turnUsage);
+
+    store.updateSession(sid, { modelOverride: 'next-model', modelPresetId: presetId });
+    store.addMessage(sid, {
+      type: 'system',
+      content: '',
+      metadata: {
+        kind: CoworkSystemMessageKind.ModelChanged,
+        modelChange: { previousModelRef: 'deepseek-v4.1-flash', nextModelRef: 'next-model', nextPresetId: presetId },
+      },
+    });
+
+    // The notice pushes the user message, which owns the usage, outside the page.
+    const session = store.getSession(sid);
+    expect(session?.messagesOffset).toBe(1);
+    expect(session?.messages).toHaveLength(COWORK_MESSAGE_PAGE_SIZE);
+    expect(session?.messages.some(message => message.id === 'user-1')).toBe(false);
+    expect(session?.leadingTurnUsage).toEqual({ userMessageId: 'user-1', turnUsage });
+    expect(session?.leadingTurnStartTimestamp).toBe(1000);
+    expect(store.getMessage(sid, 'user-1')?.metadata?.turnUsage).toEqual(turnUsage);
+
+    // Once the user message is loaded, usage comes from its metadata directly.
+    expect(store.getSession(sid, COWORK_MESSAGE_PAGE_SIZE + 1)?.leadingTurnUsage).toBeNull();
+  },
+);
+
+test('getSession does not inherit usage when the page starts with a new user message', () => {
+  const sid = 'sess-usage-new-turn';
+  insertSession(sid);
+  insertMessage('user-1', sid, 'user', 'first task', null, 1, 1000);
+  insertMessage('assistant-1', sid, 'assistant', 'first reply', null, 2, 2000);
+  insertMessage('user-2', sid, 'user', 'next task', null, 3, 3000);
+  insertMessage('assistant-2', sid, 'assistant', 'next reply', null, 4, 4000);
+
+  const session = store.getSession(sid, 2);
+  expect(session?.messagesOffset).toBe(2);
+  expect(session?.leadingTurnUsage).toBeNull();
+  expect(session?.leadingTurnStartTimestamp).toBe(3000);
+
+  const contextSpy = vi.spyOn(store, 'getTurnContextAt');
+  expect(store.getSession(sid, 0)?.messages).toEqual([]);
+  expect(contextSpy).not.toHaveBeenCalled();
 });
 
 test('getSession returns all messages when ALL have corrupt metadata', () => {

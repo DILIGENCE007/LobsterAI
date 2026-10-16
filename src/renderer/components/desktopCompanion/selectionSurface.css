@@ -68,12 +68,15 @@
 }
 .sel-surface[data-menu="up"] .sel-stack { top: auto; bottom: var(--surface-pad); }
 .sel-toolbar {
-  display: flex; align-items: center; gap: 2px; width: max-content; height: 42px; padding: 4px;
+  display: flex; align-items: center; gap: 6px; width: max-content; height: 48px; padding: 8px;
   background: var(--s-bar-bg); border: 1px solid var(--s-bar-line); border-radius: 12px; box-shadow: var(--s-bar-shadow);
+  /* Continuous top/bottom rails and the spaces between actions move the native window. */
+  -webkit-app-region: drag; cursor: default; user-select: none;
   animation: sel-in 0.14s cubic-bezier(0.2, 0, 0, 1);
 }
+.sel-toolbar button { -webkit-app-region: no-drag; cursor: pointer; }
 .sel-tool {
-  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 9px; border-radius: 8px;
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border-radius: 7px;
   color: var(--s-ink); font-size: 14px; font-weight: 500; line-height: 1; white-space: nowrap; transition: background-color 0.12s;
 }
 .sel-tool svg { width: 18px; height: 18px; color: var(--s-ink); stroke-width: 1.8; transition: color 0.12s, transform 0.15s; }

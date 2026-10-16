@@ -28,6 +28,7 @@ import { CompanionFileKind } from '../../shared/desktopCompanion/fileKinds';
 import { CompanionHintRule } from '../../shared/desktopCompanion/hintPolicy';
 import { LanguageTool, LanguageToolCode, LanguageToolsIpc, SpeechCommand, SpeechStatus } from '../../shared/desktopCompanion/languageTools';
 import { COMPANION_RECENT_TASK_LIMIT, COMPANION_RECENT_TASKS_KEY, CompanionResultIpc, type CompanionTaskInfo } from '../../shared/desktopCompanion/results';
+import { CompanionSelectionAction } from '../../shared/desktopCompanion/selectionActions';
 import { CompanionToolbarItem, DEFAULT_COMPANION_TOOLBAR_ORDER } from '../../shared/desktopCompanion/selectionToolbar';
 import { CompanionScreenshotController } from './companionScreenshot';
 import { CompanionSelectionController } from './companionSelection';
@@ -177,18 +178,101 @@ function clickMenu(label: string) {
   return menu().find(item => item.label === label)!.click!(null as never, undefined, {} as never);
 }
 
+function readyPanel(panel = mocks.windows.at(-1)) {
+  return invoke(DesktopCompanionIpc.PanelReady, manager.getState().panelOpenRevision, panel.webContents);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(globalShortcut.register).mockReturnValue(true);
   mocks.windows.length = 0;
   mocks.handlers.clear();
-  values = new Map([[DesktopCompanionStoreKey.Greeted, true]]);
+  // Most lifecycle cases start with the orb explicitly disabled and open surfaces on demand.
+  values = new Map<string, unknown>([
+    [DesktopCompanionStoreKey.Greeted, true],
+    [DesktopCompanionStoreKey.Preferences, { enabled: false }],
+  ]);
 });
 afterEach(() => {
   manager?.dispose();
   vi.restoreAllMocks();
   ipcMain.removeAllListeners();
   vi.useRealTimers();
+});
+
+describe('orb edge snapping', () => {
+  const rightEdge = 1280 - DesktopCompanionSize.BrandOrb.width;
+  const drag = (phase: DesktopCompanionDragPhase, x: number, y = 330) => {
+    vi.spyOn(screen, 'getCursorScreenPoint').mockReturnValue({ x, y });
+    ipcMain.emit(DesktopCompanionIpc.Drag,
+      { sender: orb().webContents, senderFrame: orb().webContents.mainFrame }, phase);
+  };
+
+  beforeEach(() => {
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    values.set(DesktopCompanionStoreKey.Position, { x: 200, y: 300 });
+  });
+
+  test.each([
+    { edgeX: 0, releaseX: 30, placement: DesktopCompanionPanelPlacement.Right },
+    { edgeX: rightEdge, releaseX: rightEdge - 30, placement: DesktopCompanionPanelPlacement.Left },
+  ])('snaps to x=$edgeX on release, aligns the panel and restores the saved position', ({ edgeX, releaseX, placement }) => {
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows.at(-1);
+    drag(DesktopCompanionDragPhase.Start, 230);
+    drag(DesktopCompanionDragPhase.Move, releaseX + 30);
+    expect(orb().bounds).toMatchObject({ x: releaseX, y: 300 });
+    expect(values.get(DesktopCompanionStoreKey.Position)).toEqual({ x: 200, y: 300 });
+    drag(DesktopCompanionDragPhase.End, releaseX + 30);
+    expect(orb().bounds).toMatchObject({ x: edgeX, y: 300 });
+    expect(values.get(DesktopCompanionStoreKey.Position)).toEqual({ x: edgeX, y: 300 });
+    expect(manager.getState().panelPlacement).toBe(placement);
+    if (placement === DesktopCompanionPanelPlacement.Right) {
+      expect(panel.bounds.x + DesktopCompanionSize.SurfacePad).toBe(edgeX + DesktopCompanionSize.BrandOrb.width);
+    } else {
+      expect(panel.bounds.x + panel.bounds.width - DesktopCompanionSize.SurfacePad).toBe(edgeX);
+    }
+    manager.dispose();
+    mocks.windows.length = 0;
+    create();
+    expect(orb().bounds).toMatchObject({ x: edgeX, y: 300 });
+  });
+
+  test.each([0, rightEdge])('can drag directly away from the snapped edge at x=%i', edgeX => {
+    values.set(DesktopCompanionStoreKey.Position, { x: edgeX, y: 300 });
+    create();
+    drag(DesktopCompanionDragPhase.Start, edgeX + 30);
+    const distance = DesktopCompanionSize.OrbSnapDistance + 1;
+    const x = edgeX === 0 ? distance : edgeX - distance;
+    drag(DesktopCompanionDragPhase.Move, x + 30);
+    drag(DesktopCompanionDragPhase.End, x + 30);
+    expect(orb().bounds).toMatchObject({ x, y: 300 });
+    expect(values.get(DesktopCompanionStoreKey.Position)).toEqual({ x, y: 300 });
+  });
+
+  test.each([30, rightEdge - 30])('a click near an edge at x=%i does not move the orb', x => {
+    values.set(DesktopCompanionStoreKey.Position, { x, y: 300 });
+    create();
+    drag(DesktopCompanionDragPhase.Start, x + 30);
+    drag(DesktopCompanionDragPhase.Cancel, x + 30);
+    expect(orb().bounds).toMatchObject({ x, y: 300 });
+    expect(values.get(DesktopCompanionStoreKey.Position)).toEqual({ x, y: 300 });
+  });
+
+  test.each([
+    { displayX: -1440, cursorX: -1380, edgeX: -1440 },
+    { displayX: 1280, cursorX: 2660, edgeX: 2660 },
+  ])('snaps to the display at x=$displayX under the cursor when crossing monitors', ({ displayX, cursorX, edgeX }) => {
+    create();
+    drag(DesktopCompanionDragPhase.Start, 230);
+    vi.spyOn(screen, 'getDisplayNearestPoint').mockReturnValue({
+      workArea: { x: displayX, y: 25, width: 1440, height: 875 },
+    } as Electron.Display);
+    drag(DesktopCompanionDragPhase.End, cursorX, 430);
+    expect(orb().bounds).toMatchObject({ x: edgeX, y: 400 });
+    expect(values.get(DesktopCompanionStoreKey.Position)).toEqual({ x: edgeX, y: 400 });
+  });
 });
 
 describe('desktop companion lifecycle', () => {
@@ -209,14 +293,17 @@ describe('desktop companion lifecycle', () => {
     expect(reportAnalytics).toHaveBeenCalledTimes(count);
   });
 
-  test('attributes panel openings to shortcut and orb without duplicate opens on resize', () => {
+  test('attributes panel openings to shortcut and orb without duplicate opens on readiness or resize', () => {
     create();
     const shortcut = vi.mocked(globalShortcut.register).mock.calls[0][1];
     shortcut();
     const panel = mocks.windows[1];
+    expect(readyPanel(panel)).toBe(true);
+    expect(readyPanel(panel)).toBe(true);
     ipcMain.emit(DesktopCompanionIpc.ResizeSurface, { sender: panel.webContents, senderFrame: panel.webContents.mainFrame }, { width: 380, height: 300 });
     shortcut();
     invoke(DesktopCompanionIpc.ToggleOrb);
+    expect(readyPanel(panel)).toBe(true);
     expect(reportAnalytics.mock.calls.map(([event]) => event).filter(event => event.interactionType === Interaction.Open)).toEqual([
       expect.objectContaining({ source: AnalyticsSource.Shortcut, surface: DesktopCompanionSurface.Panel }),
       expect.objectContaining({ source: AnalyticsSource.Orb, surface: DesktopCompanionSurface.Panel }),
@@ -238,6 +325,26 @@ describe('desktop companion lifecycle', () => {
     expect(() => invoke(DesktopCompanionIpc.ReportAnalytics, event, foreign.webContents)).toThrow();
     expect(() => mocks.handlers.get(DesktopCompanionIpc.ReportAnalytics)!({ sender: panel.webContents, senderFrame: {} }, event)).toThrow();
   });
+
+  test('selection task references survive panel dismissal and draft persistence until explicitly removed', () => {
+    create();
+    const selectionContext = {
+      id: 'selection-task', action: CompanionSelectionAction.Summarize, sourceText: 'Selected report',
+      turns: [{ role: 'assistant', content: 'Report summary' }],
+    };
+    invoke(DesktopCompanionIpc.SetDraft, {
+      prompt: '', attachments: [], workingDirectory: '/tasks', selectionContext,
+    });
+    invoke(DesktopCompanionIpc.TogglePanel);
+    invoke(DesktopCompanionIpc.HidePanel);
+    expect(manager.getState().draft.selectionContext).toEqual(selectionContext);
+    manager.dispose();
+    create();
+    expect(manager.getState().draft.selectionContext).toEqual(selectionContext);
+    invoke(DesktopCompanionIpc.SetDraft, { ...manager.getState().draft, selectionContext: undefined });
+    expect(manager.getState().draft.selectionContext).toBeUndefined();
+  });
+
   test.each([LanguageTool.Translate, LanguageTool.Tts])('%s follows the current toolbar through resize, drag and reuse', tool => {
     create();
     const anchor = vi.spyOn(CompanionSelectionController.prototype, 'selectionAnchor', 'get')
@@ -393,7 +500,19 @@ describe('desktop companion lifecycle', () => {
     expect(menu().some(item => item.label === 'desktopToolsPlayback')).toBe(false);
   });
 
-  test('a new profile creates no floating window and opening a temporary panel does not opt in', () => {
+  test.each([undefined, {}, { shortcut: '' }])('starts with a visible orb when saved preferences omit enabled: %j', preferences => {
+    values.set(DesktopCompanionStoreKey.Preferences, preferences);
+    create();
+    expect(manager.getState().preferences.enabled).toBe(true);
+    expect(mocks.windows).toHaveLength(2);
+    orb().emit('ready-to-show');
+    expect(orb().visible).toBe(true);
+    expect(foreground.start).toHaveBeenCalled();
+    expect(fileDrag.start).toHaveBeenCalled();
+    expect(manager.getState().panelVisible).toBe(false);
+  });
+
+  test('a disabled profile creates no floating window and opening a temporary panel does not opt in', () => {
     create();
     expect(manager.getState().preferences.enabled).toBe(false);
     expect(mocks.windows).toHaveLength(1);
@@ -633,6 +752,60 @@ describe('desktop companion lifecycle', () => {
     expect(manager.isComposerWebContents(recreated.webContents)).toBe(false);
   });
 
+  test('first open and reuse wait for the current composer frame instead of showing a cached frame', () => {
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows.at(-1);
+    const show = vi.spyOn(panel, 'show');
+    const focus = vi.spyOn(panel, 'focus');
+    panel.emit('ready-to-show');
+    expect(panel.visible).toBe(false);
+    expect(readyPanel(panel)).toBe(true);
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(readyPanel(panel)).toBe(true);
+    expect(show).toHaveBeenCalledTimes(1);
+
+    manager.hidePanel();
+    manager.togglePanel();
+    expect(panel.visible).toBe(false);
+    expect(readyPanel(panel)).toBe(true);
+    expect(show).toHaveBeenCalledTimes(2);
+    expect(focus).toHaveBeenCalledTimes(2);
+  });
+
+  test('closing during preparation invalidates the old frame, including a rapid reopen', () => {
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows.at(-1);
+    const previousOpening = manager.getState().panelOpenRevision;
+    manager.hidePanel();
+    expect(invoke(DesktopCompanionIpc.PanelReady, previousOpening, panel.webContents)).toBe(false);
+    manager.togglePanel();
+    expect(manager.getState().panelOpenRevision).toBeGreaterThan(previousOpening);
+    expect(invoke(DesktopCompanionIpc.PanelReady, previousOpening, panel.webContents)).toBe(false);
+    expect(panel.visible).toBe(false);
+    // Delayed native notifications must not cancel the new preparation.
+    panel.emit('hide');
+    expect(manager.getState().panelVisible).toBe(true);
+    expect(readyPanel(panel)).toBe(true);
+  });
+
+  test('only the current composer and opening can reveal the panel', () => {
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows.at(-1);
+    const opening = manager.getState().panelOpenRevision;
+    expect(invoke(DesktopCompanionIpc.PanelReady, opening, main.webContents)).toBe(false);
+    for (const value of [null, undefined, true, String(opening), NaN, opening + 1]) {
+      expect(invoke(DesktopCompanionIpc.PanelReady, value, panel.webContents)).toBe(false);
+    }
+    invoke(DesktopCompanionIpc.SetDraft, { prompt: 'Keep my draft', attachments: [] });
+    expect(manager.getState().panelOpenRevision).toBe(opening);
+    expect(panel.visible).toBe(false);
+    expect(readyPanel(panel)).toBe(true);
+  });
+
   test('hiding the panel flushes unsent materials and keeps the window alive', () => {
     create();
     manager.togglePanel();
@@ -653,6 +826,7 @@ describe('desktop companion lifecycle', () => {
     create();
     manager.togglePanel();
     const panel = mocks.windows[1];
+    readyPanel(panel);
     invoke(DesktopCompanionIpc.SetDraft, { prompt: 'Keep my draft', attachments: [{ path: '/tmp/a.pdf', name: 'a.pdf' }] });
     panel.blur();
     vi.advanceTimersByTime(200);
@@ -661,6 +835,7 @@ describe('desktop companion lifecycle', () => {
     expect(values.get(DesktopCompanionStoreKey.Draft)).toMatchObject({ prompt: 'Keep my draft', attachments: [{ path: '/tmp/a.pdf' }] });
     manager.togglePanel();
     expect(mocks.windows).toHaveLength(2);
+    readyPanel(panel);
     expect(panel.visible).toBe(true);
     expect(panel.focused).toBe(true);
   });
@@ -670,6 +845,7 @@ describe('desktop companion lifecycle', () => {
     create();
     manager.togglePanel();
     const panel = mocks.windows[1];
+    readyPanel(panel);
     panel.blur();
     panel.emit('sheet-begin');
     vi.advanceTimersByTime(200);
@@ -686,6 +862,7 @@ describe('desktop companion lifecycle', () => {
     create();
     manager.togglePanel();
     const panel = mocks.windows[1];
+    readyPanel(panel);
     panel.enabled = false;
     panel.blur();
     vi.advanceTimersByTime(200);
@@ -699,6 +876,7 @@ describe('desktop companion lifecycle', () => {
     panel.blur();
     manager.hidePanel();
     manager.togglePanel();
+    readyPanel(panel);
     vi.advanceTimersByTime(200);
     expect(manager.getState().panelVisible).toBe(true);
   });
@@ -836,6 +1014,7 @@ describe('orb surface toggle', () => {
           result: { visible: visible && !!status },
           draft: { prompt: 'Keep my draft' },
         });
+        if (visible && !status) readyPanel();
         expect(mocks.windows.at(-1).visible).toBe(visible);
       }
       expect(manager.getState().result.recentTasks).toEqual(status ? [{ sessionId: 'task', viewedAt: 0 }] : []);
@@ -850,6 +1029,7 @@ describe('orb surface toggle', () => {
     create();
     invoke(DesktopCompanionIpc.ToggleOrb, undefined, orb().webContents);
     const surface = mocks.windows.at(-1);
+    if (!results) readyPanel(surface);
     press();
     surface.blur();
     vi.advanceTimersByTime(200);
@@ -858,11 +1038,13 @@ describe('orb surface toggle', () => {
     expect(manager.getState()).toMatchObject({ panelVisible: false, result: { visible: false } });
     expect(surface.visible).toBe(false);
     invoke(DesktopCompanionIpc.ToggleOrb, undefined, orb().webContents);
+    if (!results) readyPanel(surface);
     expect(surface.visible).toBe(true);
     press();
     surface.blur();
     release();
     invoke(DesktopCompanionIpc.ToggleOrb, undefined, orb().webContents);
+    if (!results) readyPanel(surface);
     vi.advanceTimersByTime(200);
     expect(surface.visible).toBe(true);
   });
@@ -872,6 +1054,7 @@ describe('orb surface toggle', () => {
     values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
     create();
     invoke(DesktopCompanionIpc.ToggleOrb, undefined, orb().webContents);
+    readyPanel();
     press();
     ipcMain.emit(DesktopCompanionIpc.Drag,
       { sender: orb().webContents, senderFrame: orb().webContents.mainFrame }, DesktopCompanionDragPhase.Cancel);
@@ -890,6 +1073,7 @@ describe('orb surface toggle', () => {
     press(); release();
     press(); release();
     surface.emit('hide');
+    if (!results) readyPanel(surface);
     expect(surface.visible).toBe(true);
     expect(manager.getState()).toMatchObject({ panelVisible: !results, result: { visible: results } });
     surface.hide();

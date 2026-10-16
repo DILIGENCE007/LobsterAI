@@ -135,6 +135,7 @@ import type {
   LocalWebService,
 } from '../../shared/localWebServices/constants';
 import type { McpToolDiscoveryRequest, McpToolDiscoveryResult } from '../../shared/mcp/toolDiscovery';
+import type { AvailableModelPreset, ModelPresetId, ModelPresetPreference } from '../../shared/modelPresets/constants';
 import type { OfficeBridges } from '../../shared/office/editors';
 import type {
   OpenClawEngineErrorCode,
@@ -143,6 +144,7 @@ import type {
   OpenClawLoopbackRepairOutcome,
 } from '../../shared/openclawEngine/constants';
 import type { OpenClawRepairStage } from '../../shared/openclawEngine/repair';
+import type { ModelThinkingLevel } from '../../shared/providers/modelThinking';
 import type {
   PublishingQuota,
   PublishingQuotaErrorData,
@@ -1014,6 +1016,7 @@ interface IElectronAPI {
       browserAnnotations?: CoworkBrowserAnnotationMessageBatch[];
       agentId?: string;
       modelOverride?: string;
+      modelPresetId?: ModelPresetId;
       thinkingLevel?: string;
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string; sizeBytes?: number; localPath?: string; previewMimeType?: string; previewBase64Data?: string }>;
       mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
@@ -2065,6 +2068,12 @@ interface IElectronAPI {
       input: ActivityHostExecuteActionInput,
     ) => Promise<ActivityResult<ActivityActionResponse>>;
   };
+  modelPresets: {
+    available: () => Promise<{ success: boolean; data?: AvailableModelPreset[]; error?: string }>;
+    getPreferences: () => Promise<{ success: boolean; data?: Record<string, ModelPresetPreference>; error?: string }>;
+    setPreference: (agentId: string, presetId: ModelPresetId | null, thinkingLevel?: ModelThinkingLevel) => Promise<{ success: boolean; error?: string }>;
+    selectSession: (sessionId: string, presetId: ModelPresetId, thinkingLevel?: ModelThinkingLevel) => Promise<{ success: boolean; data?: CoworkSession; error?: string }>;
+  };
   auth: {
     login: (loginUrl?: string) => Promise<AuthLoginResult>;
     exchange: (
@@ -2120,6 +2129,12 @@ interface IElectronAPI {
         explicitContextCache?: boolean;
         costMultiplier?: number;
         description?: string;
+        limitedFree?: boolean;
+        limitedFreeActive?: boolean;
+        limitedFreeStartAt?: string | null;
+        limitedFreeEndAt?: string | null;
+        subscriptionPriority?: boolean;
+        busy?: boolean;
         moreModel?: boolean;
         accessible?: boolean;
         restrictionHint?: string;
@@ -2139,6 +2154,7 @@ interface IElectronAPI {
         contextWindow?: number | null;
         costMultiplier?: number;
         moreModel?: boolean;
+        busy?: boolean;
       }>;
       imageModels?: Array<{
         modelId: string;

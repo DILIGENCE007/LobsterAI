@@ -177,7 +177,7 @@ export class CompanionSelectionController {
   private capturePressed = false;
   /** A screenshot tool's overlay is in front; the shot is done when it leaves. */
   private captureOverlay = false;
-  /** The user dragged the answer card away from the selection. */
+  /** The user dragged the toolbar or answer card away from the selection. */
   private moved = false;
   private pendingShow = false;
   private showTimer: ReturnType<typeof setTimeout> | undefined;
@@ -290,7 +290,11 @@ export class CompanionSelectionController {
         if (!selection || selection.tooLarge || !isCompanionSelectionAction(command.action)) return;
         this.host.analytics?.report({ action: CompanionAnalyticsAction.Action, source: CompanionAnalyticsSource.Selection,
           interactionType: Interaction.Run, tool: command.action });
-        this.cardHeight = this.anchor ? companionCardSlot(this.anchor, this.workArea(this.anchor)).room : DesktopCompanionSize.Answer.height;
+        // Replace the visible toolbar, excluding any menu space above it.
+        this.moved = false;
+        this.cardHeight = this.toolbarBounds
+          ? Math.min(DesktopCompanionSize.Answer.height, screen.getDisplayNearestPoint(this.toolbarBounds).workArea.height)
+          : this.anchor ? companionCardSlot(this.anchor, this.workArea(this.anchor)).room : DesktopCompanionSize.Answer.height;
         this.selection = {
           ...selection,
           mode: DesktopCompanionSelectionMode.Answer,
@@ -470,6 +474,7 @@ export class CompanionSelectionController {
     win.on('closed', () => { if (this.window === win) this.window = null; });
     // Only a drag by the user emits will-move; a card moved out of the way stays open.
     win.on('will-move', () => this.onUserMove());
+    win.on('move', () => this.updateToolbarPosition());
     win.webContents.on('did-finish-load', () => this.sendSelection());
     this.window = win;
     return win;
@@ -543,6 +548,14 @@ export class CompanionSelectionController {
 
   private onMouseUp = (data: MouseEventData): void => {
     if (data?.button !== LEFT_BUTTON || !valid(data)) return;
+    if (this.moved && this.selection?.mode === DesktopCompanionSelectionMode.Toolbar) {
+      // Recheck screen edges after the drag, keeping the visible bar in place
+      // when its reserved menu space needs to switch sides.
+      this.updateToolbarPosition();
+      const menuUp = this.selection.menuUp;
+      this.place();
+      if (this.selection.menuUp !== menuUp) this.sendSelection();
+    }
     if (this.capturing && this.captureOnRelease && this.capturePressed) {
       this.captureUntil = Date.now() + CAPTURE_SETTLE_MS;
       this.captureOnRelease = false;
@@ -626,11 +639,22 @@ export class CompanionSelectionController {
 
   private onUserMove(): void {
     const selection = this.selection;
-    if (selection?.mode !== DesktopCompanionSelectionMode.Answer) return;
+    if (!selection) return;
     this.moved = true;
+    if (selection.mode === DesktopCompanionSelectionMode.Toolbar) return;
     if (selection.pinned) return;
     this.selection = { ...selection, pinned: true };
     this.sendSelection();
+  }
+
+  private updateToolbarPosition(): void {
+    if (!this.moved || this.selection?.mode !== DesktopCompanionSelectionMode.Toolbar || !this.window || this.window.isDestroyed()) return;
+    const bounds = this.window.getBounds();
+    this.toolbarBounds = {
+      ...this.size,
+      x: bounds.x,
+      y: bounds.y + (this.selection.menuUp ? bounds.height - this.size.height : 0),
+    };
   }
 
   private workArea(anchor: CompanionSelectionAnchor): CompanionRect {
@@ -639,17 +663,20 @@ export class CompanionSelectionController {
 
   private place(): void {
     if (!this.window || this.window.isDestroyed() || !this.anchor) return;
-    const workArea = this.workArea(this.anchor);
+    const position = this.moved ? this.window.getBounds() : this.toolbarBounds;
+    const workArea = position ? screen.getDisplayNearestPoint(position).workArea : this.workArea(this.anchor);
     const selection = this.selection;
     if (selection?.mode === DesktopCompanionSelectionMode.Toolbar) {
-      const placement = resolveCompanionToolbarBounds(this.anchor, this.size, workArea);
-      this.toolbarBounds = placement.bounds;
-      const menuUp = companionMenuOpensUp(placement.bounds, DesktopCompanionSize.ToolbarMenu, workArea);
+      const bounds = this.moved && this.toolbarBounds
+        ? clampCompanionBounds({ ...this.toolbarBounds, ...this.size }, workArea)
+        : resolveCompanionToolbarBounds(this.anchor, this.size, workArea).bounds;
+      this.toolbarBounds = bounds;
+      const menuUp = companionMenuOpensUp(bounds, DesktopCompanionSize.ToolbarMenu, workArea);
       this.selection = { ...selection, menuUp };
       // Reserve the menu before revealing the window. Toggling it only changes content,
       // avoiding a native resize/move racing the renderer's next frame.
       const expandedSize = { ...this.size, height: this.size.height + DesktopCompanionSize.ToolbarMenu };
-      this.window.setBounds(resolveCompanionToolbarMenuBounds(placement.bounds, expandedSize, menuUp, workArea));
+      this.window.setBounds(resolveCompanionToolbarMenuBounds(bounds, expandedSize, menuUp, workArea));
     } else if (this.moved) {
       // A card the user moved keeps its spot as the answer grows.
       const { x, y } = this.window.getBounds();

@@ -26,7 +26,7 @@ describe('companion analytics privacy and reporting', () => {
   test('reports only actual preference changes without shortcut or excluded application identifiers', () => {
     const report = vi.fn();
     const analytics = new CompanionAnalytics(report);
-    const previous = DEFAULT_DESKTOP_COMPANION_PREFERENCES;
+    const previous = { ...DEFAULT_DESKTOP_COMPANION_PREFERENCES, enabled: false };
     analytics.preferences(previous, { ...previous }, Source.Settings);
     expect(report).not.toHaveBeenCalled();
     analytics.preferences(previous, { ...previous, enabled: true, shortcut: '', selectionExcludedApps: ['Secret App'] }, Source.Settings);

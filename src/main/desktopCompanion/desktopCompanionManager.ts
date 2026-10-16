@@ -61,10 +61,12 @@ import {
   resolveCompanionBounds,
   resolveCompanionComposerLayout,
   resolveCompanionLoginLayout,
+  snapCompanionOrbToEdge,
 } from '../../shared/desktopCompanion/geometry';
 import { companionHintCopyKeys, type CompanionHintTopic } from '../../shared/desktopCompanion/hintPolicy';
 import { isSpeechActive, LanguageTool } from '../../shared/desktopCompanion/languageTools';
 import type { CompanionTaskInfo } from '../../shared/desktopCompanion/results';
+import { normalizeSelectionTaskContext } from '../../shared/desktopCompanion/selectionTaskContext';
 import { normalizeCompanionToolbarOrder } from '../../shared/desktopCompanion/selectionToolbar';
 import { COMPANION_SKINS, companionOrbSize, normalizeCompanionSkin } from '../../shared/desktopCompanion/skins';
 import { t } from '../i18n';
@@ -116,7 +118,7 @@ interface DesktopCompanionOptions {
 export function normalizeCompanionPreferences(value: unknown): DesktopCompanionPreferences {
   const stored = (value && typeof value === 'object' ? value : {}) as Partial<DesktopCompanionPreferences>;
   return {
-    enabled: stored.enabled === true,
+    enabled: typeof stored.enabled === 'boolean' ? stored.enabled : DEFAULT_DESKTOP_COMPANION_PREFERENCES.enabled,
     shortcut: typeof stored.shortcut === 'string' ? stored.shortcut : DEFAULT_DESKTOP_COMPANION_PREFERENCES.shortcut,
     skin: normalizeCompanionSkin(stored.skin),
     selectionToolbar: stored.selectionToolbar !== false,
@@ -135,6 +137,7 @@ export function normalizeCompanionDraft(value: unknown): DesktopCompanionDraft {
   return {
     prompt: typeof draft?.prompt === 'string' ? draft.prompt.slice(0, 64_000) : EMPTY_DESKTOP_COMPANION_DRAFT.prompt,
     workingDirectory: typeof draft?.workingDirectory === 'string' ? draft.workingDirectory.slice(0, 4096) : '',
+    selectionContext: normalizeSelectionTaskContext(draft?.selectionContext),
     attachments: Array.isArray(draft?.attachments) ? draft.attachments.filter(file => (
       file && typeof file.path === 'string' && typeof file.name === 'string'
       && file.path.length > 0 && file.path.length <= 4096
@@ -174,6 +177,8 @@ export class DesktopCompanionManager {
   private orb: BrowserWindow | null = null;
   private panel: BrowserWindow | null = null;
   private panelVisible = false;
+  private panelShowRevision: number | null = null;
+  private panelOpenRevision = 0;
   private orbPressVisible = false;
   private panelLoginVisible = false;
   /** Height of the composer card plus its shadow margin, as the panel last reported it. */
@@ -315,6 +320,7 @@ export class DesktopCompanionManager {
         selectionToolbarOrder: [...this.preferences.selectionToolbarOrder],
       },
       panelVisible: this.panelVisible,
+      panelOpenRevision: this.panelOpenRevision,
       sessionId: this.sessionId,
       draft: { ...this.draft, attachments: [...this.draft.attachments] },
       shortcutUnavailable: this.shortcutUnavailable,
@@ -394,6 +400,7 @@ export class DesktopCompanionManager {
   hidePanel(): void {
     if (!this.panelVisible) return;
     this.panelVisible = false;
+    this.panelShowRevision = null;
     this.panel?.hide();
     this.flushDraft();
     this.publish();
@@ -591,11 +598,12 @@ export class DesktopCompanionManager {
       x: this.dragOrigin.position.x + cursor.x - this.dragOrigin.cursor.x,
       y: this.dragOrigin.position.y + cursor.y - this.dragOrigin.cursor.y,
     }, workArea);
-    // Stays where it is dropped, wholly on the display under the cursor: no edge snapping or tucking.
-    this.orb.setBounds(moved);
+    // Follow the pointer freely; settle near the left or right edge only after release.
+    const settled = phase === DesktopCompanionDragPhase.End ? snapCompanionOrbToEdge(moved, workArea) : moved;
+    this.orb.setBounds(settled, settled.x !== moved.x);
     if (phase === DesktopCompanionDragPhase.End) {
       this.dragOrigin = null;
-      this.savePosition(moved);
+      this.savePosition(settled);
       this.publish();
     } else {
       this.position = { x: moved.x, y: moved.y };
@@ -623,6 +631,7 @@ export class DesktopCompanionManager {
   // ── Panel ─────────────────────────────────────────────────
 
   private showPanel(source: AnalyticsSource = AnalyticsSource.System): void {
+    const opening = !this.panelVisible || !this.panel || this.panel.isDestroyed();
     this.results.hide();
     const stageKind = this.stage.stage.kind;
     if (stageKind === DesktopCompanionStageKind.Hint || stageKind === DesktopCompanionStageKind.Task) this.stage.clear();
@@ -642,27 +651,26 @@ export class DesktopCompanionManager {
         this.hidePanel();
       });
       // A native hide notification can arrive after a rapid reopen.
-      win.on('hide', () => { if (!win.isVisible()) this.hidePanel(); });
+      win.on('hide', () => { if (!win.isVisible() && this.panelShowRevision === null) this.hidePanel(); });
       win.on('closed', () => {
         if (this.panel !== win) return;
         this.panel = null;
         this.panelLoginVisible = false;
-      });
-      win.once('ready-to-show', () => {
-        if (this.disposing || win.isDestroyed() || !this.panelVisible) return;
-        win.show();
-        win.focus();
+        this.panelShowRevision = null;
       });
       this.panel = win;
+    }
+    if (opening) {
+      this.panelOpenRevision = this.revision + 1;
+      this.panelShowRevision = this.panelOpenRevision;
     }
     this.panelVisible = true;
     // Clicks go through the empty room above the card only while the pointer is there.
     this.panel.setIgnoreMouseEvents(false);
     this.positionPanel();
-    if (!this.panel.webContents.isLoadingMainFrame()) {
-      this.panel.show();
-      this.panel.focus();
-    }
+    // The renderer prepares each opening before showing the window. Showing here
+    // would expose the previous frame before the new fade-in starts.
+    if (this.panel.isVisible()) this.panel.focus();
     this.publish();
   }
 
@@ -940,6 +948,17 @@ export class DesktopCompanionManager {
     handle(DesktopCompanionIpc.ToggleOrb, value => this.toggleOrb(value === true));
     handle(DesktopCompanionIpc.TogglePanel, (_value, sender) => this.togglePanel(this.analyticsSource(sender.id)));
     handle(DesktopCompanionIpc.HidePanel, () => this.hidePanel());
+    handle(DesktopCompanionIpc.PanelReady, (value, sender) => {
+      const win = this.panel;
+      if (!win || win.isDestroyed() || this.disposing || sender.id !== win.webContents.id || !this.panelVisible
+        || value !== this.panelOpenRevision) return false;
+      // A renderer remount may prepare the same opening again; do not show or focus twice.
+      if (this.panelShowRevision === null) return win.isVisible();
+      this.panelShowRevision = null;
+      win.show();
+      win.focus();
+      return true;
+    });
     handle(DesktopCompanionIpc.OpenMain, (value, sender) => {
       this.analytics.report({ action: AnalyticsAction.Action, source: this.analyticsSource(sender.id), interactionType: Interaction.OpenMain, hasSession: typeof value === 'string' && !!value });
       if (sender.id === this.selection.webContentsId) this.selection.hide();
