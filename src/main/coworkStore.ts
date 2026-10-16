@@ -30,6 +30,7 @@ import {
   type CoworkTurnUsageAnchor,
   getCoworkTurnUsage,
 } from '../shared/cowork/llmTurnUsage';
+import type { CoworkModelChange } from '../shared/cowork/modelChange';
 import { OpenClawCronRunMetadataKey } from '../shared/cowork/openclawCronSessionKey';
 import {
   COWORK_RAIL_TOOLTIP_PREVIEW_MAX_LENGTH,
@@ -49,6 +50,7 @@ import type {
   KitReference,
   ResolvedKitCapabilities,
 } from '../shared/kit/constants';
+import { type ModelPresetId, parseModelPresetId } from '../shared/modelPresets/constants';
 import {
   type Platform,
   PlatformRegistry,
@@ -476,6 +478,9 @@ export interface CoworkLiveEditDiff {
 }
 
 export interface CoworkMessageMetadata {
+  modelChange?: CoworkModelChange;
+  modelPresetId?: ModelPresetId;
+  resolvedModelId?: string;
   toolName?: string;
   toolInput?: Record<string, unknown>;
   toolResult?: string;
@@ -511,6 +516,8 @@ export interface CoworkMessageMetadata {
   llmTrace?: CoworkLlmTrace;
   /** User messages: credits and tokens the turn consumed on LobsterAI models. */
   turnUsage?: CoworkTurnUsage;
+  /** Server media task IDs created by this turn; prices are read from the server. */
+  turnMediaTaskIds?: string[];
   [key: string]: unknown;
 }
 
@@ -547,6 +554,7 @@ export interface CoworkSession {
   cwd: string;
   systemPrompt: string;
   modelOverride: string;
+  modelPresetId?: ModelPresetId | null;
   thinkingLevel?: ModelThinkingLevel | '';
   executionMode: CoworkExecutionMode;
   activeSkillIds: string[];
@@ -1058,6 +1066,7 @@ export class CoworkStore {
       cwd: string;
       system_prompt: string;
       model_override?: string | null;
+      model_preset_id?: string | null;
       thinking_level?: string | null;
       execution_mode?: string | null;
       active_skill_ids?: string | null;
@@ -1069,7 +1078,7 @@ export class CoworkStore {
 
     const row = this.getOne<SessionRow>(
       `
-      SELECT id, title, claude_session_id, scheduled_task_id, status, pinned, pin_order, cwd, system_prompt, model_override, thinking_level, execution_mode, active_skill_ids, agent_id, goal_json, created_at, updated_at
+      SELECT id, title, claude_session_id, scheduled_task_id, status, pinned, pin_order, cwd, system_prompt, model_override, model_preset_id, thinking_level, execution_mode, active_skill_ids, agent_id, goal_json, created_at, updated_at
       FROM cowork_sessions
       WHERE id = ?
     `,
@@ -1084,6 +1093,11 @@ export class CoworkStore {
       messageOffset > 0
         ? this.getPagedSessionMessages(id, messageLimit, messageOffset)
         : this.getSessionMessages(id);
+    // Model changes also reload this page; keep usage and timing when its user
+    // message is outside the window. Metadata-only reads need no turn context.
+    const leadingTurn = messageOffset > 0 && messages.length > 0
+      ? this.getTurnContextAt(id, messageOffset)
+      : null;
 
     let activeSkillIds: string[] = [];
     if (row.active_skill_ids) {
@@ -1106,6 +1120,7 @@ export class CoworkStore {
       cwd: row.cwd,
       systemPrompt: row.system_prompt,
       modelOverride: row.model_override || '',
+      modelPresetId: parseModelPresetId(row.model_preset_id),
       thinkingLevel: parseModelThinkingLevel(row.thinking_level) ?? '',
       executionMode: (row.execution_mode as CoworkExecutionMode) || 'local',
       activeSkillIds,
@@ -1113,6 +1128,8 @@ export class CoworkStore {
       messages,
       messagesOffset: messageOffset,
       totalMessages,
+      leadingTurnStartTimestamp: leadingTurn?.startTimestamp ?? null,
+      leadingTurnUsage: leadingTurn?.usageAnchor ?? null,
       ...this.getSessionForkMetadata(row.id),
       goal: this.parseGoalJson(row.goal_json),
       createdAt: row.created_at,
@@ -1325,6 +1342,8 @@ export class CoworkStore {
         now,
         now,
       );
+
+      this.db.prepare('UPDATE cowork_sessions SET model_preset_id = ? WHERE id = ?').run(source.modelPresetId ?? null, id);
 
       for (const contextMessage of contextMessages) {
         const content = contextMessage.content.trim();
@@ -1556,7 +1575,7 @@ export class CoworkStore {
     updates: Partial<
       Pick<
         CoworkSession,
-        'title' | 'claudeSessionId' | 'status' | 'cwd' | 'systemPrompt' | 'modelOverride' | 'thinkingLevel' | 'executionMode' | 'goal'
+        'title' | 'claudeSessionId' | 'status' | 'cwd' | 'systemPrompt' | 'modelOverride' | 'modelPresetId' | 'thinkingLevel' | 'executionMode' | 'goal'
       >
     >,
     options: { touchUpdatedAt?: boolean } = {},
@@ -1603,6 +1622,10 @@ export class CoworkStore {
     if (updates.modelOverride !== undefined) {
       setClauses.push('model_override = ?');
       values.push(updates.modelOverride);
+    }
+    if (updates.modelPresetId !== undefined) {
+      setClauses.push('model_preset_id = ?');
+      values.push(updates.modelPresetId);
     }
     if (updates.thinkingLevel !== undefined) {
       setClauses.push('thinking_level = ?');
@@ -2335,6 +2358,16 @@ export class CoworkStore {
     const id = uuidv4();
     const now = timestamp ?? Date.now();
 
+    if (message.type === 'user' || message.type === 'assistant') {
+      const selection = this.db.prepare('SELECT model_preset_id, model_override FROM cowork_sessions WHERE id = ?')
+        .get(sessionId) as { model_preset_id?: string; model_override?: string } | undefined;
+      const modelPresetId = parseModelPresetId(selection?.model_preset_id);
+      if (modelPresetId && selection?.model_override) {
+        message = { ...message, metadata: { ...message.metadata, modelPresetId,
+          resolvedModelId: selection.model_override.split('/').slice(1).join('/') } };
+      }
+    }
+
     const seqRow = this.db
       .prepare(
         'SELECT COALESCE(MAX(sequence), 0) + 1 as next_seq FROM cowork_messages WHERE session_id = ?',
@@ -2606,6 +2639,11 @@ export class CoworkStore {
       values.push(updates.content);
     }
     if (updates.metadata !== undefined) {
+      const existing = this.getMessage(sessionId, messageId)?.metadata;
+      if (existing?.modelPresetId) {
+        updates = { ...updates, metadata: { ...updates.metadata,
+          modelPresetId: existing.modelPresetId, resolvedModelId: existing.resolvedModelId } };
+      }
       setClauses.push('metadata = ?');
       values.push(updates.metadata ? JSON.stringify(updates.metadata) : null);
     }

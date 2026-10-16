@@ -38,11 +38,17 @@ export function useHomeStartContext() {
     currentAgent,
     workingDirectory: currentAgent?.workingDirectory?.trim() || config.workingDirectory || '',
     selectedModel,
-    selectedModelRef: selectedModel ? toOpenClawModelRef(selectedModel) : '',
+    // Presets are resolved to concrete models when the session starts.
+    selectedModelRef: selectedModel && !selectedModel.presetId ? toOpenClawModelRef(selectedModel) : '',
     startModel,
     usesServerQuota: usesLobsterAIServerQuota(selectedModel),
     quotaReason,
     blockingQuotaReason: resolveBlockingEnterpriseQuotaReason(quotaReason, selectedModel),
-    thinkingLevel: resolveModelThinkingLevel(selectedModel, currentAgent?.thinkingLevel),
+    thinkingLevel: selectedModel?.presetId && !selectedModel.presetThinkingLevel
+      ? undefined
+      : resolveModelThinkingLevel(
+        selectedModel,
+        selectedModel?.presetId ? selectedModel.presetThinkingLevel : currentAgent?.thinkingLevel,
+      ),
   };
 }

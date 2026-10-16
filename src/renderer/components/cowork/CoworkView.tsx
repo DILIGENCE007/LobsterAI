@@ -417,6 +417,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         cwd: currentAgentWorkingDirectory,
         agentId: currentAgentId,
         modelRef: currentAgentSelectedModelRef,
+        modelPresetId: currentAgentSelectedModel?.presetId,
         thinkingLevel: currentAgentThinkingLevel,
         imageAttachments,
         mediaSelection,

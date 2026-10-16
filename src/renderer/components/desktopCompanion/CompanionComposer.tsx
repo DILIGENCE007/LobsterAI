@@ -228,6 +228,7 @@ export default function CompanionComposer() {
         cwd: start.workingDirectory,
         agentId: start.currentAgentId,
         modelRef: start.selectedModelRef,
+        modelPresetId: start.selectedModel?.presetId,
         thinkingLevel: start.thinkingLevel,
         imageAttachments,
         mediaSelection,

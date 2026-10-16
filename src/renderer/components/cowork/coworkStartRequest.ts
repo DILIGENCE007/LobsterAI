@@ -54,6 +54,7 @@ export interface CoworkStartRequestInput {
   cwd: string;
   agentId: string;
   modelRef: string;
+  modelPresetId?: CoworkStartOptions['modelPresetId'];
   thinkingLevel?: CoworkStartOptions['thinkingLevel'];
   imageAttachments?: CoworkImageAttachment[];
   mediaSelection?: CoworkStartOptions['mediaSelection'];
@@ -99,7 +100,8 @@ export function buildCoworkStartPlan(input: CoworkStartRequestInput): CoworkStar
       kitReferences: displayKitIds.length > 0 ? kitReferences : undefined,
       resolvedKitCapabilities: displayKitIds.length > 0 ? resolvedKitCapabilities : undefined,
       agentId: input.agentId,
-      modelOverride: input.modelRef,
+      modelOverride: input.modelPresetId ? '' : input.modelRef,
+      modelPresetId: input.modelPresetId,
       thinkingLevel: input.thinkingLevel,
       imageAttachments: input.imageAttachments,
       mediaSelection: input.mediaSelection && input.mediaSelection.mode !== 'none' ? input.mediaSelection : undefined,
