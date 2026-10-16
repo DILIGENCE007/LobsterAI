@@ -168,6 +168,7 @@ import {
   getPromptAnalyticsSurface,
   getPromptTextAnalyticsParams,
   getSkillAnalyticsParams,
+  type PromptAnalyticsSurface,
   reportPromptControlAction,
   reportPromptSubmit,
 } from './promptAnalytics';
@@ -421,6 +422,7 @@ export interface CoworkPromptInputRef {
 }
 
 interface CoworkPromptInputProps {
+  analyticsSurface?: PromptAnalyticsSurface;
   onSubmit: (
     prompt: string,
     skillPrompt?: string,
@@ -504,6 +506,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       showNewUserWelcomeLoginOverlay = false,
       onLoginPromptVisibilityChange,
       narrow = false,
+      analyticsSurface,
     } = props;
     const dispatch = useDispatch();
     const draftKey = sessionId || '__home__';
@@ -831,7 +834,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const isAsrQuotaExhaustedToday = asrQuota.status === AsrQuotaStatus.Exhausted
     && asrQuota.dayKey === getLocalAsrQuotaDayKey();
   const voiceInputLocksEditing = isVoiceRecording || isVoiceRecognizing;
-  const promptAnalyticsSurface = getPromptAnalyticsSurface(sessionId);
+  const promptAnalyticsSurface = getPromptAnalyticsSurface(sessionId, analyticsSurface);
   const promptAnalyticsConversationState = getPromptAnalyticsConversationState(sessionId);
 
   const getPromptContextAnalyticsParams = useCallback(() => {

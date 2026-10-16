@@ -1,5 +1,6 @@
 import type { WebContents } from 'electron';
 
+import { CompanionAnalyticsOutcome as Outcome, CompanionAnalyticsReason as Reason, CompanionAnalyticsSource } from '../../shared/desktopCompanion/analytics';
 import {
   CompanionQuickAnswerErrorCode,
   type CompanionQuickAnswerEvent,
@@ -25,6 +26,7 @@ import {
   normalizeGeminiBaseUrl,
 } from '../libs/coworkModelApi';
 import { getCoworkOpenAICompatProxyToken } from '../libs/coworkOpenAICompatProxy';
+import { CompanionAnalytics, type CompanionAnalyticsReporter } from './companionAnalytics';
 import { readAnthropicStreamEvent, readGeminiStreamEvent, splitSseEvents, type StreamChunk } from './sse';
 
 const MAX_OUTPUT_TOKENS = 2_048;
@@ -101,9 +103,11 @@ export function buildQuickAnswerHttpRequest(config: QuickAnswerModelConfig, prom
 interface Running {
   controller: AbortController;
   ownerId: number;
+  finish: ReturnType<CompanionAnalytics['tool']>;
 }
 
 interface QuickAnswerDeps {
+  reportAnalytics?: CompanionAnalyticsReporter;
   getSessionKey(): string | null;
   resolveModel?(): QuickAnswerModelConfig | null;
   fetch?: typeof fetch;
@@ -116,20 +120,32 @@ interface QuickAnswerDeps {
  */
 export class CompanionQuickAnswerService {
   private running = new Map<string, Running>();
+  private readonly analytics: CompanionAnalytics;
 
-  constructor(private readonly deps: QuickAnswerDeps = { getSessionKey: () => null }) {}
+  constructor(private readonly deps: QuickAnswerDeps = { getSessionKey: () => null }) {
+    this.analytics = new CompanionAnalytics(deps.reportAnalytics);
+  }
 
-  start(sender: WebContents, request: CompanionQuickAnswerRequest): CompanionQuickAnswerResult {
+  start(sender: WebContents, request: CompanionQuickAnswerRequest, source: CompanionAnalyticsSource = CompanionAnalyticsSource.Selection): CompanionQuickAnswerResult {
+    const finish = isCompanionSelectionAction(request?.action) ? this.analytics.tool({
+      source, tool: request.action, isFollowUp: (typeof request.question === 'string' && !!request.question.trim())
+        || (Array.isArray(request.history) && request.history.length > 0),
+    }) : undefined;
     if (!this.deps.getSessionKey()) {
+      finish?.(Outcome.Blocked, Reason.LoginRequired);
       return { success: false, code: CompanionQuickAnswerErrorCode.LoginRequired, error: t('desktopToolsLoginRequired') };
     }
     const requestId = typeof request?.requestId === 'string' ? request.requestId.slice(0, 100) : '';
     const text = typeof request?.text === 'string' ? request.text.trim() : '';
     if (!requestId || !text || !isCompanionSelectionAction(request.action) || request.action === CompanionSelectionAction.Translate) {
+      finish?.(Outcome.Blocked, Reason.InvalidInput);
       return { success: false, error: t('desktopCompanionRequestFailed') };
     }
     const model = (this.deps.resolveModel ?? resolveQuickAnswerModel)();
-    if (!model) return { success: false, error: t('desktopCompanionAnswerNoModel') };
+    if (!model) {
+      finish?.(Outcome.Blocked, Reason.NoModel);
+      return { success: false, error: t('desktopCompanionAnswerNoModel') };
+    }
     const history = Array.isArray(request.history)
       ? request.history.filter(turn => turn && typeof turn.content === 'string').slice(-MAX_HISTORY_TURNS)
       : [];
@@ -142,12 +158,13 @@ export class CompanionQuickAnswerService {
     });
     this.abort(requestId);
     const controller = new AbortController();
-    this.running.set(requestId, { controller, ownerId: sender.id });
+    this.running.set(requestId, { controller, ownerId: sender.id, finish: finish! });
     void this.stream(sender, requestId, model, prompt, controller);
     return { success: true };
   }
 
   abort(requestId: string): void {
+    this.running.get(requestId)?.finish(Outcome.Cancelled);
     this.running.get(requestId)?.controller.abort();
     this.running.delete(requestId);
   }
@@ -169,7 +186,10 @@ export class CompanionQuickAnswerService {
     prompt: CompanionQuickAnswerPrompt,
     controller: AbortController,
   ): Promise<void> {
+    const finish = this.running.get(requestId)!.finish;
     const send = (event: CompanionQuickAnswerEvent) => {
+      if (event.type === CompanionQuickAnswerEventType.Done) finish(Outcome.Success);
+      if (event.type === CompanionQuickAnswerEventType.Error) finish(Outcome.Failed, Reason.Upstream);
       if (!sender.isDestroyed()) sender.send(DesktopCompanionIpc.QuickAnswerEvent, event);
     };
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);

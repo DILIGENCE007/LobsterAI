@@ -1,6 +1,7 @@
 import { PaperClipIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useRef, useState } from 'react';
 
+import { CompanionAnalyticsAction, CompanionAnalyticsOutcome, CompanionAnalyticsSource, CompanionAnalyticsStage } from '../../../shared/desktopCompanion/analytics';
 import {
   type DesktopCompanionStage,
   DesktopCompanionStageCommandType,
@@ -16,6 +17,7 @@ import {
 } from '../../../shared/desktopCompanion/fileKinds';
 import { COMPANION_WELCOME_TOPIC, companionHintCopyKeys } from '../../../shared/desktopCompanion/hintPolicy';
 import { i18nService } from '../../services/i18n';
+import { beginCompanionTask, reportCompanionAnalytics } from './analytics';
 import { CompanionPhase, companionPhase } from './companionPresentation';
 import { fileKindsFromDataTransfer, filesToAttachments, hasFiles, startCompanionTask } from './companionTasks';
 import { useCompanionSession } from './useCompanionSession';
@@ -124,22 +126,35 @@ function DropZone({ stage }: { stage: DropStage }) {
     depth.current = 0;
     setActive(null);
     setStatus(StartStatus.Starting);
+    const analytics = { action: CompanionAnalyticsAction.FileDrop, source: CompanionAnalyticsSource.FileDrop, dropAction: action };
+    reportCompanionAnalytics({ ...analytics, stage: CompanionAnalyticsStage.Submit });
+    let outcome: CompanionAnalyticsOutcome = CompanionAnalyticsOutcome.Failed;
+    let attachmentCount = 0;
+    let finishTask: ((success: boolean) => void) | undefined;
     // Keep the strip steady while the drop is being resolved, even after mouse-up.
     void api.stageCommand({ type: DesktopCompanionStageCommandType.StageHover, hovering: true });
     try {
       const attachments = await filesToAttachments(Array.from(event.dataTransfer.files));
+      attachmentCount = attachments.length;
       if (!attachments.length) { void api.stageCommand({ type: DesktopCompanionStageCommandType.DropCancel }); return; }
       if (action === CompanionDropAction.Ask) {
-        void api.stageCommand({ type: DesktopCompanionStageCommandType.DropAsk, attachments });
+        await api.stageCommand({ type: DesktopCompanionStageCommandType.DropAsk, attachments });
+        outcome = CompanionAnalyticsOutcome.Success;
         return;
       }
+      finishTask = beginCompanionTask(CompanionAnalyticsSource.FileDrop);
       const result = await startCompanionTask({ prompt: t(companionDropCopyKeys(action).prompt), attachments });
       if ('sessionId' in result) {
+        finishTask(true);
+        outcome = CompanionAnalyticsOutcome.Success;
         void api.stageCommand({ type: DesktopCompanionStageCommandType.DropStarted, sessionId: result.sessionId });
         return;
       }
     } catch (error) {
       console.error('[DesktopCompanion] Failed to handle file drop', error);
+    } finally {
+      finishTask?.(false);
+      reportCompanionAnalytics({ ...analytics, stage: CompanionAnalyticsStage.Result, outcome, attachmentCount });
     }
     setStatus(StartStatus.Failed);
     dismissTimer.current = setTimeout(() => { void api.stageCommand({ type: DesktopCompanionStageCommandType.DropCancel }); }, 2_400);

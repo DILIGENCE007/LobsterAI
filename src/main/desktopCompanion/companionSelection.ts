@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { BrowserWindow, screen, shell, systemPreferences } from 'electron';
 import type { EventEmitter } from 'events';
 
+import { CompanionAnalyticsAction, CompanionAnalyticsInteraction as Interaction, CompanionAnalyticsSource, CompanionAnalyticsStage } from '../../shared/desktopCompanion/analytics';
 import { DEFAULT_SELECTION_EXCLUDED_APPS, isCompanionSelectionBlocked } from '../../shared/desktopCompanion/appCategories';
 import {
   CompanionCapability,
@@ -30,6 +31,7 @@ import {
   isCompanionSelectionAction,
   rankCompanionSelectionActions,
 } from '../../shared/desktopCompanion/selectionActions';
+import type { CompanionAnalytics } from './companionAnalytics';
 import { isCompanionTextTooLarge } from './companionClipboard';
 import type { CompanionQuickAnswerService } from './quickAnswerService';
 import { SelectionGestureTracker } from './selectionGesture';
@@ -88,6 +90,7 @@ export interface SelectionHookModule {
 }
 
 export interface SelectionHost {
+  analytics?: CompanionAnalytics;
   preferences(): DesktopCompanionPreferences;
   /** False while the companion is off or hidden by a snooze. */
   isAvailable(): boolean;
@@ -285,6 +288,8 @@ export class CompanionSelectionController {
     switch (command?.type) {
       case DesktopCompanionSelectionCommandType.Run:
         if (!selection || selection.tooLarge || !isCompanionSelectionAction(command.action)) return;
+        this.host.analytics?.report({ action: CompanionAnalyticsAction.Action, source: CompanionAnalyticsSource.Selection,
+          interactionType: Interaction.Run, tool: command.action });
         this.cardHeight = this.anchor ? companionCardSlot(this.anchor, this.workArea(this.anchor)).room : DesktopCompanionSize.Answer.height;
         this.selection = {
           ...selection,
@@ -301,11 +306,14 @@ export class CompanionSelectionController {
         return;
       case DesktopCompanionSelectionCommandType.Pin:
         if (!selection) return;
+        this.host.analytics?.report({ action: CompanionAnalyticsAction.Action, source: CompanionAnalyticsSource.Selection,
+          interactionType: Interaction.Pin, pinned: command.pinned === true });
         this.selection = { ...selection, pinned: command.pinned === true };
         this.sendSelection();
         return;
       case DesktopCompanionSelectionCommandType.ExcludeApp: {
         if (!selection?.appId) return;
+        this.host.analytics?.report({ action: CompanionAnalyticsAction.Action, source: CompanionAnalyticsSource.Selection, interactionType: Interaction.ExcludeApp });
         const current = this.host.preferences().selectionExcludedApps;
         if (!current.includes(selection.appId)) {
           this.host.setPreferences({ selectionExcludedApps: [...current, selection.appId].slice(-100) });
@@ -314,6 +322,7 @@ export class CompanionSelectionController {
         return;
       }
       case DesktopCompanionSelectionCommandType.Pause:
+        this.host.analytics?.report({ action: CompanionAnalyticsAction.Action, source: CompanionAnalyticsSource.Selection, interactionType: Interaction.Pause });
         this.pausedUntil = Date.now() + PAUSE_MS;
         this.hide();
         this.sync();
@@ -328,11 +337,14 @@ export class CompanionSelectionController {
       case DesktopCompanionSelectionCommandType.More: {
         if (selection?.mode !== DesktopCompanionSelectionMode.Toolbar) return;
         const open = command.open === true;
+        if (open && !selection.menuOpen) this.host.analytics?.report({ action: CompanionAnalyticsAction.Action,
+          source: CompanionAnalyticsSource.Selection, interactionType: Interaction.More });
         this.selection = { ...selection, menuOpen: open };
         this.sendSelection();
         return;
       }
       case DesktopCompanionSelectionCommandType.Settings:
+        this.host.analytics?.report({ action: CompanionAnalyticsAction.Action, source: CompanionAnalyticsSource.Selection, interactionType: Interaction.OpenSettings });
         this.hide();
         this.host.openSettings();
         return;
@@ -607,6 +619,8 @@ export class CompanionSelectionController {
     clearTimeout(this.showTimer);
     if (!this.pendingShow || !this.selection || !this.window || this.window.isDestroyed()) return;
     this.pendingShow = false;
+    this.host.analytics?.report({ action: CompanionAnalyticsAction.Action, source: CompanionAnalyticsSource.Selection,
+      interactionType: Interaction.Open, stage: CompanionAnalyticsStage.Shown, surface: DesktopCompanionSurface.Selection });
     this.window.showInactive();
   }
 

@@ -3,7 +3,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { buildSessionTitleFromInput } from '../../../common/sessionTitle';
+import { PromptAnalyticsSurface } from '../../../shared/analytics/constants';
 import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
+import { CompanionAnalyticsSource } from '../../../shared/desktopCompanion/analytics';
 import {
   DesktopCompanionMainPage,
   DesktopCompanionPanelPlacement,
@@ -25,6 +27,7 @@ import CoworkPromptInput, { type CoworkPromptInputRef } from '../cowork/CoworkPr
 import { buildCoworkStartPlan, COWORK_START_BLOCK_MESSAGE_KEYS, resolveCoworkStartBlock } from '../cowork/coworkStartRequest';
 import { useHomeStartContext } from '../cowork/useHomeStartContext';
 import Toast, { type ToastEventDetail } from '../Toast';
+import { beginCompanionTask } from './analytics';
 import { bootstrapCompanionComposer, refreshCompanionComposer } from './companionComposerBootstrap';
 import { ComposerExit, useComposerMotion } from './useComposerMotion';
 import { useMeasuredSurface } from './useMeasuredSurface';
@@ -189,6 +192,7 @@ export default function CompanionComposer() {
   ): Promise<boolean> => {
     if (submittingRef.current) return false;
     submittingRef.current = true;
+    const finish = beginCompanionTask(CompanionAnalyticsSource.Panel);
     try {
       const engineStatus = await coworkService.loadOpenClawEngineStatus().catch(() => null);
       const block = resolveCoworkStartBlock({
@@ -230,6 +234,7 @@ export default function CompanionComposer() {
         showToast(error ? t('coworkErrorSessionStartFailed').replace('{error}', error) : t('desktopCompanionRequestFailed'));
         return false;
       }
+      finish(true);
       // Beside the orb, the card folds into the strip the orb shows for the task, in the
       // same spot. With no orb on screen there is no strip, so it just closes.
       await playExit(placement === DesktopCompanionPanelPlacement.Center ? ComposerExit.Dismiss : ComposerExit.Handoff);
@@ -244,6 +249,7 @@ export default function CompanionComposer() {
       showToast(t('desktopCompanionRequestFailed'));
       return false;
     } finally {
+      finish(false);
       submittingRef.current = false;
     }
   }, [activeKitIds, activeSkillIds, api, dispatch, installedKits, marketplaceKits, mediaSelection, placement, playExit, showToast, skills, start]);
@@ -267,6 +273,7 @@ export default function CompanionComposer() {
           className={`rounded-2xl bg-surface shadow-popover ring-1 ring-black/10 transition-shadow focus-within:ring-primary/25 dark:ring-white/10 ${TAIL_CORNER_CLASS[placement]}`}
         >
           <CoworkPromptInput
+            analyticsSurface={PromptAnalyticsSurface.DesktopCompanion}
             ref={inputRef}
             onSubmit={submit}
             placeholder={t('coworkPlaceholder')}

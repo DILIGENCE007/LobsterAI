@@ -1,6 +1,7 @@
 import { type BrowserWindow, ipcMain, type Rectangle, screen } from 'electron';
 
 import { CoworkSessionStatusValue } from '../../renderer/types/cowork';
+import { CompanionAnalyticsAction, CompanionAnalyticsInteraction as Interaction, CompanionAnalyticsSource, CompanionAnalyticsStage } from '../../shared/desktopCompanion/analytics';
 import { type CompanionSurfaceSize, DesktopCompanionSize } from '../../shared/desktopCompanion/constants';
 import { clampCompanionBounds, resolveCompanionComposerLayout } from '../../shared/desktopCompanion/geometry';
 import {
@@ -8,9 +9,11 @@ import {
   CompanionResultIpc, type CompanionResultState, type CompanionTaskInfo, type CompanionTaskRecord,
   normalizeCompanionTaskRecords,
 } from '../../shared/desktopCompanion/results';
+import type { CompanionAnalytics } from './companionAnalytics';
 import { dismissCompanionPanelOnBlur } from './companionWindow';
 
 interface ResultHost {
+  analytics?: CompanionAnalytics;
   store: { get<T = unknown>(key: string): T | undefined; set<T = unknown>(key: string, value: T): void };
   getTaskInfo(sessionId: string): CompanionTaskInfo | null;
   getOrbBounds(): Rectangle | null;
@@ -79,6 +82,7 @@ export class CompanionResultsController {
 
   private dismiss(sessionId: unknown): void {
     if (typeof sessionId !== 'string' || !this.records.some(record => record.sessionId === sessionId)) return;
+    this.host.analytics?.report({ action: CompanionAnalyticsAction.Action, source: CompanionAnalyticsSource.Result, interactionType: Interaction.Dismiss });
     this.records = this.records.filter(record => record.sessionId !== sessionId);
     this.save();
     if (this.visible && !this.recent().length) this.hide();
@@ -125,6 +129,8 @@ export class CompanionResultsController {
     if (value !== undefined && (typeof value !== 'string' || !this.records.some(record => record.sessionId === value))) return;
     if (typeof value === 'string') {
       if (!this.host.getTaskInfo(value)) { this.recent(); this.hide(); return; }
+      this.host.analytics?.report({ action: CompanionAnalyticsAction.Action, source: CompanionAnalyticsSource.Result,
+        interactionType: Interaction.OpenMain, hasSession: true });
       this.hide();
       this.host.beforeOpen();
       this.host.openMain(value);
@@ -162,6 +168,9 @@ export class CompanionResultsController {
   }
 
   private reveal(win: BrowserWindow): void {
+    if (!win.isVisible()) this.host.analytics?.report({ action: CompanionAnalyticsAction.Action,
+      source: CompanionAnalyticsSource.Result, interactionType: Interaction.Open,
+      stage: CompanionAnalyticsStage.Shown, recentTaskCount: this.recent().length });
     if (this.focusOnShow) { win.show(); win.focus(); }
     else win.showInactive();
   }

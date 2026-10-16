@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { type BrowserWindow, type Rectangle, screen } from 'electron';
 
+import { CompanionAnalyticsAction, CompanionAnalyticsSource, CompanionAnalyticsStage } from '../../shared/desktopCompanion/analytics';
 import {
   type DesktopCompanionAttachment,
   type DesktopCompanionDropFile,
@@ -16,12 +17,14 @@ import {
 import type { CompanionFileKind } from '../../shared/desktopCompanion/fileKinds';
 import { type CompanionSize, resolveCompanionStageBounds } from '../../shared/desktopCompanion/geometry';
 import { type CompanionHintOutcome, CompanionHintOutcome as Outcome, type CompanionHintTopic } from '../../shared/desktopCompanion/hintPolicy';
+import type { CompanionAnalytics } from './companionAnalytics';
 
 const NONE: DesktopCompanionStage = { kind: DesktopCompanionStageKind.None };
 const SHOW_FALLBACK_MS = 150;
 const MAX_ATTACHMENTS = 20;
 
 export interface StageHost {
+  analytics?: CompanionAnalytics;
   /** The orb's bounds, or null when it is not on screen. */
   getOrbBounds(): Rectangle | null;
   createWindow(surface: typeof DesktopCompanionSurface.Stage, focusable: boolean): BrowserWindow;
@@ -165,6 +168,8 @@ export class CompanionStageController {
           [DesktopCompanionStageCommandType.HintTimeout]: Outcome.Ignored,
         }[command.type];
         this.handlers.onHintOutcome(current.topic, outcome);
+        this.host.analytics?.report({ action: CompanionAnalyticsAction.Hint, source: CompanionAnalyticsSource.Hint,
+          stage: CompanionAnalyticsStage.Result, topic: current.topic, outcome });
         this.clear();
         if (command.type === DesktopCompanionStageCommandType.HintAccept) this.handlers.onHintAccept(current.topic);
         return;
@@ -231,5 +236,12 @@ export class CompanionStageController {
     }
     this.pendingShow = false;
     this.window.showInactive();
+    if (this.current.kind === DesktopCompanionStageKind.Hint) {
+      this.host.analytics?.report({ action: CompanionAnalyticsAction.Hint, source: CompanionAnalyticsSource.Hint,
+        stage: CompanionAnalyticsStage.Shown, topic: this.current.topic });
+    } else if (this.current.kind === DesktopCompanionStageKind.Drop) {
+      this.host.analytics?.report({ action: CompanionAnalyticsAction.FileDrop, source: CompanionAnalyticsSource.FileDrop,
+        stage: CompanionAnalyticsStage.Shown, fileKinds: this.current.kinds.join(',') });
+    }
   }
 }

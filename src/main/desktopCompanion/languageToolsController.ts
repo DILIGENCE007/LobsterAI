@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { type BrowserWindow, ipcMain, screen } from 'electron';
 
+import { CompanionAnalyticsAction, CompanionAnalyticsInteraction as Interaction, CompanionAnalyticsSource } from '../../shared/desktopCompanion/analytics';
 import { DesktopCompanionSize } from '../../shared/desktopCompanion/constants';
 import {
   clampCompanionBounds, companionCardSlot, companionPointerAnchor, type CompanionRect, type CompanionSelectionAnchor,
@@ -10,9 +11,11 @@ import {
   LanguageTool, LanguageToolCode, type LanguageToolInput,
   type LanguageToolRequest, LanguageToolsIpc, SpeechCommand, SpeechStatus,
 } from '../../shared/desktopCompanion/languageTools';
+import type { CompanionAnalytics } from './companionAnalytics';
 import type { CompanionLanguageClient } from './languageToolClient';
 
 interface Host {
+  analytics?: CompanionAnalytics;
   createWindow(): BrowserWindow;
   getSelectionAnchor(): CompanionSelectionAnchor | null;
   getSelectionToolbarBounds(): CompanionRect | null;
@@ -92,6 +95,8 @@ export class CompanionLanguageToolsController {
       return;
     }
     if (typeof input.text !== 'string' || !input.text.trim()) return;
+    this.host.analytics?.report({ action: CompanionAnalyticsAction.Action, source: CompanionAnalyticsSource.Selection,
+      interactionType: Interaction.Run, tool: input.tool });
     const cursor = screen.getCursorScreenPoint();
     this.anchor = this.host.getSelectionAnchor() ?? companionPointerAnchor(cursor);
     this.toolbarBounds = this.host.getSelectionToolbarBounds();
@@ -167,6 +172,8 @@ export class CompanionLanguageToolsController {
   }
   command(command: SpeechCommand): void {
     if (!this.input || !this.window?.isVisible() || !Object.values(SpeechCommand).includes(command)) return;
+    this.host.analytics?.report({ action: CompanionAnalyticsAction.Action, source: CompanionAnalyticsSource.LanguageTools,
+      interactionType: command, tool: LanguageTool.Tts });
     this.window?.webContents.send(LanguageToolsIpc.SpeechCommand, command);
   }
   reset(): void {

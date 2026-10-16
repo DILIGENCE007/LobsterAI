@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { CompanionAnalyticsSource } from '../../../shared/desktopCompanion/analytics';
 import { CoworkSessionStatusValue } from '../../types/cowork';
+import { beginCompanionTask } from './analytics';
 import { type FollowUpResponse, submitCompanionFollowUp } from './companionFollowUp';
 
 export const CompanionFollowUpPhase = {
@@ -27,6 +29,7 @@ export function useCompanionFollowUp(sessionId: string, onRefresh: () => void) {
     const prompt = text.trim();
     if (!prompt || submitting.current) return { success: false };
     submitting.current = true;
+    const finishSubmission = beginCompanionTask(CompanionAnalyticsSource.Result, true);
     cleanup.current();
     setActivity({ prompt, phase: CompanionFollowUpPhase.Steering });
     let finished = false;
@@ -53,11 +56,13 @@ export function useCompanionFollowUp(sessionId: string, onRefresh: () => void) {
       });
       if (!result.success) finish();
       else if (!finished && mounted.current) setActivity({ prompt, phase: CompanionFollowUpPhase.Thinking });
+      finishSubmission(result.success);
       return result;
     } catch (error) {
       finish();
       throw error;
     } finally {
+      finishSubmission(false);
       submitting.current = false;
     }
   };
