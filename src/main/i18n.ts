@@ -19,7 +19,7 @@ export type LanguageType = 'zh' | 'en';
 
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
-    modelPresetBalanced: '均衡',
+    modelPresetBalanced: '快速',
     modelPresetUltimate: '旗舰',
     modelPresetPricingHint: '按候选模型权重选择，当前会话保持固定。实际积分按底层模型扣费。',
     modelPresetLoginRequired: '请登录后选择模型模式。',
@@ -432,7 +432,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     'enterprise.updateBlocked': '版本更新由企业统一管理',
   },
   en: {
-    modelPresetBalanced: 'Balanced',
+    modelPresetBalanced: 'Fast',
     modelPresetUltimate: 'Flagship',
     modelPresetPricingHint: 'Weighted model selection stays fixed for this conversation. Credits are charged at the underlying model rate.',
     modelPresetLoginRequired: 'Sign in to choose a model preset.',

@@ -17,6 +17,7 @@ import { clearCurrentSession } from '../store/slices/coworkSlice';
 import { clearAgentSelectedModel } from '../store/slices/modelSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../store/slices/skillSlice';
 import type { Agent, PresetAgent } from '../types/agent';
+import { i18nService } from './i18n';
 import { resetDraftAnalytics } from './usageAnalytics';
 
 const syncActiveSkillsForCurrentAgent = (agentId: string, skillIds: string[]): void => {
@@ -137,6 +138,12 @@ class AgentService {
     try {
       const agent = await window.electron?.agents?.update(id, updates);
       if (agent) {
+        if (updates.model !== undefined) {
+          // Agent.model is now authoritative for virtual models too.
+          const cleared = await window.electron.modelPresets.setPreference(id, null);
+          if (!cleared.success) throw new Error(cleared.error || i18nService.t('agentSaveFailed'));
+          store.dispatch(clearAgentSelectedModel(id));
+        }
         const skillIds = agent.skillIds ?? [];
         store.dispatch(updateAgentAction({
           id: agent.id,

@@ -106,7 +106,8 @@ export class CoworkTurnUsageService {
     if (!message || message.type !== 'user' || !trace) return null;
 
     const previous = getCoworkTurnUsage(message.metadata);
-    const observedCompletedRequests = this.deps.getTraceStats(trace.traceId)?.completed;
+    const observedCompletedRequests = this.deps.getTraceStats(trace.traceId)?.completed
+      ?? previous?.observedCompletedRequests;
     if (mode.afterTurn && !previous) {
       this.deps.emitTurnUsage({
         sessionId,
@@ -117,14 +118,17 @@ export class CoworkTurnUsageService {
 
     const mediaTaskIds = message.metadata?.turnMediaTaskIds ?? [];
     let usage = await this.fetchUsage(trace, observedCompletedRequests, mediaTaskIds);
-    if (mode.afterTurn && usage?.status === CoworkTurnUsageStatus.Partial) {
+    if (mode.afterTurn && (!usage || usage.status === CoworkTurnUsageStatus.Partial)) {
       await this.sleep(PARTIAL_RETRY_DELAY_MS);
       usage = await this.fetchUsage(trace, observedCompletedRequests, mediaTaskIds) ?? usage;
     }
 
-    // A failed refresh keeps a summary that was already fetched.
+    // Account switches and ledger delays must not replace a saved summary with fewer requests.
     const hasPreviousSummary = previous && previous.status !== CoworkTurnUsageStatus.Failed
       && previous.status !== CoworkTurnUsageStatus.Pending;
+    if (hasPreviousSummary && usage && usage.requestCount < previous.requestCount) {
+      usage = null;
+    }
     const result = usage
       ?? (hasPreviousSummary ? previous : this.buildEmptyUsage(trace, CoworkTurnUsageStatus.Failed, observedCompletedRequests));
     if (result !== previous) {
@@ -174,6 +178,13 @@ export class CoworkTurnUsageService {
       });
       if (!usage) {
         console.warn(`[TurnUsage] summary response for trace ${trace.traceId} was not usable.`);
+      }
+      // An empty ledger can belong to a different signed-in account. It is not
+      // evidence that this local turn cost zero; keep its persisted snapshot.
+      // Zero-credit requests and media-only summaries still contain ledger rows.
+      if (usage && usage.requestCount === 0 && usage.creditsUsed === 0 && usage.totalTokens === 0
+        && !usage.modelUsage?.length && !usage.mediaPending) {
+        return null;
       }
       return usage;
     } catch (error) {

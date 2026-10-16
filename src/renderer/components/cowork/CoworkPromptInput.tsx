@@ -140,7 +140,6 @@ import ModelSelector, {
   ModelSelectorGroup,
 } from '../ModelSelector';
 import { ActiveSkillBadge, SkillsPopover } from '../skills';
-import Toast, { ToastPlacement } from '../Toast';
 import Tooltip, { TooltipAlign, TooltipPosition } from '../ui/Tooltip';
 import {
   resolveAgentModelSelection,
@@ -449,6 +448,7 @@ interface CoworkPromptInputProps {
   onWorkingDirectoryChange?: (dir: string) => void;
   showFolderSelector?: boolean;
   showModelSelector?: boolean;
+  onModelSwitch?: (sessionId: string, messageId: string) => void;
   showAgentSelector?: boolean;
   showReadOnlyContext?: boolean;
   readOnlyContextTrailingText?: string;
@@ -494,6 +494,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       onWorkingDirectoryChange,
       showFolderSelector = false,
       showModelSelector = false,
+      onModelSwitch,
       showAgentSelector = false,
       showReadOnlyContext = false,
       readOnlyContextTrailingText,
@@ -573,7 +574,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [goalEditDraft, setGoalEditDraft] = useState('');
     const [goalEditSaving, setGoalEditSaving] = useState(false);
     const [modelAccessPrompt, setModelAccessPrompt] = useState<ModelAccessPromptKind | null>(null);
-    const [modelSwitchNotice, setModelSwitchNotice] = useState<{ sessionId: string; messageId: string } | null>(null);
     const [showChatLoginExperiencePrompt, setShowChatLoginExperiencePrompt] = useState(false);
     const [chatLoginExperiencePending, setChatLoginExperiencePending] = useState(false);
     const [showVoiceLoginPrompt, setShowVoiceLoginPrompt] = useState(false);
@@ -2993,12 +2993,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     return () => window.removeEventListener(ConfigServiceEvent.Updated, syncFromConfig);
   }, []);
 
-  useEffect(() => {
-    if (!modelSwitchNotice) return;
-    const timer = window.setTimeout(() => setModelSwitchNotice(null), 6000);
-    return () => window.clearTimeout(timer);
-  }, [modelSwitchNotice]);
-
   const largeModelSelector = showModelSelector ? (
     <div className="flex flex-col items-start gap-1">
       <ModelSelector
@@ -3026,7 +3020,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               && message.timestamp >= modelSwitchStartedAt
               && !previousMessageIds.has(message.id)
             ));
-            setModelSwitchNotice(notice ? { sessionId: updatedSession.id, messageId: notice.id } : null);
+            if (notice) onModelSwitch?.(updatedSession.id, notice.id);
           };
           const keepsBoundPreset = !!(sessionId && nextModel.presetId && currentSession && currentSession.id === sessionId
             && currentSession.modelPresetId === nextModel.presetId && currentSession.modelOverride);
@@ -4307,15 +4301,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           }}
           onStart={() => { void handleChatLoginExperienceStart(); }}
         />
-      )}
-      {modelSwitchNotice && modelSwitchNotice.sessionId === sessionId && createPortal(
-        <Toast
-          placement={ToastPlacement.Top}
-          message={i18nService.t('coworkModelSwitchWarning')}
-          closeLabel={i18nService.t('close')}
-          onClose={() => setModelSwitchNotice(null)}
-        />,
-        document.body,
       )}
       {modelAccessPrompt && (
         <ModelAccessPromptModal

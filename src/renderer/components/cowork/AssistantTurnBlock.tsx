@@ -601,6 +601,8 @@ const AssistantTurnBlock: React.FC<{
   showCopyButtons?: boolean;
   completedGoal?: CoworkGoal | null;
   hiddenSystemMessageId?: string | null;
+  modelSwitchNoticeMessageId?: string | null;
+  onDismissModelSwitchNotice?: () => void;
   searchTargetMessageId?: string | null;
   /** True when this turn is the one currently streaming; keeps the latest activity step visible. */
   isStreamingTurn?: boolean;
@@ -628,6 +630,8 @@ const AssistantTurnBlock: React.FC<{
   showCopyButtons = true,
   completedGoal,
   hiddenSystemMessageId,
+  modelSwitchNoticeMessageId,
+  onDismissModelSwitchNotice,
   searchTargetMessageId,
   isStreamingTurn = false,
   hasRunningSubagents = false,
@@ -740,7 +744,13 @@ const AssistantTurnBlock: React.FC<{
 
   const renderSystemMessage = (message: CoworkMessage) => {
     if (isModelChangeMessage(message) && message.metadata?.modelChange) {
-      return <ModelChangeDivider change={message.metadata.modelChange} />;
+      return (
+        <ModelChangeDivider
+          change={message.metadata.modelChange}
+          showNotice={message.id === modelSwitchNoticeMessageId}
+          onDismissNotice={onDismissModelSwitchNotice}
+        />
+      );
     }
     if (message.id === hiddenSystemMessageId) {
       return null;
@@ -1082,11 +1092,15 @@ const AssistantTurnBlock: React.FC<{
     return null;
   }
 
+  const hasModelSwitchNotice = consolidatedItems.some(item => item.type === 'system'
+    && item.message.id === modelSwitchNoticeMessageId
+    && isModelChangeMessage(item.message));
+
   return (
-    <div className={`py-2 ${COWORK_DETAIL_GUTTER_CLASS}`}>
+    <div className={`${hasModelSwitchNotice ? 'pb-2' : 'py-2'} ${COWORK_DETAIL_GUTTER_CLASS}`}>
       <div className={COWORK_DETAIL_CONTENT_CLASS}>
         <div className="flex items-start gap-3">
-          <div className="flex-1 min-w-0 py-3 space-y-3">
+          <div className={`flex-1 min-w-0 ${hasModelSwitchNotice ? 'pb-3' : 'py-3'} space-y-3`}>
             {shouldFoldProcess ? (
               <>
                 {/* Unlike step lines, the duration line keeps its arrow: it is

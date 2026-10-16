@@ -1,6 +1,7 @@
-import { type AvailableModelPreset, isChatPresetSession, type ModelPresetId, ModelPresetIpc, modelPresetPreferenceKey, parseModelPresetId, parseModelPresetPreference } from '../../shared/modelPresets/constants';
+import { type AvailableModelPreset, isChatPresetSession, type ModelPresetId, ModelPresetIpc, modelPresetModelId, modelPresetPreferenceKey, parseModelPresetId, parseModelPresetPreference } from '../../shared/modelPresets/constants';
 import { type ModelThinkingLevel, OpenClawProviderId, parseModelThinkingConfig, parseModelThinkingLevel } from '../../shared/providers';
-import type { ServerModelMetadataInput } from './claudeSettings';
+import { getServerModelMetadata, type ServerModelMetadataInput } from './claudeSettings';
+import { presetContextWindowSelection } from './modelPresetContext';
 import { recordSessionModelChange } from './sessionModelChange';
 
 export type ResolvedPresetModel = ServerModelMetadataInput & { modelId: string; apiFormat: string; accessible?: boolean };
@@ -18,7 +19,7 @@ export function createModelPresetClient(dependencies: Dependencies) {
   return {
     async available(): Promise<AvailableModelPreset[]> {
       const isCurrent = dependencies.isAccountCurrent();
-      const response = await dependencies.fetchWithAuth(`${dependencies.serverBaseUrl()}/api/model-presets/available`, {
+      const response = await dependencies.fetchWithAuth(`${dependencies.serverBaseUrl()}/api/models/available`, {
         headers: dependencies.headers(),
       });
       if (!isCurrent()) throw new Error('Account changed while loading model presets');
@@ -34,7 +35,7 @@ export function createModelPresetClient(dependencies: Dependencies) {
       if (existing) return existing;
       const isCurrent = dependencies.isAccountCurrent();
       const request = (async () => {
-        const response = await dependencies.fetchWithAuth(`${dependencies.serverBaseUrl()}/api/model-presets/${presetId}/resolve`, {
+        const response = await dependencies.fetchWithAuth(`${dependencies.serverBaseUrl()}/api/models/${modelPresetModelId(presetId)}/resolve`, {
           method: 'POST',
           headers: { ...dependencies.headers(), 'Content-Type': 'application/json' },
           body: JSON.stringify({ sessionId, requiresImage }),
@@ -96,7 +97,11 @@ export function registerModelPresetIpc(dependencies: {
     const config = parseModelThinkingConfig(model.thinkingConfig);
     const thinkingLevel = config?.defaultLevel ?? '';
     if (!initial) {
-      const patched = await dependencies.getRuntime().patchSession?.(sessionId, { model: modelRef, thinkingLevel: thinkingLevel || null });
+      const patched = await dependencies.getRuntime().patchSession?.(sessionId, {
+        model: modelRef,
+        thinkingLevel: thinkingLevel || null,
+        contextWindow: presetContextWindowSelection(getServerModelMetadata(model.modelId), presetId),
+      });
       if (!patched || patched.modelOverride !== modelRef || patched.resolvedModelRef !== modelRef) throw new Error(t('modelPresetModelMismatch'));
     }
     if (!isCurrent()) throw new Error(t('modelPresetAccountChanged'));

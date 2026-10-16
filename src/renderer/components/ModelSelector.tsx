@@ -469,7 +469,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   alignDropdownToTriggerEnd = false,
   triggerMaxWidthClassName,
   thinkingLevel,
-  allowPresets = false,
+  allowPresets = true,
 }) => {
   const dispatch = useDispatch();
   const [isOpen, setIsOpen] = React.useState(false);
@@ -821,7 +821,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     });
   };
 
-  const presetUsesDefaultThinking = (model: Model): boolean => !!model.presetId && !model.serverApiFormat
+  const presetUsesDefaultThinking = (model: Model): boolean => !!model.presetId && !model.thinkingConfig
     && !(isSelected(model) ? selectedModel?.presetThinkingLevel : model.presetThinkingLevel);
   const thinkingLabelForModel = (model: Model): string | null => {
     if (presetUsesDefaultThinking(model)) return i18nService.t('modelPresetThinkingDefault');
