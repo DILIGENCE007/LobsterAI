@@ -468,6 +468,7 @@ import { inferImageMimeTypeFromDataUrl, type PersistedGeneratedImageAsset, persi
 import { MediaDownloadCoordinator } from './libs/mediaDownloadCoordinator';
 import { MediaTaskStore, type MediaTaskTracker as PersistedMediaTaskTracker } from './libs/mediaTaskStore';
 import { MediaUsageAnalytics } from './libs/mediaUsageAnalytics';
+import { MediaUsageStore } from './libs/mediaUsageStore';
 import { createModelPresetClient, registerModelPresetIpc } from './libs/modelPresets';
 import {
   migrateAgentModelRefs,
@@ -6468,6 +6469,8 @@ if (!gotTheLock) {
   const defaultImageBudget = new MediaDefaultImageBudget();
 
   const mediaUsage = new MediaUsageAnalytics({
+    store: new MediaUsageStore({ get: key => getStore().get(key), set: (key, value) => getStore().set(key, value) }),
+    getScope: () => JSON.stringify([getCurrentMediaAccountScope()?.ownerAccountKey, getServerApiBaseUrl()]),
     getOwner: () => {
       if (getStore().get<{ usageAnalyticsEnabled?: boolean }>('app_config')?.usageAnalyticsEnabled === false) return null;
       const scope = getCurrentMediaAccountScope();
@@ -7086,6 +7089,7 @@ if (!gotTheLock) {
         serverBaseUrl, sessionId, mediaType, model: selectedModel, toolCallId: request.context.toolCallId,
         requestBody: JSON.stringify({ ...generateReq, mediaType }),
       }) : undefined;
+      mediaUsage.submitting(request.context.toolCallId, useDurableTasks ? MediaProtocol.Durable : MediaProtocol.Legacy, selectedModel);
       const idempotencyKey = intent?.key ?? crypto.randomUUID();
       if (intent) getMediaTaskStore().saveIntent({ ...intent, lastAttemptAt: Date.now() });
       const resp = await fetchWithAuth(`${serverBaseUrl}${endpoint}`, {
@@ -7159,7 +7163,8 @@ if (!gotTheLock) {
         return {
           content: [{ type: 'text', text: body.message || 'Media generation request failed.' }],
           isError: true,
-          details: { status: MediaTaskStatus.Failed, error: body.data?.error, warnings: [body.message || 'Unknown error'] },
+          details: { status: MediaTaskStatus.Failed, error: body.data?.error, warnings: [body.message || 'Unknown error'],
+            submissionUnknown: Boolean(intent && resp.status >= 500) },
         };
       }
 
@@ -7315,6 +7320,7 @@ if (!gotTheLock) {
         return {
           content: [{ type: 'text', text: t('mediaGenerationSubmissionUnconfirmed') }],
           details: { status: MediaTaskStatus.Pending, phase: MediaTaskPhase.Verifying,
+            submissionUnknown: true,
             protocolVersion: MediaProtocol.Durable, model: unacknowledgedIntent.model,
             mediaType: unacknowledgedIntent.mediaType, canCancel: false },
         };
@@ -7330,7 +7336,7 @@ if (!gotTheLock) {
     }
     const sessionId = extractSessionIdFromKey(request.context.sessionKey);
     const selection = request.context.runId ? undefined : resolveMediaSelectionForSession(sessionId);
-    return mediaUsage.run({ sessionId,
+    return mediaUsage.run({ sessionId: request.context.runId ? null : sessionId,
       selectionSource: request.tool === MediaGenerationTool.Image ? selection?.imageSource : selection?.videoSource,
       policyVersion: selection?.policyVersion,
       mediaType: request.tool === MediaGenerationTool.Image ? 'image' : 'video',
@@ -7498,12 +7504,12 @@ if (!gotTheLock) {
             };
             persistMediaTaskCard(tracker, details);
             if (tracker.toolCallId) emitMediaStatusPollUpdate({ sessionId: tracker.sessionId, toolCallId: tracker.toolCallId, details });
+            if (status === MediaTaskStatus.Succeeded) mediaUsage.save(taskId, saved?.saved.length ?? 0, assets.length);
             if (!ready) {
               tracker.deliveryRetryAt = Date.now() + 60_000;
               getMediaTaskStore().save(tracker);
               continue;
             }
-            if (status === MediaTaskStatus.Succeeded) mediaUsage.save(taskId, saved?.saved.length ?? 0, assets.length);
             const content = status === MediaTaskStatus.Succeeded
               ? (saved?.saved ?? []).map(asset => `[${asset.filename}](${pathToFileURL(asset.filePath).toString()})`).join('\n')
               : String(task.errorMessage || t(status === MediaTaskStatus.Timeout ? 'mediaTaskTimedOut'
@@ -7680,6 +7686,7 @@ if (!gotTheLock) {
       if (intent.rejected || intent.ownerAccountKey !== scope.ownerAccountKey || intent.serverBaseUrl !== serverBaseUrl
         || !getCoworkStore().getSession(intent.sessionId)) continue;
       if (intent.taskId) {
+        mediaUsage.accept(intent.toolCallId, { taskId: intent.taskId, protocolVersion: MediaProtocol.Durable });
         const exists = getMediaTaskStore().tasks().some(task => task.taskId === intent.taskId && task.serverBaseUrl === serverBaseUrl);
         if (!exists && getCoworkStore().getSession(intent.sessionId)) registerMediaTaskForPolling({
           taskId: intent.taskId, sessionId: intent.sessionId, mediaType: intent.mediaType, model: intent.model,
@@ -7698,9 +7705,13 @@ if (!gotTheLock) {
         });
         const body = await response.json() as { code: number; data?: { taskId?: string | number }; message?: string };
         if (!isMediaAccountScopeCurrent(scope, getCurrentMediaAccountScope())) return;
-        if (body.code === 0 && body.data?.taskId != null) getMediaTaskStore().saveIntent({ ...intent, taskId: String(body.data.taskId) });
+        if (body.code === 0 && body.data?.taskId != null) {
+          getMediaTaskStore().saveIntent({ ...intent, taskId: String(body.data.taskId) });
+          mediaUsage.accept(intent.toolCallId, { ...body.data, model: intent.model, protocolVersion: MediaProtocol.Durable });
+        }
         else if (response.status < 500) {
           getMediaTaskStore().saveIntent({ ...intent, rejected: true });
+          mediaUsage.reject(intent.toolCallId, String(body.code) + ' ' + (body.message ?? ''));
           emitMediaTaskMessage(intent.sessionId, body.message || t('mediaGenerationRecoveryFailed'));
         }
       } catch (error) { console.debug('[MediaGeneration] Intent recovery deferred:', error); }
@@ -10212,6 +10223,7 @@ if (!gotTheLock) {
     ) => {
       try {
         const ipcStartedAtMs = Date.now();
+        const captureCompanionTask = desktopCompanionManager?.captureTaskAnalytics(_event.sender.id);
         const requestAccountScope = getCurrentMediaAccountScope();
         console.log(
           '[CoworkFirstResponseTiming] start IPC received.',
@@ -10463,6 +10475,7 @@ if (!gotTheLock) {
             }
           });
 
+        captureCompanionTask?.(getTaskUsageAnalytics().context(session.id));
         const sessionWithMessages = coworkStoreInstance.getSession(session.id) || {
           ...session,
           status: 'running' as const,
@@ -10501,6 +10514,7 @@ if (!gotTheLock) {
     ) => {
       try {
         const ipcStartedAtMs = Date.now();
+        const captureCompanionTask = desktopCompanionManager?.captureTaskAnalytics(_event.sender.id);
         const requestAccountScope = getCurrentMediaAccountScope();
         console.log(
           '[CoworkFirstResponseTiming] continue IPC received.',
@@ -10620,6 +10634,7 @@ if (!gotTheLock) {
           `Session ${options.sessionId}.`,
           `Elapsed ${Date.now() - ipcStartedAtMs}ms.`,
         );
+        const previousUsage = getTaskUsageAnalytics().context(options.sessionId);
         runtime
           .continueSession(options.sessionId, options.prompt, {
             analytics: options.analytics,
@@ -10658,6 +10673,8 @@ if (!gotTheLock) {
             }
           });
 
+        const currentUsage = getTaskUsageAnalytics().context(options.sessionId);
+        captureCompanionTask?.(currentUsage?.turnId !== previousUsage?.turnId ? currentUsage : undefined);
         const session = getCoworkStore().getSession(options.sessionId);
         return { success: true, session };
       } catch (error) {
@@ -16003,6 +16020,7 @@ if (!gotTheLock) {
     profiler.measure('createWindow');
     desktopCompanionManager = new DesktopCompanionManager({
       reportAnalytics: event => getMainLogReporter().report(event),
+      getAnalyticsOwner: () => getStore().get<AppConfigSettings>('app_config')?.usageAnalyticsEnabled === false ? null : getAuthSessionKey() ?? '',
       getTaskInfo: sessionId => {
         const task = getCoworkStore().getSession(sessionId, 1);
         return task ? { ...task, preview: getCompanionTaskPreview(task.messages.at(-1)) } : null;
@@ -16181,6 +16199,10 @@ if (!gotTheLock) {
       getStore().get<AppConfigSettings>('app_config'),
     );
     getStore().onDidChange<AppConfigSettings>('app_config', (newConfig, oldConfig) => {
+      if (newConfig?.usageAnalyticsEnabled === false) {
+        mediaUsage.clear();
+        desktopCompanionManager?.clearTaskAnalytics();
+      }
       updateTitleBarOverlay();
       // 仅在语言变更时刷新托盘菜单文本
       const currentLanguage = newConfig?.language;

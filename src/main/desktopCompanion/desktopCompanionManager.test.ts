@@ -304,10 +304,16 @@ describe('desktop companion lifecycle', () => {
     shortcut();
     invoke(DesktopCompanionIpc.ToggleOrb);
     expect(readyPanel(panel)).toBe(true);
-    expect(reportAnalytics.mock.calls.map(([event]) => event).filter(event => event.interactionType === Interaction.Open)).toEqual([
+    const opens = reportAnalytics.mock.calls.map(([event]) => event).filter(event => event.interactionType === Interaction.Open);
+    expect(opens).toEqual([
       expect.objectContaining({ source: AnalyticsSource.Shortcut, surface: DesktopCompanionSurface.Panel }),
       expect.objectContaining({ source: AnalyticsSource.Orb, surface: DesktopCompanionSurface.Panel }),
     ]);
+    expect(opens[0].journeyId).toEqual(expect.any(String));
+    expect(opens[1].journeyId).not.toBe(opens[0].journeyId);
+    invoke(DesktopCompanionIpc.ReportAnalytics, { action: AnalyticsAction.Task, source: AnalyticsSource.Orb,
+      stage: AnalyticsStage.Submit, callId: '11111111-1111-4111-8111-111111111111' }, panel.webContents);
+    expect(reportAnalytics.mock.lastCall?.[0]).toMatchObject({ journeyId: opens[1].journeyId, source: AnalyticsSource.Panel });
   });
 
   test('validates analytics IPC sender, event family and payload before reporting', () => {

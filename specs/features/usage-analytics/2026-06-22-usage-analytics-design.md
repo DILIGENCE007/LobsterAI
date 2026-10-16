@@ -1231,14 +1231,15 @@ export const LogReporterActionPrefix = {
 | `result` | `dismiss` / `stop` | 移除任务通知 / 停止任务；停止携带 `outcome=success/failed` |
 
 - 用途：分析入口使用、划词工具使用、通知到主窗口的转化，以及登录和权限触达。
-- `open + surface=panel` 表示接受打开请求；`stage=shown` 表示调用了原生窗口显示方法。二者不能合并解释为内容已完成渲染。
+- `open + surface=panel` 表示接受打开请求，并携带本次打开的随机分析 `journeyId`；`stage=shown` 表示调用了原生窗口显示方法。二者不能合并解释为内容已完成渲染。
 
 #### 2.4.47 `lobsterai_desktop_companion_task`
 
 - 状态：已实现。
 - 触发时机：快捷输入框、文件拖放快捷动作、结果卡片追问提交时上报 `stage=submit`；创建/续聊 API 返回后上报一次 `stage=result`。
 - 业务参数：`source=panel/file_drop/result`、`isFollowUp`；结果携带 `outcome=success/failed` 和 `durationMs`（从提交到创建/续聊返回，单位毫秒）。前置检查失败与异常也计为失败；重复点击被防重锁拦截时不计入。
-- **统计口径**：成功表示任务创建/续聊被接受，不代表 Agent 执行完成。执行完成仍由已有 `lobsterai_task_lifecycle` 记录；本事件不携带会话 ID，不提供与执行事件的逐任务关联。
+- 关联参数：每次提交的随机 `callId` 连接 `submit/result`；`journeyId` 连接本次面板打开和提交。主进程在实际派发任务时捕获 `taskId/turnId`，成功结果携带这两个分析 ID；没有对应新轮次时不发送。文件快捷任务和追问使用本次提交独立的 `journeyId`。
+- **统计口径**：成功表示任务创建/续聊被接受，不代表 Agent 执行完成。通过 `taskId + turnId` 连接已有 `lobsterai_task_lifecycle`，查看执行结果；本事件不携带本地会话 ID。关联边界和媒体 v2 口径见 `2026-10-14-usage-funnel-design.md` 第 8 节。
 - 快捷输入框继续复用 `lobsterai_prompt_submit` 和 `lobsterai_prompt_control_action`，但 `surface=desktop_companion`，`conversationState=new_task`，不再计入首页输入。两类提交事件描述同一次操作的不同层级，不能相加作为总提交数。
 
 #### 2.4.48 `lobsterai_desktop_companion_tool`
