@@ -2685,14 +2685,16 @@ export class OpenClawConfigSync {
             : {}),
           ...(hasAskUserPlugin ? { 'ask-user-question': { enabled: true } } : {}),
           ...(hasMediaGenPlugin ? { 'lobster-media-generation': { enabled: true } } : {}),
-          ...(hasModelRoutingPlugin && getOpenClawTokenProxyPort() ? {
-            'lobster-model-routing': {
+          ...(hasModelRoutingPlugin ? {
+            'lobster-model-routing': getOpenClawTokenProxyPort() ? {
               enabled: true,
+              // Config-path plugins need this grant to register model-selection hooks.
+              hooks: { allowConversationAccess: true },
               config: {
                 proxyUrl: `http://127.0.0.1:${getOpenClawTokenProxyPort()}`,
                 token: '${LOBSTER_PROXY_TOKEN}',
               },
-            },
+            } : { enabled: false },
           } : {}),
           // Experimental; enabled below only once the user turns it on.
           ...(hasDecisionPlugin ? { [DECISION_MODEL_PLUGIN_ID]: { enabled: false } } : {}),
