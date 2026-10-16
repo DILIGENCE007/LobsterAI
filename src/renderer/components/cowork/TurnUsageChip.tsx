@@ -133,7 +133,12 @@ const TurnUsageChip: React.FC<TurnUsageChipProps> = ({ userMessageId, turnUsage,
         maxHeight: Math.max(0, upwards ? above : below),
       });
       setDetailsFailed(false);
-      void handleRefresh();
+      // Settled details live with the local conversation, independently of login.
+      // Retry empty legacy snapshots so they can recover under the original account.
+      if (turnUsage.status !== CoworkTurnUsageStatus.Settled
+        || (turnUsage.requestCount === 0 && !turnUsage.modelUsage?.length)) {
+        void handleRefresh();
+      }
     }
     setOpen(value => !value);
   };

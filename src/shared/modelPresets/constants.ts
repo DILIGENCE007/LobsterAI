@@ -23,6 +23,7 @@ export const modelPresetPreferenceKey = (ownerAccountKey: string): string => `ch
 export interface AvailableModelPreset {
   presetId: ModelPresetId;
   costMultiplier: number;
+  contextWindow?: number | null;
   accessible: boolean;
   supportsImage: boolean;
   supportsThinking?: boolean;

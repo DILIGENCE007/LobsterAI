@@ -1,6 +1,7 @@
 import { type AvailableModelPreset, isChatPresetSession, type ModelPresetId, ModelPresetIpc, modelPresetPreferenceKey, parseModelPresetId, parseModelPresetPreference } from '../../shared/modelPresets/constants';
 import { type ModelThinkingLevel, OpenClawProviderId, parseModelThinkingConfig, parseModelThinkingLevel } from '../../shared/providers';
-import type { ServerModelMetadataInput } from './claudeSettings';
+import { getServerModelMetadata, type ServerModelMetadataInput } from './claudeSettings';
+import { presetContextWindowSelection } from './modelPresetContext';
 import { recordSessionModelChange } from './sessionModelChange';
 
 export type ResolvedPresetModel = ServerModelMetadataInput & { modelId: string; apiFormat: string; accessible?: boolean };
@@ -96,7 +97,11 @@ export function registerModelPresetIpc(dependencies: {
     const config = parseModelThinkingConfig(model.thinkingConfig);
     const thinkingLevel = config?.defaultLevel ?? '';
     if (!initial) {
-      const patched = await dependencies.getRuntime().patchSession?.(sessionId, { model: modelRef, thinkingLevel: thinkingLevel || null });
+      const patched = await dependencies.getRuntime().patchSession?.(sessionId, {
+        model: modelRef,
+        thinkingLevel: thinkingLevel || null,
+        contextWindow: presetContextWindowSelection(getServerModelMetadata(model.modelId), presetId),
+      });
       if (!patched || patched.modelOverride !== modelRef || patched.resolvedModelRef !== modelRef) throw new Error(t('modelPresetModelMismatch'));
     }
     if (!isCurrent()) throw new Error(t('modelPresetAccountChanged'));

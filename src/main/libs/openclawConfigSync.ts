@@ -70,6 +70,7 @@ import {
   getCoworkOpenAICompatProxyToken,
 } from './coworkOpenAICompatProxy';
 import type { LobsterBrowserMcpStdioLaunch } from './lobsterBrowserMcpServer';
+import { buildPresetContextWindows } from './modelPresetContext';
 import {
   buildAgentEntry,
   buildManagedAgentEntries,
@@ -747,6 +748,8 @@ type OpenClawProviderSelection = {
         cacheWrite: number;
       };
       contextWindow?: number;
+      contextWindows?: Array<{ id: string; label: string; contextWindow: number }>;
+      contextWindowDefault?: string;
       maxTokens?: number;
       compat?: OpenClawModelCompat;
     }>;
@@ -2344,6 +2347,11 @@ export class OpenClawConfigSync {
               thinkingConfig: sm.thinkingConfig,
             });
             collectCompatibilityOwnerProfile(candidateModelProfiles, serverSel);
+            const serverModel = serverSel.providerConfig.models[0];
+            Object.assign(serverModel, buildPresetContextWindows({
+              contextWindow: serverModel.contextWindow,
+              presetContextWindows: sm.presetContextWindows,
+            }));
             collectThinkingProfile(
               candidateThinkingProfiles,
               serverSel,

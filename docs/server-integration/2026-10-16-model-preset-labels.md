@@ -2,7 +2,7 @@
 
 ## 变更摘要
 
-服务端将 `ultimate` 预设的 `name` 从“极致”改为“旗舰”；`balanced` 仍为“均衡”。预设 ID、倍率数值、模型选择和计费逻辑保持不变。
+服务端将 `ultimate` 预设的 `name` 从“极致”改为“旗舰”，将 `balanced` 从“均衡”改为“快速”。预设 ID、倍率数值、模型选择和计费逻辑保持不变。
 
 ## 接口详情
 
@@ -15,7 +15,7 @@
   "code": 0,
   "message": "success",
   "data": [
-    { "presetId": "balanced", "name": "均衡", "costMultiplier": 0.1 },
+    { "presetId": "balanced", "name": "快速", "costMultiplier": 0.1 },
     { "presetId": "ultimate", "name": "旗舰", "costMultiplier": 1.05 }
   ]
 }
@@ -25,7 +25,8 @@
 
 ## 客户端调整
 
-- 主进程及渲染进程的中文名称使用“均衡 / 旗舰”，英文使用“Balanced / Flagship”。
+- 主进程及渲染进程的中文名称使用“快速 / 旗舰”，英文使用“Fast / Flagship”。
+- `balanced` 对应的模型入口和消息标签使用描边闪电图标，保留深浅色主题适配；描述同步为“快速响应，高效胜任日常工作”。
 - 模型列表和提示卡片统一以前缀 `x` 展示倍率，固定保留两位小数，例如 `x0.10`、`x1.05`、`x1.00`。
 - 继续使用 `balanced` / `ultimate` 识别预设，不使用显示名称作为标识。
 

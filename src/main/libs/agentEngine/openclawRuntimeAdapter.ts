@@ -95,10 +95,12 @@ import { t } from '../../i18n';
 import { MediaGenerationTool } from '../../mediaGenerationPolicy';
 import type { SubagentMessageStore } from '../../subagentMessageStore';
 import type { SubagentRunStore } from '../../subagentRunStore';
+import { getServerModelMetadata } from '../claudeSettings';
 import { setCoworkProxySessionId } from '../coworkOpenAICompatProxy';
 import { getServerApiBaseUrl } from '../endpoints';
 import { createCoworkLlmTrace, createLlmTraceparent } from '../llmTrace';
 import { registerLlmUsageContext } from '../llmUsageContext';
+import { presetContextWindowSelection } from '../modelPresetContext';
 import { extractOpenClawAssistantStreamParts,extractOpenClawAssistantStreamText } from '../openclawAssistantText';
 import {
   buildManagedSessionKey,
@@ -5566,11 +5568,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         const openClawThinkingLevel = thinkingLevel
           ? resolveOpenClawThinkingLevelForModel(model, thinkingLevel)
           : undefined;
+        const presetId = this.store.getSession(sessionId)?.modelPresetId;
         const response = await this.requestSessionPatchWithProfile({
           sessionId,
           sessionKey,
           patch: {
             model,
+            ...(presetId ? {
+              contextWindow: presetContextWindowSelection(
+                getServerModelMetadata(model.slice(model.indexOf('/') + 1)), presetId,
+              ),
+            } : {}),
             ...(openClawThinkingLevel
               ? { thinkingLevel: openClawThinkingLevel }
               : this.store.getSession(sessionId)?.modelPresetId ? { thinkingLevel: null } : {}),
