@@ -1,5 +1,6 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { AgentId } from '@shared/agent';
+import { ENABLE_EXPERT_PLAZA_UI } from '@shared/featureFlags';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
@@ -13,6 +14,7 @@ import {
   selectCurrentSessionId,
 } from '../store/selectors/coworkSelectors';
 import type { CoworkSessionSummary } from '../types/cowork';
+import { MainView } from '../types/navigation';
 import { getAgentDisplayNameById } from '../utils/agentDisplay';
 import {
   type AgentSidebarBatchItem,
@@ -31,25 +33,27 @@ import {
 import CoworkSearchModal from './cowork/CoworkSearchModal';
 import Cog6ToothIcon from './icons/Cog6ToothIcon';
 import ComposeIcon from './icons/ComposeIcon';
+import ExpertIcon from './icons/ExpertIcon';
 import SidebarAutomationIcon from './icons/SidebarAutomationIcon';
-import SidebarKitsIcon from './icons/SidebarKitsIcon';
 import SidebarLibraryIcon from './icons/SidebarLibraryIcon';
 import SidebarToggleIcon from './icons/SidebarToggleIcon';
-import SkillIcon from './icons/SkillIcon';
 import TrashIcon from './icons/TrashIcon';
 import LoginButton from './LoginButton';
 import LowCreditPurchaseOfferCard from './LowCreditPurchaseOfferCard';
+import SidebarCapabilitiesMenu from './SidebarCapabilitiesMenu';
 import SidebarExperienceSlot from './SidebarExperienceSlot';
 import { useSidebarPurchaseGuide } from './useSidebarPurchaseGuide';
 
 interface SidebarProps {
   onShowSettings: () => void;
   onShowLogin?: () => void;
-  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp' | 'library';
-  onShowSkills: () => void;
+  activeView: MainView;
   onShowCowork: () => void;
   onShowScheduledTasks: () => void;
   onShowKits: () => void;
+  onShowSkills: () => void;
+  onShowConnectors: () => void;
+  onShowExperts: () => void;
   onShowLibrary: () => void;
   onNewChat: () => void;
   isCollapsed: boolean;
@@ -145,9 +149,9 @@ const SidebarPromoStar: React.FC<{ className?: string; idPrefix: string }> = ({
 
 const normalizeAgentId = (agentId?: string | null) => agentId?.trim() || AgentId.Main;
 const SidebarNewFeatureBadge = {
-  KitsDismissedVersionKey: 'sidebar.kitsNewFeatureBadge.dismissedVersion',
-  // Bump this value in a release when the kits entry should show the badge again.
-  KitsVersion: '2026-06-05',
+  ExpertsDismissedVersionKey: 'sidebar.expertsNewFeatureBadge.dismissedVersion',
+  // Bump this value in a release when the experts entry should show the badge again.
+  ExpertsVersion: '2026-10-12',
 } as const;
 const sidebarNavItemClassName =
   'w-full inline-flex h-9 items-center gap-2.5 rounded-full px-2 text-left text-[length:var(--lobster-text-sidebarCompact)] font-normal text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]';
@@ -243,10 +247,12 @@ const logTaskSearchRequest = (
 const Sidebar: React.FC<SidebarProps> = ({
   onShowSettings,
   activeView,
-  onShowSkills,
   onShowCowork,
   onShowScheduledTasks,
   onShowKits,
+  onShowSkills,
+  onShowConnectors,
+  onShowExperts,
   onShowLibrary,
   onNewChat,
   isCollapsed,
@@ -268,7 +274,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const sessions = useSelector(selectCoworkSessions);
   const currentSessionId = useSelector(selectCurrentSessionId);
   // The home page is the "new task" view, so its nav item reads as selected there.
-  const isNewTaskViewActive = activeView === 'cowork' && !currentSessionId;
+  const isNewTaskViewActive = activeView === MainView.Cowork && !currentSessionId;
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [batchAgentId, setBatchAgentId] = useState<string | null>(null);
@@ -280,7 +286,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [isResizing, setIsResizing] = useState(false);
   const [agentScrollEdges, setAgentScrollEdges] = useState({ top: false, bottom: false });
   const [isSidebarBannerVisible, setIsSidebarBannerVisible] = useState(false);
-  const [showKitsNewBadge, setShowKitsNewBadge] = useState(false);
+  const [showExpertsNewBadge, setShowExpertsNewBadge] = useState(false);
   const [showLoginPromoTip, setShowLoginPromoTip] = useState(true);
   const [isLoginPromoTipFading, setIsLoginPromoTipFading] = useState(false);
   const isResizingRef = useRef(false);
@@ -330,19 +336,19 @@ const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     let isCurrent = true;
 
-    const loadKitsNewBadgeState = async () => {
+    const loadExpertsNewBadgeState = async () => {
       try {
         const dismissedVersion = await window.electron.store.get(
-          SidebarNewFeatureBadge.KitsDismissedVersionKey,
+          SidebarNewFeatureBadge.ExpertsDismissedVersionKey,
         );
         if (!isCurrent) return;
-        setShowKitsNewBadge(dismissedVersion !== SidebarNewFeatureBadge.KitsVersion);
+        setShowExpertsNewBadge(dismissedVersion !== SidebarNewFeatureBadge.ExpertsVersion);
       } catch (error) {
-        console.warn('[Sidebar] failed to load kits new feature badge state:', error);
+        console.warn('[Sidebar] failed to load experts new feature badge state:', error);
       }
     };
 
-    void loadKitsNewBadgeState();
+    void loadExpertsNewBadgeState();
 
     return () => {
       isCurrent = false;
@@ -392,18 +398,18 @@ const Sidebar: React.FC<SidebarProps> = ({
     };
   }, [isEngineStartupOverlayVisible, showLoginPromo, showLoginPromoTip]);
 
-  const dismissKitsNewBadge = useCallback(() => {
-    if (!showKitsNewBadge) return;
-    setShowKitsNewBadge(false);
+  const dismissExpertsNewBadge = useCallback(() => {
+    if (!showExpertsNewBadge) return;
+    setShowExpertsNewBadge(false);
     void window.electron.store
       .set(
-        SidebarNewFeatureBadge.KitsDismissedVersionKey,
-        SidebarNewFeatureBadge.KitsVersion,
+        SidebarNewFeatureBadge.ExpertsDismissedVersionKey,
+        SidebarNewFeatureBadge.ExpertsVersion,
       )
       .catch((error) => {
-        console.warn('[Sidebar] failed to save kits new feature badge state:', error);
+        console.warn('[Sidebar] failed to save experts new feature badge state:', error);
       });
-  }, [showKitsNewBadge]);
+  }, [showExpertsNewBadge]);
 
   const openTaskSearch = useCallback((source: CoworkTaskSearchRequestSource) => {
     logTaskSearchRequest(source, activeView);
@@ -725,7 +731,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                       className="non-draggable"
                       label={i18nService.t('search')}
                     />
-                    {SIDEBAR_TASK_FILTER_ENABLED && activeView === 'cowork' && (
+                    {SIDEBAR_TASK_FILTER_ENABLED && activeView === MainView.Cowork && (
                       <SidebarTaskFilterButton
                         isActive={isTaskFilterActive}
                         hasUnreadCompletedTasks={hasUnreadCompletedTasks}
@@ -761,44 +767,51 @@ const Sidebar: React.FC<SidebarProps> = ({
               setIsSearchOpen(false);
               onShowScheduledTasks();
             }}
-            className={activeView === 'scheduledTasks' ? activeSidebarNavItemClassName : sidebarNavItemClassName}
-            aria-current={activeView === 'scheduledTasks' ? 'page' : undefined}
+            className={activeView === MainView.ScheduledTasks ? activeSidebarNavItemClassName : sidebarNavItemClassName}
+            aria-current={activeView === MainView.ScheduledTasks ? 'page' : undefined}
           >
             <SidebarAutomationIcon className={sidebarNavIconClassName} />
             {i18nService.t('scheduledTasks')}
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              reportSidebarAction('open_kits', { activeView, isCollapsed });
+          {ENABLE_EXPERT_PLAZA_UI && (
+            <button
+              type="button"
+              onClick={() => {
+                reportSidebarAction('open_experts', { activeView, isCollapsed });
+                setIsSearchOpen(false);
+                dismissExpertsNewBadge();
+                onShowExperts();
+              }}
+              className={activeView === MainView.Experts ? activeSidebarNavItemClassName : sidebarNavItemClassName}
+              aria-current={activeView === MainView.Experts ? 'page' : undefined}
+            >
+              <ExpertIcon className={sidebarNavIconClassName} />
+              <span className="min-w-0 truncate">{i18nService.t('expertPlaza')}</span>
+              {showExpertsNewBadge && (
+                <span className="inline-flex h-4 shrink-0 items-center rounded-[4px] bg-[#ff4f6d] px-1.5 text-[10px] font-semibold leading-none text-white">
+                  {i18nService.t('newFeatureBadge')}
+                </span>
+              )}
+            </button>
+          )}
+          <SidebarCapabilitiesMenu
+            activeView={activeView}
+            isCollapsed={isCollapsed}
+            className={sidebarNavItemClassName}
+            activeClassName={activeSidebarNavItemClassName}
+            iconClassName={sidebarNavIconClassName}
+            onSelect={(view) => {
+              const destinations = {
+                [MainView.Kits]: { action: 'open_kits', navigate: onShowKits },
+                [MainView.Skills]: { action: 'open_skills', navigate: onShowSkills },
+                [MainView.Connectors]: { action: 'open_mcp', navigate: onShowConnectors },
+              };
+              const destination = destinations[view];
+              reportSidebarAction(destination.action, { activeView, isCollapsed });
               setIsSearchOpen(false);
-              dismissKitsNewBadge();
-              onShowKits();
+              destination.navigate();
             }}
-            className={activeView === 'kits' ? activeSidebarNavItemClassName : sidebarNavItemClassName}
-            aria-current={activeView === 'kits' ? 'page' : undefined}
-          >
-            <SidebarKitsIcon className={sidebarNavIconClassName} />
-            <span className="min-w-0 truncate">{i18nService.t('kits')}</span>
-            {showKitsNewBadge && (
-              <span className="inline-flex h-4 shrink-0 items-center rounded-[4px] bg-[#ff4f6d] px-1.5 text-[10px] font-semibold leading-none text-white">
-                {i18nService.t('newFeatureBadge')}
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              reportSidebarAction('open_skills', { activeView, isCollapsed });
-              setIsSearchOpen(false);
-              onShowSkills();
-            }}
-            className={activeView === 'skills' || activeView === 'mcp' ? activeSidebarNavItemClassName : sidebarNavItemClassName}
-            aria-current={activeView === 'skills' || activeView === 'mcp' ? 'page' : undefined}
-          >
-            <SkillIcon className={sidebarNavIconClassName} />
-            <span className="min-w-0 truncate">{i18nService.t('skillsAndConnectors')}</span>
-          </button>
+          />
           <button
             type="button"
             onClick={() => {
@@ -806,8 +819,8 @@ const Sidebar: React.FC<SidebarProps> = ({
               setIsSearchOpen(false);
               onShowLibrary();
             }}
-            className={activeView === 'library' ? activeSidebarNavItemClassName : sidebarNavItemClassName}
-            aria-current={activeView === 'library' ? 'page' : undefined}
+            className={activeView === MainView.Library ? activeSidebarNavItemClassName : sidebarNavItemClassName}
+            aria-current={activeView === MainView.Library ? 'page' : undefined}
           >
             <SidebarLibraryIcon className={sidebarNavIconClassName} />
             <span className="min-w-0 truncate">{i18nService.t('librarySidebarTitle')}</span>

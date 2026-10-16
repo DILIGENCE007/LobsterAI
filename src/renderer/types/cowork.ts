@@ -1,3 +1,4 @@
+import type { UsageContext } from '../../shared/analytics/usage';
 import type { CoworkBrowserAnnotationMessageBatch } from '../../shared/cowork/browserAnnotations';
 import type {
   CoworkContextUsageFailureReason,
@@ -15,11 +16,14 @@ import type {
   CoworkTurnUsage,
   CoworkTurnUsageAnchor,
 } from '../../shared/cowork/llmTurnUsage';
+import type { CoworkModelChange } from '../../shared/cowork/modelChange';
 import type { CoworkSelectedTextSnippet } from '../../shared/cowork/selectedText';
 import type {
   KitReference,
   ResolvedKitCapabilities,
 } from '../../shared/kit/constants';
+import type { MediaSelection } from '../../shared/media/defaultPolicy';
+import { type ModelPresetId } from '../../shared/modelPresets/constants';
 import type {
   OpenClawConfigApplyPendingReason,
   OpenClawEngineErrorCode,
@@ -83,6 +87,9 @@ export interface CoworkLiveEditDiff {
 }
 
 export interface CoworkMessageMetadata {
+  modelChange?: CoworkModelChange;
+  modelPresetId?: ModelPresetId;
+  resolvedModelId?: string;
   toolName?: string;
   toolInput?: Record<string, unknown>;
   toolResult?: string;
@@ -115,6 +122,8 @@ export interface CoworkMessageMetadata {
   llmTrace?: CoworkLlmTrace;
   /** User messages: credits and tokens the turn consumed on LobsterAI models. */
   turnUsage?: CoworkTurnUsage;
+  /** Server media task IDs created by this turn; prices are read from the server. */
+  turnMediaTaskIds?: string[];
   selectedTextSnippets?: CoworkSelectedTextSnippet[];
   browserAnnotations?: CoworkBrowserAnnotationMessageBatch[];
   goalSetting?: {
@@ -177,6 +186,7 @@ export interface CoworkSession {
   cwd: string;
   systemPrompt: string;
   modelOverride: string;
+  modelPresetId?: ModelPresetId | null;
   thinkingLevel?: ModelThinkingLevel | '';
   executionMode: CoworkExecutionMode;
   activeSkillIds: string[];
@@ -422,20 +432,23 @@ export interface SubagentSessionSummary {
 
 // Start session options
 export interface CoworkStartOptions {
+  analytics?: UsageContext;
   prompt: string;
   cwd?: string;
   systemPrompt?: string;
   title?: string;
   activeSkillIds?: string[];
+  inheritedSkillIds?: string[];
   runtimeSkillIds?: string[];
   kitIds?: string[];
   kitReferences?: KitReference[];
   resolvedKitCapabilities?: ResolvedKitCapabilities;
   agentId?: string;
   modelOverride?: string;
+  modelPresetId?: ModelPresetId;
   thinkingLevel?: ModelThinkingLevel;
   imageAttachments?: CoworkImageAttachment[];
-  mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
+  mediaSelection?: MediaSelection;
   mediaReferences?: import('./mediaGeneration').MediaAttachmentRef[];
   selectedTextSnippets?: CoworkSelectedTextSnippet[];
   browserAnnotations?: CoworkBrowserAnnotationMessageBatch[];
@@ -443,16 +456,18 @@ export interface CoworkStartOptions {
 
 // Continue session options
 export interface CoworkContinueOptions {
+  analytics?: UsageContext;
   sessionId: string;
   prompt: string;
   systemPrompt?: string;
   activeSkillIds?: string[];
+  inheritedSkillIds?: string[];
   runtimeSkillIds?: string[];
   kitIds?: string[];
   kitReferences?: KitReference[];
   resolvedKitCapabilities?: ResolvedKitCapabilities;
   imageAttachments?: CoworkImageAttachment[];
-  mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
+  mediaSelection?: MediaSelection;
   mediaReferences?: import('./mediaGeneration').MediaAttachmentRef[];
   selectedTextSnippets?: CoworkSelectedTextSnippet[];
   browserAnnotations?: CoworkBrowserAnnotationMessageBatch[];

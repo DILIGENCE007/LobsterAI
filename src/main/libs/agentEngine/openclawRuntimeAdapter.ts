@@ -95,9 +95,12 @@ import { t } from '../../i18n';
 import { MediaGenerationTool } from '../../mediaGenerationPolicy';
 import type { SubagentMessageStore } from '../../subagentMessageStore';
 import type { SubagentRunStore } from '../../subagentRunStore';
+import { getServerModelMetadata } from '../claudeSettings';
 import { setCoworkProxySessionId } from '../coworkOpenAICompatProxy';
 import { getServerApiBaseUrl } from '../endpoints';
 import { createCoworkLlmTrace, createLlmTraceparent } from '../llmTrace';
+import { registerLlmUsageContext } from '../llmUsageContext';
+import { presetContextWindowSelection } from '../modelPresetContext';
 import { extractOpenClawAssistantStreamParts,extractOpenClawAssistantStreamText } from '../openclawAssistantText';
 import {
   buildManagedSessionKey,
@@ -131,7 +134,7 @@ import {
   stripTrailingSilentReplyToken,
 } from '../openclawHistory';
 import { buildOpenClawLocalTimeContextPrompt } from '../openclawLocalTimeContextPrompt';
-import { resolveOpenClawThinkingLevelForModel } from '../openclawModelThinkingLevels';
+import { resolveModelThinkingLevelForModel, resolveOpenClawThinkingLevelForModel } from '../openclawModelThinkingLevels';
 import { consumeRecentOpenClawTokenProxyQuotaError } from '../openclawTokenProxy';
 import { isSystemProxyEnabled } from '../systemProxy';
 import {
@@ -239,6 +242,7 @@ import type {
   CoworkStartOptions,
   PermissionResult,
 } from './types';
+import { removeWorkspaceDeliveredInstructions } from './workspaceDeliveredInstructions';
 
 const OPENCLAW_GATEWAY_TOOL_EVENTS_CAP = 'tool-events';
 const OPENCLAW_BTW_SESSION_KEY_MAX_CHARS = 4_096;
@@ -511,7 +515,7 @@ type OpenClawRuntimeAdapterOptions = {
     conversationState: PromptAnalyticsConversationStateValue;
     isMainAgent: boolean;
     platform: string;
-  }) => void;
+  }, sessionId: string) => void;
   onGatewayClientReady?: () => void;
   onBrowserToolEvent?: (event: AgentBrowserToolEvent) => void;
 };
@@ -849,6 +853,8 @@ type ActiveTurn = {
 };
 
 const PLAN_MODE_BLOCKED_TOOL_NAMES = new Set([
+  MediaGenerationTool.Image,
+  MediaGenerationTool.Video,
   'apply_patch',
   'bash',
   'cmd',
@@ -4858,6 +4864,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         question: normalizedQuestion,
       });
       const btwTrace = createCoworkLlmTrace();
+      registerLlmUsageContext(btwTrace.traceId, normalizedSessionId, normalizedQuestion, {
+        modelPresetId: session.modelPresetId,
+        resolvedModelId: session.modelOverride?.split('/').slice(1).join('/'),
+      });
       console.log(
         '[CoworkBtw] submitting side question.',
         `Session ${normalizedSessionId}.`,
@@ -5239,6 +5249,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   async patchSession(sessionId: string, patch: OpenClawSessionPatch): Promise<CoworkSessionPatchResult> {
     const session = this.store.getSession(sessionId);
+    if (patch.model !== undefined && session?.modelPresetId && (this.activeTurns.has(sessionId) || this.yieldedSessions.has(sessionId))) {
+      throw new Error(t('modelPresetSessionBusy'));
+    }
     if (!session) {
       throw new Error(`Session ${sessionId} not found`);
     }
@@ -5289,6 +5302,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           timeoutMs: OpenClawRuntimeAdapter.SESSION_PATCH_TIMEOUT_MS,
         });
         this.markGatewayRpcSuccess();
+        if (normalizedPatch.model) this.assertSessionModelRoute(sessionId, targetSessionKey, normalizedPatch.model, response);
         return response;
       } catch (error) {
         this.recordGatewayRpcFailure('sessions.patch', error);
@@ -5317,6 +5331,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
       return {
         modelOverride: modelOverride ?? '',
+        resolvedModelRef: checkSessionModelRoute(normalizedPatch.model ?? '', response).resolvedModelRef,
         ...(patchedThinkingLevel !== undefined ? { thinkingLevel: patchedThinkingLevel } : {}),
       };
     }
@@ -5518,7 +5533,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       );
       return;
     }
-    if (confirmedState && this.isGatewayRpcDegraded()) {
+    if (confirmedState && this.isGatewayRpcDegraded() && !this.store.getSession(sessionId)?.modelPresetId) {
       console.warn(
         '[OpenClawRuntime] skipped redundant sessions.patch before chat.send because gateway session RPCs are degraded.',
         `Session ${sessionId}.`,
@@ -5541,7 +5556,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           );
           return;
         }
-        if (currentConfirmedState && this.isGatewayRpcDegraded()) {
+        if (currentConfirmedState && this.isGatewayRpcDegraded() && !this.store.getSession(sessionId)?.modelPresetId) {
           console.warn(
             '[OpenClawRuntime] skipped queued redundant sessions.patch before chat.send because gateway session RPCs are degraded.',
             `Session ${sessionId}.`,
@@ -5555,12 +5570,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         const openClawThinkingLevel = thinkingLevel
           ? resolveOpenClawThinkingLevelForModel(model, thinkingLevel)
           : undefined;
+        const presetId = this.store.getSession(sessionId)?.modelPresetId;
         const response = await this.requestSessionPatchWithProfile({
           sessionId,
           sessionKey,
           patch: {
             model,
-            ...(openClawThinkingLevel ? { thinkingLevel: openClawThinkingLevel } : {}),
+            ...(presetId ? {
+              contextWindow: presetContextWindowSelection(
+                getServerModelMetadata(model.slice(model.indexOf('/') + 1)), presetId,
+              ),
+            } : {}),
+            ...(openClawThinkingLevel
+              ? { thinkingLevel: openClawThinkingLevel }
+              : this.store.getSession(sessionId)?.modelPresetId ? { thinkingLevel: null } : {}),
             ...(isManagedSessionKey(sessionKey)
               ? { reasoningLevel: OpenClawSessionReasoningLevel.Stream }
               : {}),
@@ -5574,7 +5597,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.rememberSessionModelPatch(sessionId, sessionKey, model, source);
       });
     } catch (error) {
-      if (error instanceof SessionModelRouteError) {
+      if (error instanceof SessionModelRouteError || this.store.getSession(sessionId)?.modelPresetId) {
         this.sessionModelPatchStateBySession.delete(sessionId);
         throw error;
       }
@@ -5600,6 +5623,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     patchResult: OpenClawSessionPatchGatewayResult | undefined,
   ): void {
     const route = checkSessionModelRoute(requestedModelRef, patchResult);
+    if (this.store.getSession(sessionId)?.modelPresetId && route.resolvedModelRef !== requestedModelRef.trim()) {
+      throw new Error(t('modelPresetModelMismatch'));
+    }
     if (route.verdict === SessionModelRouteVerdict.Ok || !route.resolvedModelRef) return;
     const details = [
       `Session ${sessionId}.`,
@@ -5722,6 +5748,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.confirmationModeBySession.set(sessionId, confirmationMode);
 
     let llmTrace: CoworkLlmTrace;
+    let usageModelSelection: CoworkMessageMetadata | undefined;
     if (!options.skipInitialUserMessage) {
       llmTrace = createCoworkLlmTrace();
       const messageSkillIds = options.messageSkillIds ?? options.skillIds;
@@ -5759,12 +5786,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         content: prompt,
         metadata: { ...metadata, llmTrace },
       });
+      usageModelSelection = userMessage.metadata;
       this.refreshContinuityCapsule(sessionId, ContinuityCapsuleSource.UserMessage, {
         sourceMessageId: userMessage.id,
       });
       this.emit('message', sessionId, userMessage);
     } else {
       llmTrace = this.ensureLatestUserMessageLlmTrace(session);
+      usageModelSelection = this.store.getLatestUserMessage(sessionId)?.metadata;
     }
 
     const agentId = options.agentId || session.agentId || 'main';
@@ -5791,6 +5820,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     setCoworkProxySessionId(sessionId);
     firstResponseTiming.gatewayReadyStartedAtMs = Date.now();
     await this.ensureGatewayClientReady();
+    registerLlmUsageContext(llmTrace.traceId, sessionId,
+      options.skipInitialUserMessage ? this.store.getLatestUserMessage(sessionId)?.content ?? prompt : prompt,
+      usageModelSelection);
+
     if (this.cancelTurnStartupIfStopped(sessionId, 'gateway client became ready')) {
       return;
     }
@@ -5816,13 +5849,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!session.modelOverride && currentModel && currentModel !== rawCurrentModel && agent?.id) {
       this.store.updateAgent(agent.id, { model: currentModel });
     }
+    const thinkingLevel = session.modelPresetId
+      ? resolveModelThinkingLevelForModel(currentModel, session.thinkingLevel ?? '') ?? ''
+      : session.thinkingLevel || '';
+    if (session.modelPresetId && session.thinkingLevel !== thinkingLevel) {
+      this.store.updateSession(sessionId, { thinkingLevel }, { touchUpdatedAt: false });
+    }
     try {
       firstResponseTiming.modelPatchStartedAtMs = Date.now();
       await this.ensureSessionModelForTurn({
         sessionId,
         sessionKey,
         model: currentModel,
-        thinkingLevel: session.thinkingLevel || undefined,
+        thinkingLevel: thinkingLevel || undefined,
         source: session.modelOverride
           ? SessionModelPatchSource.SessionOverride
           : SessionModelPatchSource.AgentModel,
@@ -6076,7 +6115,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     const sections: string[] = [];
     if (shouldInjectSystemPrompt) {
-      sections.push(this.buildSystemPromptPrefix(normalizedSystemPrompt));
+      sections.push(this.buildSystemPromptPrefix(
+        this.buildInjectedSystemPrompt(normalizedSystemPrompt, agentId),
+      ));
     }
     sections.push(buildOpenClawLocalTimeContextPrompt());
     if (currentModel) {
@@ -6193,8 +6234,24 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       '[LobsterAI system instructions]',
       'Apply the instructions below as the highest-priority guidance for this session.',
       'If earlier LobsterAI system instructions exist, replace them with this version.',
-      systemPrompt,
+      systemPrompt || 'No session-specific instructions apply; follow the workspace instructions in AGENTS.md.',
     ].join('\n');
+  }
+
+  // AGENTS.md is already in the system prompt, so injecting its sections again
+  // only repeats them (issue #2440). Any failure keeps the full prompt.
+  private buildInjectedSystemPrompt(systemPrompt: string, agentId?: string): string {
+    try {
+      return removeWorkspaceDeliveredInstructions({
+        systemPrompt,
+        stateDir: this.engineManager.getStateDir(),
+        agentId,
+        defaultSystemPrompt: this.store.getConfig().systemPrompt,
+      });
+    } catch (error) {
+      console.warn('[OpenClawRuntime] kept the full system prompt because AGENTS.md could not be compared:', error);
+      return systemPrompt;
+    }
   }
 
   private buildBridgePrefix(messages: CoworkMessage[], currentPrompt: string): string {
@@ -12618,7 +12675,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         conversationState,
         isMainAgent: agentId === 'main',
         platform: channel.platform,
-      });
+      }, sessionId);
     } catch (error) {
       const errorName = error instanceof Error && error.name.trim()
         ? error.name.trim()
