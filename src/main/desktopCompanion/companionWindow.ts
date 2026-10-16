@@ -41,7 +41,7 @@ export function dismissCompanionPanelOnBlur(win: BrowserWindow, dismiss: () => v
   win.on('closed', cancel);
 }
 
-/** Every companion surface is a transparent, frameless, always-on-top window loading the same entry. */
+/** Companion surfaces are transparent, frameless, always-on-top windows. */
 export function createCompanionWindow(env: CompanionWindowEnvironment, options: CompanionWindowOptions): BrowserWindow {
   const isSelection = options.surface === DesktopCompanionSurface.Selection;
   const isScreenshot = options.surface === DesktopCompanionSurface.Screenshot;
@@ -84,7 +84,9 @@ export function createCompanionWindow(env: CompanionWindowEnvironment, options: 
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
   // The quick panel runs the home page's composer, which needs the main renderer's styles and store.
-  const page = options.surface === DesktopCompanionSurface.Panel ? 'companion-composer.html' : 'desktop-companion.html';
+  // Screenshot selection must not wait for chat, Markdown, or language-tool modules to initialize.
+  const page = isScreenshot ? 'companion-screenshot.html'
+    : options.surface === DesktopCompanionSurface.Panel ? 'companion-composer.html' : 'desktop-companion.html';
   const loading = env.devServerUrl
     ? win.loadURL(new URL(`${page}?surface=${options.surface}`, env.devServerUrl).href)
     : win.loadFile(path.join(env.rendererDirectory, page), { query: { surface: options.surface } });

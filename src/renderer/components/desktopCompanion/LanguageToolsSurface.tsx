@@ -45,13 +45,14 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
   const followUp = useTranslationFollowUp(`${input?.id ?? ''}:${tools.translationKey}`, input?.text ?? '', translation);
   const [pinned, setPinned] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState('');
   const [handoffError, setHandoffError] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
   useMeasuredSurface(rootRef, !!input, input?.id);
   usePointerPassThrough(input?.id, api.setLanguageToolPassThrough);
 
-  useEffect(() => { setPinned(false); setCopied(false); setHandoffError(false); }, [input?.id]);
+  useEffect(() => { setPinned(false); setCopied(false); setCopyError(''); setHandoffError(false); }, [input?.id]);
   // Dragging the card pins it in the main process.
   useEffect(() => api.onLanguageToolPinned(value => setPinned(value)), [api]);
   useEffect(() => {
@@ -74,6 +75,7 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
   const source = input.text;
   const isTranslation = input.tool === LanguageTool.Translate;
   const loginRequired = tools.error === LanguageToolCode.Unauthorized || followUp.loginRequired;
+  const translationLoginRequired = tools.error === LanguageToolCode.Unauthorized && tools.errorTool === LanguageTool.Translate;
   const speechVisible = !isTranslation || playback.status !== SpeechStatus.Idle;
   const speechActive = playback.status !== SpeechStatus.Idle;
   const speechLoading = playback.status === SpeechStatus.Loading;
@@ -95,9 +97,12 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
     } catch { setHandoffError(true); }
   };
   const copy = () => {
-    void api.copyText(translation).then(() => {
+    setCopied(false);
+    setCopyError('');
+    void api.copyText(translation).then(result => {
+      if (!result.success) { setCopyError(result.error); return; }
       setCopied(true); setTimeout(() => setCopied(false), 1_400);
-    });
+    }).catch(() => setCopyError(t('desktopCompanionCopyFailed')));
   };
   const playLabel = t(canReplay ? 'desktopToolsReplay'
     : playback.status === SpeechStatus.Idle ? 'desktopToolsReadAloud' : canResume ? 'desktopToolsResume' : 'desktopToolsPause');
@@ -120,7 +125,7 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
             <span className="lt-lang">{t('desktopToolsDetectLanguage')}</span>
             <ArrowRightIcon className="lt-arrow" aria-hidden="true" />
             <label className="lt-lang lt-select">
-              <select aria-label={t('desktopToolsTarget')} value={tools.target} disabled={loginRequired}
+              <select aria-label={t('desktopToolsTarget')} value={tools.target} disabled={translationLoginRequired}
                 onChange={event => tools.translate(event.target.value as TranslationTarget)}>
                 <option value={TranslationTarget.Chinese}>{t('desktopToolsChinese')}</option>
                 <option value={TranslationTarget.English}>{t('desktopToolsEnglish')}</option>
@@ -131,6 +136,7 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
         )}
 
         <div className="sel-scroll" ref={conversationRef}>
+          {copyError && <SelectionError message={copyError} />}
           {!isTranslation && <SourceQuote key={input.id} text={source} lines={4} />}
 
           {isTranslation && (
@@ -141,9 +147,11 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
             </div>
           )}
 
-          {loginRequired ? <SelectionLoginRequired /> : tools.error !== null && (
+          {loginRequired && <SelectionLoginRequired />}
+          {tools.error !== null && tools.error !== LanguageToolCode.Unauthorized && (
             <SelectionError
-              message={t(ERROR_KEYS[tools.error] ?? 'desktopToolsUpstream')}
+              message={t(tools.error === LanguageToolCode.DailyLimit && tools.errorTool === LanguageTool.Translate
+                ? 'desktopToolsTranslationDailyLimit' : ERROR_KEYS[tools.error] ?? 'desktopToolsUpstream')}
               action={<button type="button" onClick={tools.retry}>{t('desktopCompanionAnswerRetry')}</button>}
             />
           )}
@@ -206,7 +214,7 @@ export default function LanguageToolsSurface({ state }: { state: DesktopCompanio
           </section>
         )}
 
-        {isTranslation && !loginRequired && (translating || (translation && !followUp.streaming)) && (
+        {isTranslation && !translationLoginRequired && (translating || (translation && !followUp.streaming)) && (
           <div className="sel-actions">
             {translating ? (
               <button type="button" className="sel-action" onClick={tools.stopTranslation}>

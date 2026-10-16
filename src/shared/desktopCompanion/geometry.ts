@@ -99,6 +99,48 @@ export function resolveCompanionComposerLayout(
   };
 }
 
+/** The welcome page fills its window, so none of it may overlap the orb's hit area. */
+export function resolveCompanionLoginLayout(orb: CompanionRect | null, workArea: CompanionRect): CompanionComposerLayout {
+  const size = DesktopCompanionSize.ComposerLogin;
+  if (!orb) return resolveCompanionComposerLayout(null, size, { above: 0, side: 0 }, workArea);
+
+  const gap = DesktopCompanionSize.Gap;
+  const opensLeft = companionStageOpensLeft(orb, workArea);
+  const placement = opensLeft ? DesktopCompanionPanelPlacement.Left : DesktopCompanionPanelPlacement.Right;
+  const sideRoom = Math.max(0, opensLeft
+    ? orb.x - gap - workArea.x
+    : workArea.x + workArea.width - orb.x - orb.width - gap);
+  const width = Math.min(size.width, workArea.width);
+  const height = Math.min(size.height, workArea.height);
+  const above = orb.y - gap - height;
+  const below = orb.y + orb.height + gap;
+
+  // Keep the full welcome layout above or below a centrally placed orb when it fits.
+  if (sideRoom < width && (above >= workArea.y || below + height <= workArea.y + workArea.height)) {
+    return {
+      placement,
+      bounds: clampCompanionBounds({
+        width,
+        height,
+        x: orb.x + (orb.width - width) / 2,
+        y: above >= workArea.y ? above : below,
+      }, workArea),
+    };
+  }
+
+  // On small displays the welcome page uses its responsive layout within the available side.
+  const sideWidth = Math.min(width, sideRoom);
+  return {
+    placement,
+    bounds: clampCompanionBounds({
+      width: sideWidth,
+      height,
+      x: opensLeft ? orb.x - gap - sideWidth : orb.x + orb.width + gap,
+      y: orb.y + orb.height - height,
+    }, workArea),
+  };
+}
+
 /** Text known only by a point, such as the pointer when the orb restores a card: one line around it. */
 export function companionPointerAnchor(point: CompanionPoint): CompanionSelectionAnchor {
   return { left: point.x, right: point.x, top: point.y - 18, bottom: point.y + 14, multiline: false };
@@ -162,16 +204,20 @@ export function companionCardSlot(anchor: CompanionSelectionAnchor, workArea: Co
   return { below: roomBelow >= room || roomBelow >= roomAbove, room };
 }
 
-/** The card next to the selection; past the screen edge it is pushed back over the selection, never off screen. */
+/** Replace the toolbar in place; without a toolbar, fall back to the selection. Keep the card on screen as it grows. */
 export function resolveCompanionCardBounds(
   anchor: CompanionSelectionAnchor,
   size: CompanionSize,
   workArea: CompanionRect,
+  toolbar: CompanionRect | null = null,
 ): CompanionRect {
   const pad = DesktopCompanionSize.SurfacePad;
   const gap = DesktopCompanionSize.Gap;
   const slot = companionCardSlot(anchor, workArea);
   const height = Math.min(size.height, slot.room);
+  if (toolbar) {
+    return clampCompanionBounds({ width: size.width, height, x: toolbar.x, y: toolbar.y }, workArea);
+  }
   const y = slot.below ? anchor.bottom + gap - pad : anchor.top - gap - height + pad;
   return clampCompanionBounds({ width: size.width, height, x: selectionColumnX(anchor, size.width), y }, workArea);
 }

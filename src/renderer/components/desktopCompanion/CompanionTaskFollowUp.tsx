@@ -1,19 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 
-import type { CompanionRecentTask } from '../../../shared/desktopCompanion/results';
 import { i18nService } from '../../services/i18n';
-import { submitCompanionFollowUp } from './companionFollowUp';
+import type { FollowUpResponse } from './companionFollowUp';
 import { SelectionComposer, SelectionError } from './SelectionCard';
 
 const t = (key: string) => i18nService.t(key);
 
 interface FollowUpProps {
-  task: CompanionRecentTask;
   onClose: () => void;
   onSubmitted: () => void;
+  onSubmit: (prompt: string) => Promise<FollowUpResponse>;
 }
 
-export default function CompanionTaskFollowUp({ expanded, ...props }: FollowUpProps & { expanded: boolean }) {
+export default function CompanionTaskFollowUp({ expanded, pending, ...props }: FollowUpProps & { expanded: boolean; pending: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   // Keep the composer mounted until the collapse finishes.
   const [retained, setRetained] = useState(expanded);
@@ -38,13 +37,13 @@ export default function CompanionTaskFollowUp({ expanded, ...props }: FollowUpPr
         else event.currentTarget.querySelector('input')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       }}>
       <div className="result-follow-up-reveal">
-        {(expanded || retained) && <FollowUpComposer {...props} />}
+        {(expanded || retained || pending) && <FollowUpComposer {...props} />}
       </div>
     </div>
   );
 }
 
-function FollowUpComposer({ task, onClose, onSubmitted }: FollowUpProps) {
+function FollowUpComposer({ onClose, onSubmitted, onSubmit }: FollowUpProps) {
   const [prompt, setPrompt] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -56,7 +55,7 @@ function FollowUpComposer({ task, onClose, onSubmitted }: FollowUpProps) {
     setSubmitting(true);
     setError('');
     try {
-      const result = await submitCompanionFollowUp(window.electron.cowork, task.id, prompt);
+      const result = await onSubmit(prompt);
       if (result.success) onSubmitted();
       else setError(result.error || t('desktopCompanionRequestFailed'));
     } catch {

@@ -28,15 +28,21 @@ export function useLanguageTools() {
   const translationId = useRef<string | null>(null);
   const speechId = useRef<string | null>(null);
   const inputId = useRef<string>();
+  const quotaRevision = useRef(0);
+  const invalidateQuota = useCallback(() => { quotaRevision.current++; }, []);
   const rateRef = useRef(rate);
   rateRef.current = rate;
 
-  const refreshQuota = useCallback(() => {
-    void api.getLanguageToolQuota().then(result => {
-      if (result.success && result.data) setQuota(result.data);
-      else if (result.code === LanguageToolCode.Unauthorized) setError(result.code);
-    }).catch(() => setError(LanguageToolCode.Unavailable));
-  }, [api]);
+  const updateQuota = useCallback((tool: LanguageTool, value: LanguageToolQuotas) => {
+    setQuota(previous => ({ ...value, tools: { ...previous?.tools, [tool]: value.tools[tool] } }));
+  }, []);
+  const refreshQuota = useCallback((tool: LanguageTool) => {
+    const revision = ++quotaRevision.current;
+    void api.getLanguageToolQuota(tool).then(result => {
+      if (revision === quotaRevision.current && result.success && result.data) updateQuota(tool, result.data);
+    // Quota inspection must not replace a successful translation with an unrelated login/error state.
+    }).catch(() => undefined);
+  }, [api, updateQuota]);
 
   const stopSpeech = useCallback(() => {
     if (speechId.current) void api.abortLanguageTool(speechId.current);
@@ -78,7 +84,7 @@ export function useLanguageTools() {
       else player.current?.stop();
       setError(code);
       setErrorTool(tool);
-      refreshQuota();
+      refreshQuota(tool);
     };
     void api.startLanguageTool(request).then(result => {
       if (!result.success) reject(result.code ?? LanguageToolCode.Unavailable);
@@ -102,7 +108,7 @@ export function useLanguageTools() {
       const language = companionTranslationTarget(next.text) === 'en' ? TranslationTarget.English : TranslationTarget.Chinese;
       setTarget(language);
       start(next.tool, next.text, language);
-      refreshQuota();
+      refreshQuota(next.tool);
     };
     const offInput = api.onLanguageToolInput(receive);
     void api.getLanguageToolInput().then(receive);
@@ -120,11 +126,12 @@ export function useLanguageTools() {
         setErrorTool(isSpeech ? LanguageTool.Tts : LanguageTool.Translate);
         if (isTranslation) { translationId.current = null; setTranslating(false); }
         if (isSpeech) { speechId.current = null; queue.finish(); }
-        refreshQuota();
+        refreshQuota(isSpeech ? LanguageTool.Tts : LanguageTool.Translate);
       } else if (event.type === LanguageToolEventType.Done) {
         if (isTranslation) { translationId.current = null; setTranslating(false); }
         if (isSpeech) { speechId.current = null; queue.finish(); }
-        if (event.quota) setQuota(event.quota);
+        invalidateQuota();
+        if (event.quota) updateQuota(isSpeech ? LanguageTool.Tts : LanguageTool.Translate, event.quota);
       }
     });
     const offCommands = api.onSpeechCommand(command => {
@@ -135,12 +142,14 @@ export function useLanguageTools() {
     const offReset = api.onLanguageToolsReset(() => {
       stopSpeech(); stopTranslation(); setInput(null); setTranslation(''); setSpeechText(''); setQuota(null);
       setError(null); setErrorTool(null); inputId.current = undefined;
+      invalidateQuota();
     });
     return () => {
       disposed = true; offInput(); offEvents(); offCommands(); offReset();
       stopTranslation(); stopSpeech(); player.current = null; inputId.current = undefined;
+      invalidateQuota();
     };
-  }, [api, refreshQuota, start, stopSpeech, stopTranslation]);
+  }, [api, invalidateQuota, refreshQuota, start, stopSpeech, stopTranslation, updateQuota]);
 
   const translate = (language = target) => {
     if (!input?.text) return;
@@ -161,7 +170,7 @@ export function useLanguageTools() {
   };
 
   return {
-    input, target, translation, translating, translationKey, translate, stopTranslation, error, retry, quota,
+    input, target, translation, translating, translationKey, translate, stopTranslation, error, errorTool, retry, quota,
     playback, speechText, segmentTotal, rate, changeRate, togglePlayback, stopSpeech,
   };
 }

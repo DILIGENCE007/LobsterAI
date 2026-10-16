@@ -1,55 +1,70 @@
 import { describe, expect, test, vi } from 'vitest';
 
-import { CoworkSteerRejectReason, type CoworkSteerResponse, CoworkSteerStatus } from '../../../shared/cowork/steer';
 import { CoworkSessionStatusValue } from '../../types/cowork';
 import { submitCompanionFollowUp } from './companionFollowUp';
 
 function client(status: string = CoworkSessionStatusValue.Completed) {
   return {
     getSession: vi.fn(async () => ({ success: true, session: { status } })),
-    continueSession: vi.fn(async () => ({ success: true })),
-    submitSteer: vi.fn(async (): Promise<CoworkSteerResponse> => ({
-      success: true, status: CoworkSteerStatus.Accepted, clientSteerId: 'accepted',
-    })),
+    stopSession: vi.fn(async (): Promise<{ success: boolean; error?: string }> => ({ success: true })),
+    continueSession: vi.fn(async (): Promise<{ success: boolean; error?: string }> => ({ success: true })),
+    submitSteer: vi.fn(),
   };
 }
 
 describe('companion task follow-up', () => {
-  test('continues the selected completed task with its existing session settings', async () => {
-    const api = client();
-    expect(await submitCompanionFollowUp(api, 'selected-task', '  请举个例子  ')).toEqual({ success: true });
-    expect(api.continueSession).toHaveBeenCalledExactlyOnceWith({ sessionId: 'selected-task', prompt: '请举个例子' });
+  test.each([CoworkSessionStatusValue.Completed, CoworkSessionStatusValue.Idle, CoworkSessionStatusValue.Error])(
+    'submits a normal user turn to the selected %s task, preserving its session settings', async status => {
+      const api = client(status);
+      expect(await submitCompanionFollowUp(api, 'selected-task', '  请举个例子  ')).toEqual({ success: true });
+      expect(api.continueSession).toHaveBeenCalledExactlyOnceWith({ sessionId: 'selected-task', prompt: '请举个例子' });
+      expect(api.stopSession).not.toHaveBeenCalled();
+      expect(api.submitSteer).not.toHaveBeenCalled();
+    },
+  );
+
+  test('waits for the active turn to stop before continuing through the user-message path', async () => {
+    const api = client(CoworkSessionStatusValue.Running);
+    let resolveStopped!: (result: { success: boolean }) => void;
+    const stopped = new Promise<{ success: boolean }>(resolve => { resolveStopped = resolve; });
+    api.stopSession.mockReturnValueOnce(stopped);
+    const onContinuing = vi.fn();
+    const submission = submitCompanionFollowUp(api, 'running-task', '补充说明', onContinuing);
+    await vi.waitFor(() => expect(api.stopSession).toHaveBeenCalledExactlyOnceWith('running-task'));
+    expect(api.continueSession).not.toHaveBeenCalled();
+    expect(onContinuing).not.toHaveBeenCalled();
+    resolveStopped({ success: true });
+    expect(await submission).toEqual({ success: true });
+    expect(onContinuing).toHaveBeenCalledOnce();
+    expect(api.continueSession).toHaveBeenCalledExactlyOnceWith({ sessionId: 'running-task', prompt: '补充说明' });
+    expect(onContinuing.mock.invocationCallOrder[0]).toBeLessThan(api.continueSession.mock.invocationCallOrder[0]);
     expect(api.submitSteer).not.toHaveBeenCalled();
   });
 
-  test('adds input to a running task without starting a competing turn', async () => {
+  test('continues once if the old turn finishes before the stop request arrives', async () => {
     const api = client(CoworkSessionStatusValue.Running);
-    expect(await submitCompanionFollowUp(api, 'running-task', '补充说明')).toEqual({ success: true });
-    expect(api.submitSteer).toHaveBeenCalledExactlyOnceWith({ sessionId: 'running-task', text: '补充说明', clientSteerId: expect.any(String) });
-    expect(api.continueSession).not.toHaveBeenCalled();
-  });
-
-  test('continues normally if the active turn finishes while submitting', async () => {
-    const api = client(CoworkSessionStatusValue.Running);
-    api.getSession.mockResolvedValueOnce({ success: true, session: { status: CoworkSessionStatusValue.Running } })
-      .mockResolvedValueOnce({ success: true, session: { status: CoworkSessionStatusValue.Completed } });
-    api.submitSteer.mockResolvedValue({ success: false, status: CoworkSteerStatus.Rejected, clientSteerId: 'ended', reason: CoworkSteerRejectReason.NoActiveTurn });
+    api.stopSession.mockImplementationOnce(async () => {
+      api.getSession.mockResolvedValue({ success: true, session: { status: CoworkSessionStatusValue.Completed } });
+      return { success: true };
+    });
     expect(await submitCompanionFollowUp(api, 'task', '继续')).toEqual({ success: true });
     expect(api.continueSession).toHaveBeenCalledExactlyOnceWith({ sessionId: 'task', prompt: '继续' });
   });
 
-  test('does not retry a rejected input against a task that is still running', async () => {
+  test('does not submit a competing turn when stopping fails', async () => {
     const api = client(CoworkSessionStatusValue.Running);
-    api.submitSteer.mockResolvedValue({ success: false, status: CoworkSteerStatus.Rejected, clientSteerId: 'busy', reason: CoworkSteerRejectReason.NoActiveTurn, error: 'busy' });
-    expect(await submitCompanionFollowUp(api, 'task', '继续')).toEqual({ success: false, error: 'busy' });
+    const onContinuing = vi.fn();
+    api.stopSession.mockResolvedValue({ success: false, error: 'stop failed' });
+    expect(await submitCompanionFollowUp(api, 'task', '继续', onContinuing)).toEqual({ success: false, error: 'stop failed' });
     expect(api.continueSession).not.toHaveBeenCalled();
+    expect(onContinuing).not.toHaveBeenCalled();
   });
 
-  test.each([CoworkSteerStatus.Pending, CoworkSteerStatus.Rejected])('does not clear or duplicate an unaccepted %s input', async status => {
-    const api = client(CoworkSessionStatusValue.Running);
-    api.submitSteer.mockResolvedValue({ success: true, status, clientSteerId: 'pending', error: 'not accepted' });
-    expect(await submitCompanionFollowUp(api, 'task', '继续')).toEqual({ success: false, error: 'not accepted' });
-    expect(api.continueSession).not.toHaveBeenCalled();
+  test('returns continuation failures without resubmitting', async () => {
+    const api = client();
+    api.continueSession.mockResolvedValue({ success: false, error: 'unavailable' });
+    expect(await submitCompanionFollowUp(api, 'task', '继续')).toEqual({ success: false, error: 'unavailable' });
+    expect(api.continueSession).toHaveBeenCalledOnce();
   });
 
   test('does not submit empty input or continue an unavailable session', async () => {
@@ -59,6 +74,6 @@ describe('companion task follow-up', () => {
     api.getSession.mockResolvedValue({ success: false, session: { status: CoworkSessionStatusValue.Completed } });
     expect((await submitCompanionFollowUp(api, 'deleted', '继续')).success).toBe(false);
     expect(api.continueSession).not.toHaveBeenCalled();
-    expect(api.submitSteer).not.toHaveBeenCalled();
+    expect(api.stopSession).not.toHaveBeenCalled();
   });
 });

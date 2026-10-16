@@ -8,6 +8,7 @@ import {
   resolveCompanionBounds,
   resolveCompanionCardBounds,
   resolveCompanionComposerLayout,
+  resolveCompanionLoginLayout,
   resolveCompanionStageBounds,
   resolveCompanionToolbarBounds,
   resolveCompanionToolbarMenuBounds,
@@ -88,6 +89,53 @@ describe('surfaces around the orb', () => {
     });
   });
 
+  describe('login page', () => {
+    const gap = DesktopCompanionSize.Gap;
+    const size = DesktopCompanionSize.ComposerLogin;
+
+    test.each([DesktopCompanionSize.BrandOrb, DesktopCompanionSize.Orb])(
+      'leaves the whole %j orb clear at both screen edges', orbSize => {
+        const right = { ...orbSize, x: area.width - orbSize.width, y: 700 };
+        const left = { ...orbSize, x: area.x, y: area.y };
+        const before = resolveCompanionLoginLayout(right, area);
+        const after = resolveCompanionLoginLayout(left, area);
+        expect(before.placement).toBe(DesktopCompanionPanelPlacement.Left);
+        expect(before.bounds).toMatchObject(size);
+        expect(before.bounds.x + before.bounds.width).toBe(right.x - gap);
+        expect(after.placement).toBe(DesktopCompanionPanelPlacement.Right);
+        expect(after.bounds).toMatchObject(size);
+        expect(after.bounds.x).toBe(left.x + left.width + gap);
+        expect(after.bounds.y).toBe(area.y);
+      },
+    );
+
+    test.each([700, 100])('uses vertical room for a full-size welcome page near the middle at y=%i', y => {
+      const middle = { ...orb, x: 700, y };
+      const { bounds } = resolveCompanionLoginLayout(middle, area);
+      expect(bounds).toMatchObject(size);
+      expect(bounds.y + bounds.height <= middle.y - gap || bounds.y >= middle.y + middle.height + gap).toBe(true);
+      expect(bounds).toEqual(clampCompanionBounds(bounds, area));
+    });
+
+    test.each([0, -916])('shrinks within the free side on a small display starting at x=%i', x => {
+      const small = { x, y: 25, width: 916, height: 431 };
+      for (const offset of [0, 430, 816]) {
+        const anchor = { ...DesktopCompanionSize.BrandOrb, x: x + offset, y: 350 };
+        const { bounds } = resolveCompanionLoginLayout(anchor, small);
+        expect(bounds).toEqual(clampCompanionBounds(bounds, small));
+        expect(bounds.height).toBe(size.height);
+        expect(bounds.x + bounds.width <= anchor.x - gap || bounds.x >= anchor.x + anchor.width + gap).toBe(true);
+      }
+    });
+
+    test('keeps the shortcut-only welcome page centered without an orb', () => {
+      const layout = resolveCompanionLoginLayout(null, area);
+      expect(layout.placement).toBe(DesktopCompanionPanelPlacement.Center);
+      expect(layout.bounds).toMatchObject(size);
+      expect(layout.bounds.x + layout.bounds.width / 2).toBe(area.x + area.width / 2);
+    });
+  });
+
   test('opens the stage toward the middle of the screen, bottom-aligned with the orb', () => {
     const size = { width: 300, height: 140 };
     const right = { ...orb, x: 1364, y: 700 };
@@ -142,6 +190,35 @@ describe('selection toolbar placement', () => {
   });
 
   const full = DesktopCompanionSize.Answer;
+
+  test.each([
+    word,
+    { ...paragraph, bottom: 820 },
+    { ...word, top: 30, bottom: 50 },
+  ])('replaces the measured toolbar at the same origin for %j', anchor => {
+    const toolbar = resolveCompanionToolbarBounds(anchor, size, area).bounds;
+    for (const height of [236, 330, full.height]) {
+      const card = resolveCompanionCardBounds(anchor, { width: full.width, height }, area, toolbar);
+      expect(card).toMatchObject({ x: toolbar.x, y: toolbar.y, height });
+    }
+  });
+
+  test('a card at the bottom right stays as close to the toolbar as the screen allows', () => {
+    const anchor = { ...word, left: 1400, right: 1430, top: 840, bottom: 860 };
+    const toolbar = resolveCompanionToolbarBounds(anchor, size, area).bounds;
+    for (const height of [236, full.height]) {
+      const card = resolveCompanionCardBounds(anchor, { width: full.width, height }, area, toolbar);
+      expect(card).toEqual({ x: area.width - full.width, y: area.height - height, width: full.width, height });
+    }
+  });
+
+  test('toolbar-anchored cards stay inside a small secondary display with negative coordinates', () => {
+    const secondary = { x: -1280, y: -600, width: 1280, height: 560 };
+    const anchor = { ...paragraph, left: -250, right: -200, top: -150, bottom: -80 };
+    const toolbar = resolveCompanionToolbarBounds(anchor, size, secondary).bounds;
+    const card = resolveCompanionCardBounds(anchor, full, secondary, toolbar);
+    expect(card).toEqual({ x: -full.width, y: secondary.y, width: full.width, height: secondary.height });
+  });
 
   test('cards open under the selection and keep it readable', () => {
     const card = resolveCompanionCardBounds(paragraph, { width: 444, height: 484 }, area);

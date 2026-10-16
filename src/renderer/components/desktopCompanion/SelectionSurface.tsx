@@ -4,12 +4,15 @@ import {
   CheckIcon,
   Cog6ToothIcon,
   EllipsisHorizontalIcon,
+  ExclamationCircleIcon,
   NoSymbolIcon,
   Square2StackIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
+  COMPANION_COPY_MAX_BYTES,
   CompanionQuickAnswerErrorCode,
   CompanionQuickAnswerEventType,
   type CompanionQuickAnswerTurn,
@@ -70,6 +73,7 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
   const [error, setError] = useState('');
   const [input, setInput] = useState('');
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState('');
   const streamRef = useRef<Streaming | null>(null);
   const selectionRef = useRef<DesktopCompanionSelection | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -77,7 +81,7 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
   const bodyRef = useRef<HTMLDivElement>(null);
   const copiedTimer = useRef<ReturnType<typeof setTimeout>>();
   const answering = selection?.mode === DesktopCompanionSelectionMode.Answer;
-  useMeasuredSurface(rootRef, !!selection, `${selection?.id ?? ''}:${selection?.mode ?? ''}`);
+  useMeasuredSurface(rootRef, !!selection, `${selection?.id ?? ''}:${selection?.mode ?? ''}:${!!copyError}`);
 
   const setStream = (value: Streaming | null) => { streamRef.current = value; setStreaming(value); };
   const command = useCallback((value: DesktopCompanionSelectionCommand) => { void api.selectionCommand(value); }, [api]);
@@ -98,6 +102,7 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
       setError('');
       setInput('');
       setCopied(false);
+      setCopyError('');
     }
   }), [api]);
 
@@ -192,17 +197,29 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
     copiedTimer.current = setTimeout(() => setCopied(false), 1_400);
   };
 
+  const copyText = (text: string, onCopied: () => void) => {
+    const selectionId = selectionRef.current?.id;
+    clearTimeout(copiedTimer.current);
+    setCopied(false);
+    setCopyError('');
+    void api.copyText(text).then(result => {
+      if (selectionRef.current?.id !== selectionId) return;
+      if (result.success) onCopied();
+      else setCopyError(result.error);
+    }).catch(() => {
+      if (selectionRef.current?.id === selectionId) setCopyError(t('desktopCompanionCopyFailed'));
+    });
+  };
+
   const copyAnswer = () => {
-    if (!latestAnswer) return;
-    void api.copyText(latestAnswer).then(flashCopied);
+    if (latestAnswer) copyText(latestAnswer, flashCopied);
   };
 
   // The toolbar confirms the copy before it steps aside.
   const copySelection = () => {
     const current = selectionRef.current;
-    if (!current) return;
-    void api.copyText(current.text).then(() => {
-      clearTimeout(copiedTimer.current);
+    if (!current || current.tooLarge) return;
+    copyText(current.text, () => {
       setCopied(true);
       copiedTimer.current = setTimeout(() => command({ type: DesktopCompanionSelectionCommandType.Dismiss }), COPIED_TOOLBAR_MS);
     });
@@ -246,6 +263,23 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
   if (!selection) return null;
 
   if (!answering) {
+    const notice = selection.tooLarge
+      ? t('desktopCompanionCopyTooLarge').replace('{limit}', String(COMPANION_COPY_MAX_BYTES / 1_000_000))
+      : copyError;
+    if (notice) return (
+      <div className="sel-surface" data-menu={selection.menuUp ? 'up' : 'down'}>
+        <div className="sel-stack">
+          <div className="sel-toolbar sel-copy-notice" ref={rootRef} role="alert">
+            <ExclamationCircleIcon />
+            <span>{notice}</span>
+            <button type="button" className="sel-icon" aria-label={t('desktopCompanionAnswerClose')}
+              onClick={() => command({ type: DesktopCompanionSelectionCommandType.Dismiss })}>
+              <XMarkIcon />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
     const toolItem = (value: CompanionToolbarItem): MenuItem => {
       const presentation = COMPANION_TOOLBAR_PRESENTATION[value];
       return {
@@ -323,6 +357,7 @@ export default function SelectionSurface({ state }: { state: DesktopCompanionSta
           onClose={() => command({ type: DesktopCompanionSelectionCommandType.Dismiss })}
         />
         <div className="sel-scroll" ref={bodyRef} aria-live="polite">
+          {copyError && <SelectionError message={copyError} />}
           <SourceQuote key={selection.id} text={selection.text} />
           {question && <p className="sel-question">{question}</p>}
           {turns.map((turn, index) => turn.role === 'user'

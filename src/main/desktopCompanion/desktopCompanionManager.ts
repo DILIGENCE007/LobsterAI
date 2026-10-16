@@ -1,6 +1,5 @@
 import {
   type BrowserWindow,
-  clipboard,
   dialog,
   globalShortcut,
   ipcMain,
@@ -26,6 +25,7 @@ import {
   DesktopCompanionDropSource,
   DesktopCompanionFileDragPhase,
   DesktopCompanionIpc,
+  DesktopCompanionMainPage,
   DesktopCompanionPanelPlacement,
   type DesktopCompanionPreferences,
   type DesktopCompanionResult,
@@ -55,6 +55,7 @@ import {
   companionStageOpensLeft,
   resolveCompanionBounds,
   resolveCompanionComposerLayout,
+  resolveCompanionLoginLayout,
 } from '../../shared/desktopCompanion/geometry';
 import { companionHintCopyKeys, type CompanionHintTopic } from '../../shared/desktopCompanion/hintPolicy';
 import { isSpeechActive, LanguageTool } from '../../shared/desktopCompanion/languageTools';
@@ -62,6 +63,7 @@ import type { CompanionTaskInfo } from '../../shared/desktopCompanion/results';
 import { normalizeCompanionToolbarOrder } from '../../shared/desktopCompanion/selectionToolbar';
 import { COMPANION_SKINS, companionOrbSize, normalizeCompanionSkin } from '../../shared/desktopCompanion/skins';
 import { t } from '../i18n';
+import { copyCompanionText } from './companionClipboard';
 import { CompanionHintsController } from './companionHints';
 import { CompanionResultsController } from './companionResults';
 import { CompanionScreenshotController } from './companionScreenshot';
@@ -69,6 +71,7 @@ import { CompanionSelectionController, type SelectionHookModule } from './compan
 import { CompanionStageController } from './companionStage';
 import { type CompanionWindowEnvironment, createCompanionWindow, dismissCompanionPanelOnBlur } from './companionWindow';
 import { CompanionFileDragMonitor, FileDragEvent, type FileDragMonitor, type FileDragStart } from './fileDragMonitor';
+import { CompanionFileDragProximity } from './fileDragProximity';
 import { CompanionForegroundMonitor, type ForegroundAppMonitor } from './foregroundAppMonitor';
 import type { CompanionLanguageClient } from './languageToolClient';
 import { CompanionLanguageToolsController } from './languageToolsController';
@@ -160,9 +163,12 @@ function describeDraggedPaths(paths: string[]): DesktopCompanionDropFile[] {
 }
 
 export class DesktopCompanionManager {
+  private pendingMainPage: DesktopCompanionMainPage | null = null;
   private orb: BrowserWindow | null = null;
   private panel: BrowserWindow | null = null;
   private panelVisible = false;
+  private orbPressVisible = false;
+  private panelLoginVisible = false;
   /** Height of the composer card plus its shadow margin, as the panel last reported it. */
   private panelCardHeight: number = DesktopCompanionSize.PanelCompactHeight;
   private panelPlacement: DesktopCompanionPanelPlacement = DesktopCompanionPanelPlacement.Left;
@@ -179,6 +185,7 @@ export class DesktopCompanionManager {
   private disposing = false;
   private capturing = false;
   private fileDragActive = false;
+  private draggedFiles: DesktopCompanionDropFile[] = [];
   private foregroundAppId: string | null = null;
   private dragOrigin: { cursor: CompanionPoint; position: CompanionPoint } | null = null;
   private draftSaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -186,6 +193,7 @@ export class DesktopCompanionManager {
   private readonly env: CompanionWindowEnvironment;
   private readonly foreground: ForegroundAppMonitor;
   private readonly fileDrag: FileDragMonitor;
+  private readonly dragProximity: CompanionFileDragProximity;
   private readonly quickAnswer: CompanionQuickAnswerService;
   private readonly stage: CompanionStageController;
   private readonly hints: CompanionHintsController;
@@ -235,6 +243,12 @@ export class DesktopCompanionManager {
       onDropStarted: id => this.followTask(id),
       onTaskOpen: id => this.openTask(id),
     });
+    this.dragProximity = new CompanionFileDragProximity({
+      getCursor: () => screen.getCursorScreenPoint(),
+      getOrbBounds: () => this.orbBounds(),
+      onEnter: () => this.stage.showDrop(DesktopCompanionDropSource.Orb, this.draggedFiles),
+      onLeave: () => this.stage.releaseDrop(DesktopCompanionDropSource.Orb),
+    });
     this.hints = new CompanionHintsController({
       store,
       isEnabled: () => this.preferences.enabled && this.preferences.contextHints && !this.snooze && !this.capturing,
@@ -253,6 +267,7 @@ export class DesktopCompanionManager {
     this.languageTools = new CompanionLanguageToolsController({
       createWindow: () => this.createWindow(DesktopCompanionSurface.LanguageTools, true),
       getSelectionAnchor: () => this.selection.selectionAnchor,
+      getSelectionToolbarBounds: () => this.selection.selectionToolbarBounds,
       assertSender: id => this.assertSender(id),
       publish: () => this.publish(),
       hideSelection: () => this.selection.hide(),
@@ -339,6 +354,19 @@ export class DesktopCompanionManager {
     return { success: true, state: this.getState() };
   }
 
+  private toggleOrb(fromPointer: boolean): void {
+    if (this.capturing) return;
+    const closeOnly = fromPointer && this.orbPressVisible;
+    this.orbPressVisible = false;
+    if (closeOnly || this.panelVisible || this.results.state.visible) {
+      this.hidePanel();
+      this.results.hide();
+      return;
+    }
+    this.results.open();
+    if (!this.results.state.visible) this.showPanel();
+  }
+
   togglePanel(): void {
     if (this.capturing) return;
     if (this.panelVisible) this.hidePanel();
@@ -384,12 +412,13 @@ export class DesktopCompanionManager {
     screen.removeListener('display-metrics-changed', this.reposition);
     for (const channel of [
       DesktopCompanionIpc.Drag, DesktopCompanionIpc.OrbFileDrag, DesktopCompanionIpc.ResizeSurface,
-      DesktopCompanionIpc.TaskUpdated, DesktopCompanionIpc.PanelPassThrough,
+      DesktopCompanionIpc.TaskUpdated, DesktopCompanionIpc.PanelPassThrough, DesktopCompanionIpc.PanelLoginVisible,
     ]) ipcMain.removeAllListeners(channel);
     for (const channel of Object.values(DesktopCompanionIpc)) ipcMain.removeHandler(channel);
     this.foreground.removeListener('change', this.onForegroundChange);
     this.fileDrag.removeListener(FileDragEvent.Start, this.onGlobalDragStart);
     this.fileDrag.removeListener(FileDragEvent.End, this.onGlobalDragEnd);
+    this.dragProximity.stop();
     this.foreground.stop();
     this.fileDrag.stop();
     this.hints.dispose();
@@ -415,7 +444,7 @@ export class DesktopCompanionManager {
 
   /** Present on screen: enabled and not hidden by a snooze. */
   private isPresent(): boolean {
-    return this.preferences.enabled && this.snooze?.mode !== DesktopCompanionSnoozeMode.Hidden;
+    return this.preferences.enabled && !this.snooze;
   }
 
   private isBusy(category: CompanionAppCategory): boolean {
@@ -436,7 +465,13 @@ export class DesktopCompanionManager {
     if (present) this.foreground.start();
     else this.foreground.stop();
     if (present && this.preferences.dragAssist && !this.snooze) this.fileDrag.start();
-    else this.fileDrag.stop();
+    else {
+      this.fileDrag.stop();
+      this.dragProximity.stop();
+      this.fileDragActive = false;
+      this.draggedFiles = [];
+      if (this.stage.stage.kind === DesktopCompanionStageKind.Drop) this.stage.clear();
+    }
     if (!present || this.snooze) { this.stage.clear(); this.results.hide(); }
     this.selection.sync();
   }
@@ -520,6 +555,8 @@ export class DesktopCompanionManager {
     if (phase === DesktopCompanionDragPhase.Cancel) { this.dragOrigin = null; return; }
     const cursor = screen.getCursorScreenPoint();
     if (phase === DesktopCompanionDragPhase.Start) {
+      // Capture before blur can hide the surface, using main-process state even during rapid clicks.
+      this.orbPressVisible = this.panelVisible || this.results.state.visible;
       const start = this.orbBounds() ?? this.orb.getBounds();
       this.dragOrigin = { cursor, position: { x: start.x, y: start.y } };
       return;
@@ -571,6 +608,7 @@ export class DesktopCompanionManager {
       this.panelWorkArea = this.orbBounds() ? null : screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
     }
     if (!this.panel || this.panel.isDestroyed()) {
+      this.panelLoginVisible = false;
       const win = this.createWindow(DesktopCompanionSurface.Panel, true, this.panelLayout().bounds);
       dismissCompanionPanelOnBlur(win, () => this.hidePanel());
       win.on('close', event => {
@@ -578,8 +616,13 @@ export class DesktopCompanionManager {
         event.preventDefault();
         this.hidePanel();
       });
-      win.on('hide', () => this.hidePanel());
-      win.on('closed', () => { if (this.panel === win) this.panel = null; });
+      // A native hide notification can arrive after a rapid reopen.
+      win.on('hide', () => { if (!win.isVisible()) this.hidePanel(); });
+      win.on('closed', () => {
+        if (this.panel !== win) return;
+        this.panel = null;
+        this.panelLoginVisible = false;
+      });
       win.once('ready-to-show', () => {
         if (this.disposing || win.isDestroyed() || !this.panelVisible) return;
         win.show();
@@ -605,6 +648,9 @@ export class DesktopCompanionManager {
     const workArea = orb
       ? screen.getDisplayMatching(orb).workArea
       : this.panelWorkArea ?? screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+    if (this.panelLoginVisible) {
+      return resolveCompanionLoginLayout(orb, workArea);
+    }
     const card = { width: DesktopCompanionSize.Composer.width + DesktopCompanionSize.SurfacePad * 2, height: this.panelCardHeight };
     const room = { above: DesktopCompanionSize.ComposerMenuRoom, side: DesktopCompanionSize.ComposerSideRoom };
     return resolveCompanionComposerLayout(orb, card, room, workArea);
@@ -674,6 +720,7 @@ export class DesktopCompanionManager {
     this.hidePanel();
     this.stage.clear();
     this.fileDrag.stop();
+    this.dragProximity.stop();
     this.selection.sync();
     let attachment: DesktopCompanionAttachment | null = null;
     let failed = false;
@@ -734,29 +781,33 @@ export class DesktopCompanionManager {
   };
 
   private onGlobalDragStart = (event: FileDragStart): void => {
-    if (!this.isPresent() || !this.preferences.dragAssist || this.snooze) return;
+    if (!this.isPresent() || !this.preferences.dragAssist || this.snooze || this.capturing) return;
     const files = describeDraggedPaths(event.paths);
     // macOS tells us what is being dragged; ignore apps, archives and other non-documents.
     if (files.length && !files.some(file => isCompanionDocumentKind(file.kind) || file.kind === FileKind.Folder)) return;
     this.fileDragActive = true;
-    this.stage.showDrop(DesktopCompanionDropSource.Global, files);
+    // Keep file metadata for an intentional hover; ordinary desktop drags stay quiet.
+    this.draggedFiles = files;
+    this.dragProximity.start();
     this.publish();
   };
 
   private onGlobalDragEnd = (): void => {
     if (!this.fileDragActive) return;
     this.fileDragActive = false;
-    this.stage.releaseDrop(DesktopCompanionDropSource.Global);
+    this.draggedFiles = [];
+    this.dragProximity.stop();
+    this.stage.releaseDrop();
     this.publish();
   };
 
   private onOrbFileDrag(phase: DesktopCompanionFileDragPhase, kinds: CompanionFileKind[]): void {
-    if (!this.preferences.dragAssist) return;
+    if (!this.isPresent() || !this.preferences.dragAssist || this.snooze || this.capturing) return;
     if (phase === DesktopCompanionFileDragPhase.Enter) {
       const known = Array.isArray(kinds) ? kinds.filter(kind => Object.values(FileKind).includes(kind)).slice(0, 8) : [];
-      this.stage.showDrop(DesktopCompanionDropSource.Orb, [], known);
+      this.stage.showDrop(DesktopCompanionDropSource.Orb, this.draggedFiles, known);
     } else if (phase === DesktopCompanionFileDragPhase.Leave) {
-      this.stage.releaseDrop(DesktopCompanionDropSource.Orb);
+      if (!this.dragProximity.isActive) this.stage.releaseDrop(DesktopCompanionDropSource.Orb);
     } else {
       this.stage.clear();
     }
@@ -839,6 +890,7 @@ export class DesktopCompanionManager {
       this.hidePanel();
       this.followTask(value.slice(0, 200));
     });
+    handle(DesktopCompanionIpc.ToggleOrb, value => this.toggleOrb(value === true));
     handle(DesktopCompanionIpc.TogglePanel, () => this.togglePanel());
     handle(DesktopCompanionIpc.HidePanel, () => this.hidePanel());
     handle(DesktopCompanionIpc.OpenMain, (value, sender) => {
@@ -846,6 +898,21 @@ export class DesktopCompanionManager {
       if (sender.id === this.results.webContentsId) this.results.hide();
       this.hidePanel();
       this.options.openMain(typeof value === 'string' ? value : null);
+    });
+    handle(DesktopCompanionIpc.OpenMainPage, value => {
+      if (value !== DesktopCompanionMainPage.Kits && value !== DesktopCompanionMainPage.Skills) return;
+      // Keep the destination until the main renderer is ready, including window recreation.
+      this.pendingMainPage = value;
+      this.hidePanel();
+      this.options.openMain(null);
+      const main = this.options.getMainWindow();
+      if (main && !main.isDestroyed()) main.webContents.send(DesktopCompanionIpc.MainPageRequested);
+    });
+    handle(DesktopCompanionIpc.ConsumeMainPage, (_value, sender) => {
+      if (sender.id !== this.options.getMainWindow()?.webContents.id) return null;
+      const page = this.pendingMainPage;
+      this.pendingMainPage = null;
+      return page;
     });
     handle(DesktopCompanionIpc.ContextMenu, () => this.showContextMenu());
     handle(DesktopCompanionIpc.StageCommand, value => this.stage.handleCommand(value as DesktopCompanionStageCommand));
@@ -856,7 +923,7 @@ export class DesktopCompanionManager {
       if (value === CompanionPermissionValue.Accessibility) this.selection.requestPermission();
       return this.getState();
     });
-    handle(DesktopCompanionIpc.CopyText, value => { if (typeof value === 'string') clipboard.writeText(value.slice(0, 200_000)); });
+    handle(DesktopCompanionIpc.CopyText, value => copyCompanionText(value));
 
     const on = (channel: string, callback: (value: unknown, senderId: number) => void) => {
       ipcMain.on(channel, (event, value: unknown) => {
@@ -876,6 +943,12 @@ export class DesktopCompanionManager {
     on(DesktopCompanionIpc.PanelPassThrough, (value, senderId) => {
       if (!this.panel || this.panel.isDestroyed() || senderId !== this.panel.webContents.id) return;
       this.panel.setIgnoreMouseEvents(value === true, { forward: true });
+    });
+    on(DesktopCompanionIpc.PanelLoginVisible, (value, senderId) => {
+      if (!this.panel || this.panel.isDestroyed() || senderId !== this.panel.webContents.id || typeof value !== 'boolean') return;
+      if (this.panelLoginVisible === value) return;
+      this.panelLoginVisible = value;
+      this.positionPanel();
     });
     on(DesktopCompanionIpc.OrbFileDrag, (value, senderId) => {
       if (senderId !== this.orb?.webContents.id) return;

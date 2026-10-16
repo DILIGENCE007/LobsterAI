@@ -9,7 +9,6 @@ const calm: CompanionMoodInput = {
   waiting: false,
   unseenResult: false,
   snoozed: false,
-  fileDragActive: false,
   dropHover: false,
   dropStage: false,
   hintShowing: false,
@@ -29,9 +28,9 @@ describe('companion mood', () => {
     expect(companionMood({ ...calm, status: CoworkSessionStatusValue.Error, waiting: true })).toBe(CompanionMood.Attention);
   });
 
-  test('a file drag in progress outranks task news, and snoozing outranks everything', () => {
+  test('an intentional file hover outranks task news, and snoozing outranks everything', () => {
     const waiting = { ...calm, waiting: true };
-    expect(companionMood({ ...waiting, fileDragActive: true })).toBe(CompanionMood.Curious);
+    expect(companionMood({ ...waiting, dropStage: true })).toBe(CompanionMood.Curious);
     expect(companionMood({ ...waiting, dropHover: true })).toBe(CompanionMood.Catch);
     expect(companionMood({ ...waiting, dropHover: true, snoozed: true })).toBe(CompanionMood.Snooze);
   });

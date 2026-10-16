@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { authService } from '../../services/auth';
 import { THEME_APPEARANCE_STORAGE_KEY, THEME_ID_STORAGE_KEY } from '../../theme/engine/theme-manager';
 import { bootstrapCompanionComposer, refreshCompanionComposer } from './companionComposerBootstrap';
 import { observeCompanionTheme, synchronizeCompanionTheme } from './companionTheme';
@@ -44,6 +45,19 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 afterEach(() => vi.unstubAllGlobals());
+
+describe('companion composer auth synchronization', () => {
+  test('restores auth on first load and rechecks it on every reopening', async () => {
+    await bootstrapCompanionComposer();
+    await refreshCompanionComposer();
+    await refreshCompanionComposer();
+
+    expect(authService.refreshAuthState).toHaveBeenCalledTimes(3);
+    expect(authService.refreshAuthState).toHaveBeenNthCalledWith(1, { clearOnFailure: true });
+    expect(authService.refreshAuthState).toHaveBeenNthCalledWith(2, { clearOnFailure: true });
+    expect(authService.refreshAuthState).toHaveBeenNthCalledWith(3, { clearOnFailure: true });
+  });
+});
 
 describe('companion composer theme ownership', () => {
   test('first opening follows the active main-window skin without rewriting shared appearance', async () => {

@@ -27,10 +27,10 @@ import {
   resolveCompanionToolbarMenuBounds,
 } from '../../shared/desktopCompanion/geometry';
 import {
-  COMPANION_SELECTION_MAX_CHARS,
   isCompanionSelectionAction,
   rankCompanionSelectionActions,
 } from '../../shared/desktopCompanion/selectionActions';
+import { isCompanionTextTooLarge } from './companionClipboard';
 import type { CompanionQuickAnswerService } from './quickAnswerService';
 import { SelectionGestureTracker } from './selectionGesture';
 import { isScreenshotApp, SelectionKeyEffect, selectionKeyEffect,type SelectionKeyEvent } from './selectionKeys';
@@ -206,6 +206,11 @@ export class CompanionSelectionController {
     return this.selection && this.anchor ? { ...this.anchor } : null;
   }
 
+  /** The measured toolbar only, without the transparent space reserved for its menu. */
+  get selectionToolbarBounds(): CompanionRect | null {
+    return this.selection && this.toolbarBounds ? { ...this.toolbarBounds } : null;
+  }
+
   /** A screenshot shortcut was pressed and its shot is not taken yet; nothing should close for it. */
   get capturing(): boolean {
     return Date.now() < this.captureUntil;
@@ -279,7 +284,7 @@ export class CompanionSelectionController {
     const selection = this.selection;
     switch (command?.type) {
       case DesktopCompanionSelectionCommandType.Run:
-        if (!selection || !isCompanionSelectionAction(command.action)) return;
+        if (!selection || selection.tooLarge || !isCompanionSelectionAction(command.action)) return;
         this.cardHeight = this.anchor ? companionCardSlot(this.anchor, this.workArea(this.anchor)).room : DesktopCompanionSize.Answer.height;
         this.selection = {
           ...selection,
@@ -466,16 +471,20 @@ export class CompanionSelectionController {
 
   private showSelection(data: SelectionHookEvent): void {
     if (this.status !== CompanionCapability.Ready || !data) return;
-    const text = typeof data.text === 'string' ? data.text.trim() : '';
-    if (!text || isCompanionSelectionBlocked(data.programName ?? '', this.host.preferences().selectionExcludedApps)) return;
+    const text = typeof data.text === 'string' ? data.text : '';
+    if (isCompanionSelectionBlocked(data.programName ?? '', this.host.preferences().selectionExcludedApps)) return;
     if (this.selection?.pinned) return;
+    const tooLarge = isCompanionTextTooLarge(text);
+    if (!tooLarge && !text.trim()) return;
     const fullLevel = this.module?.PositionLevel.SEL_FULL ?? 3;
     this.anchor = selectionAnchor(data, fullLevel, screen.getCursorScreenPoint());
     this.selection = {
       id: randomUUID(),
-      text: [...text].slice(0, COMPANION_SELECTION_MAX_CHARS).join(''),
+      // Copy must preserve the selection verbatim; AI requests apply their own limits.
+      text: tooLarge ? '' : text,
+      tooLarge,
       appId: data.programName ?? '',
-      actions: rankCompanionSelectionActions(text),
+      actions: tooLarge ? [] : rankCompanionSelectionActions(text),
       mode: DesktopCompanionSelectionMode.Toolbar,
       action: null,
       pinned: false,
@@ -582,7 +591,7 @@ export class CompanionSelectionController {
   private readCurrentSelection(): SelectionHookEvent | null {
     try {
       const data = this.hook?.getCurrentSelection();
-      return data && typeof data.text === 'string' && data.text.trim() ? data : null;
+      return data && typeof data.text === 'string' && (isCompanionTextTooLarge(data.text) || data.text.trim()) ? data : null;
     } catch (error) {
       console.warn('[DesktopCompanion] Reading the current selection failed:', error);
       return null;
@@ -632,7 +641,7 @@ export class CompanionSelectionController {
       const { x, y } = this.window.getBounds();
       this.window.setBounds(clampCompanionBounds({ ...this.size, x, y }, workArea));
     } else {
-      this.window.setBounds(resolveCompanionCardBounds(this.anchor, this.size, workArea));
+      this.window.setBounds(resolveCompanionCardBounds(this.anchor, this.size, workArea, this.toolbarBounds));
     }
   }
 

@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import {
+  COMPANION_COPY_MAX_BYTES,
   CompanionCapability,
   DEFAULT_DESKTOP_COMPANION_PREFERENCES,
   DesktopCompanionIpc,
@@ -133,6 +134,49 @@ beforeEach(() => {
 });
 
 describe('selection toolbar', () => {
+  test.each([33_890, 250_000, COMPANION_COPY_MAX_BYTES])('preserves all %i characters of selected JSON for copying', length => {
+    const controller = create();
+    const prefix = '{"payload":"';
+    const suffix = '","tail":"complete"}';
+    const text = prefix + 'x'.repeat(length - prefix.length - suffix.length) + suffix;
+    select(text);
+    expect(sentSelection()?.text.length).toBe(length);
+    expect(sentSelection()?.text).toBe(text);
+    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
+    expect(sentSelection()?.text).toBe(text);
+    controller.dispose();
+  });
+
+  test.each(['x'.repeat(COMPANION_COPY_MAX_BYTES + 1), '字'.repeat(Math.ceil(COMPANION_COPY_MAX_BYTES / 3))])(
+    'replaces an oversized selection with a notice and recovers on the next selection', text => {
+      const controller = create();
+      select(text);
+      expect(sentSelection()).toMatchObject({ text: '', tooLarge: true, actions: [], mode: DesktopCompanionSelectionMode.Toolbar });
+      controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
+      expect(sentSelection()).toMatchObject({ mode: DesktopCompanionSelectionMode.Toolbar, action: null });
+      select('a smaller selection');
+      expect(sentSelection()).toMatchObject({ text: 'a smaller selection', tooLarge: false });
+      controller.dispose();
+    },
+  );
+
+  test('preserves selected whitespace and Unicode verbatim', () => {
+    const controller = create();
+    const text = ' \t\r\n  {"message":"完整内容 🦞"}\r\n\t ';
+    select(text);
+    expect(sentSelection()?.text).toBe(text);
+    controller.dispose();
+  });
+
+  test('ignores selections containing only whitespace', () => {
+    const controller = create();
+    select(' \t\r\n ');
+    vi.advanceTimersByTime(200);
+    expect(sentSelection()).toBeUndefined();
+    expect(win.visible).toBe(false);
+    controller.dispose();
+  });
+
   test('reserves menu space before showing the toolbar and keeps the window still when toggling more', () => {
     const controller = create();
     select('ambient co-worker', 'com.microsoft.Word', 450);
@@ -234,42 +278,53 @@ describe('selection toolbar', () => {
     controller.dispose();
   });
 
-  test('a card opens under the selection so the selected text stays readable', () => {
-    const controller = create();
-    select();
-    vi.advanceTimersByTime(200);
-    controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
-    controller.setContentSize({ width: 444, height: 300 });
-    expect(win.bounds.y + PAD).toBeGreaterThanOrEqual(220);
-    expect(sentSelection().cardMaxHeight).toBe(DesktopCompanionSize.Answer.height - PAD * 2);
-    controller.dispose();
-  });
+  test.each([CompanionSelectionAction.Explain, CompanionSelectionAction.Summarize, CompanionSelectionAction.Ask])(
+    '%s replaces the measured toolbar in place, even for a long selection', action => {
+      const controller = create();
+      select('A long selected paragraph', 'com.microsoft.Word', 200, 780);
+      controller.setContentSize({ width: 410, height: 80 });
+      vi.advanceTimersByTime(200);
+      const { x, y } = win.bounds;
+      controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action });
+      controller.setContentSize({ width: 444, height: 300 });
+      expect(win.bounds).toMatchObject({ x, y });
+      expect(sentSelection().cardMaxHeight).toBe(DesktopCompanionSize.Answer.height - PAD * 2);
+      controller.setContentSize(DesktopCompanionSize.Answer);
+      expect(win.bounds).toMatchObject({ x, y });
+      controller.dispose();
+    },
+  );
 
-  test('with little room on either side, a long answer slides the card over the selection instead of scrolling it', () => {
+  test('a growing answer stays by the toolbar until it reaches the screen edge', () => {
     const controller = create();
-    // A long passage from y=300 to y=600 leaves about 316px on each side.
-    select('ambient co-worker', 'com.microsoft.Word', 300, 580);
+    select('ambient co-worker', 'com.microsoft.Word', 450, 580);
     vi.advanceTimersByTime(200);
+    const { x, y } = win.bounds;
     controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
     expect(sentSelection().cardMaxHeight).toBe(DesktopCompanionSize.Answer.height - PAD * 2);
     controller.setContentSize({ width: 444, height: 280 });
-    expect(win.bounds.y + PAD).toBeGreaterThanOrEqual(600);
+    expect(win.bounds).toMatchObject({ x, y });
     controller.setContentSize({ width: 444, height: 900 });
     expect(win.bounds).toMatchObject({ y: 900 - DesktopCompanionSize.Answer.height, height: DesktopCompanionSize.Answer.height });
     controller.dispose();
   });
 
-  test('a card above the selection starts about its measured size, so measuring it does not move it', () => {
+  test('a bottom-edge card uses the toolbar position without inheriting the upward menu offset', () => {
     const controller = create();
     select('ambient co-worker', 'com.microsoft.Word', 800);
     vi.advanceTimersByTime(200);
+    expect(sentSelection().menuUp).toBe(true);
+    const toolbar = controller.selectionToolbarBounds!;
+    expect(toolbar.y).toBeGreaterThan(win.bounds.y);
     controller.handleCommand({ type: DesktopCompanionSelectionCommandType.Run, action: CompanionSelectionAction.Explain });
     expect(win.bounds.height).toBe(DesktopCompanionSize.AnswerStartHeight);
     const bottom = visibleBottom();
-    expect(bottom).toBeLessThanOrEqual(800);
+    expect(bottom).toBe(900 - PAD);
     controller.setContentSize({ width: 444, height: 236 });
     expect(visibleBottom()).toBe(bottom);
     expect(win.bounds.height).toBe(236);
+    controller.hide();
+    expect(controller.selectionToolbarBounds).toBeNull();
     controller.dispose();
   });
 

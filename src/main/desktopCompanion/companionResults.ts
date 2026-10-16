@@ -147,7 +147,8 @@ export class CompanionResultsController {
       win.once('ready-to-show', () => { if (this.visible && !win.isDestroyed()) this.reveal(win); });
       dismissCompanionPanelOnBlur(win, () => { if (!this.pinned && !this.host.isCapturing()) this.hide(); });
       win.on('will-move', () => { this.moved = true; this.pinned = true; this.host.publish(); });
-      win.on('hide', () => this.hide());
+      // A native hide notification can arrive after a rapid reopen.
+      win.on('hide', () => { if (!win.isVisible()) this.hide(); });
       win.on('close', event => { if (!this.disposing) { event.preventDefault(); this.hide(); } });
       win.on('closed', () => { this.window = null; this.visible = false; });
     }

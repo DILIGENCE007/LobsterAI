@@ -14,6 +14,7 @@ import {
 } from '../shared/appUpdate/constants';
 import { BrowserPasskeyUiEvent } from '../shared/browserWebAccess/passkeys';
 import { OpenClawQuestion } from '../shared/cowork/openclawQuestion';
+import { DesktopCompanionMainPage } from '../shared/desktopCompanion/constants';
 import {
   LibraryNavigationEvent,
   LibrarySourceFilter,
@@ -1838,6 +1839,22 @@ const App: React.FC = () => {
     });
     return unsubscribe;
   }, [handleShowSettings]);
+
+  useEffect(() => {
+    const companion = window.electron.desktopCompanion;
+    if (!isInitialized || !companion?.consumeMainPage) return;
+    const openRequestedPage = () => {
+      void companion.consumeMainPage().then(page => {
+        if (page === DesktopCompanionMainPage.Kits || page === DesktopCompanionMainPage.Skills) {
+          setShowSettings(false);
+          setMainView(page === DesktopCompanionMainPage.Kits ? MainView.Kits : MainView.Skills);
+        }
+      }).catch(error => console.error('[DesktopCompanion] failed to open the requested page', error));
+    };
+    const unsubscribe = companion.onMainPageRequested(openRequestedPage);
+    openRequestedPage();
+    return unsubscribe;
+  }, [isInitialized]);
 
   // 监听托盘菜单新建任务的 IPC 事件
   useEffect(() => {

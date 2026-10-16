@@ -49,7 +49,7 @@ svg { flex-shrink: 0; }
 .companion-character > svg, .companion-character > img { display: block; transform-origin: 50% 88%; }
 .character-image { width: 100%; height: 100%; object-fit: contain; pointer-events: none; user-select: none; }
 .companion-character:not([data-kind="brand"])[data-mood="done"] > :is(svg, img) { animation: hop 0.5s ease-in-out 1; }
-.companion-character:not([data-kind="brand"])[data-mood="catch"] > :is(svg, img) { animation: squash 0.45s ease-in-out infinite alternate; }
+.companion-character:not([data-kind="brand"])[data-mood="catch"] > :is(svg, img) { transform: scale(1.03); transition: transform 0.14s ease; }
 .companion-character:not([data-kind="brand"])[data-mood="attention"] > :is(svg, img) { animation: wiggle 2.4s ease-in-out infinite; }
 .companion-character[data-mood="snooze"] { opacity: 0.82; }
 /* The brand mark stays still while working; a small badge carries the status. */
@@ -97,16 +97,12 @@ svg { flex-shrink: 0; }
 .orb-button { position: relative; width: 76px; height: 76px; display: grid; place-items: center; border-radius: 50%; cursor: grab; touch-action: none; }
 .orb-button[data-moving="true"] { cursor: grabbing; }
 .orb-button:focus-visible { outline-offset: -4px; }
-/* Hover and drag answer quietly: a slight lift and a deeper shadow, no bounce or overshoot. */
+/* Hover and drag use a slight lift or scale while keeping the character shadow-free. */
 .orb-surface .companion-character {
-  filter: drop-shadow(0 4px 6px rgba(80, 25, 10, 0.28));
-  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1), filter 0.2s cubic-bezier(0.2, 0, 0, 1);
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1);
 }
-.orb-button:hover .companion-character { transform: translateY(-2px); filter: drop-shadow(0 6px 8px rgba(80, 25, 10, 0.3)); }
-.orb-button[data-moving="true"] .companion-character { transform: scale(1.04); filter: drop-shadow(0 8px 12px rgba(80, 25, 10, 0.3)); }
-.orb-button[data-kind="brand"] .companion-character { filter: drop-shadow(0 2px 3px rgba(80, 25, 10, 0.32)); }
-.orb-button[data-kind="brand"]:hover .companion-character { filter: drop-shadow(0 3px 5px rgba(80, 25, 10, 0.34)); }
-.orb-button[data-kind="brand"][data-moving="true"] .companion-character { filter: drop-shadow(0 4px 7px rgba(80, 25, 10, 0.34)); }
+.orb-button:hover .companion-character { transform: translateY(-2px); }
+.orb-button[data-moving="true"] .companion-character { transform: scale(1.04); }
 /* A file coming near: the disc leans in; over it: the disc opens up to take it. */
 .orb-button .companion-character[data-kind="brand"][data-mood="curious"] > .lobster-mark { transform: scale(1.06); }
 .orb-button .companion-character[data-kind="brand"][data-mood="catch"] > .lobster-mark { transform: scale(1.14); }
@@ -157,28 +153,28 @@ svg { flex-shrink: 0; }
 .task-close:hover { background: var(--c-surface-2); color: var(--c-ink-2); }
 .task-close svg { width: 14px; height: 14px; }
 .stage-drop {
-  width: 420px; padding: 12px; background: color-mix(in srgb, var(--c-surface) 97%, transparent);
-  border: 1px solid var(--c-line); border-radius: 18px; box-shadow: var(--c-shadow);
-  animation: pop-in 0.24s cubic-bezier(0.34, 1.56, 0.64, 1); transform-origin: 100% 100%;
+  width: 420px; padding: 12px; background: var(--c-surface);
+  border: 1px solid var(--c-line); border-radius: 16px; box-shadow: var(--c-shadow);
+  animation: drop-appear 0.14s ease-out;
 }
-.drop-header { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 2px 4px 10px; font-size: 13.5px; }
-.drop-header strong { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.drop-file { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 190px; padding: 3px 8px; border-radius: 7px; background: var(--c-surface-2); color: var(--c-ink-2); font-size: 12px; }
+.orb-button[data-drop-hover="true"] { border-radius: 50%; outline: 2px solid var(--c-accent); outline-offset: 3px; }
+.drop-header { display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 20px; margin: 0 3px 10px; }
+.drop-file { flex: 1; display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--c-ink-2); font-size: 12px; }
+.drop-file svg { flex-shrink: 0; width: 14px; height: 14px; color: var(--c-ink-3); }
 .drop-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.drop-file-more { color: var(--c-ink-3); }
-.drop-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.drop-tile {
-  height: 104px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
-  border: 1.5px dashed var(--c-line-strong); border-radius: 13px; transition: background 0.12s, border-color 0.12s, transform 0.12s;
+.drop-file-more { flex-shrink: 0; color: var(--c-ink-2); }
+.drop-hint { flex-shrink: 0; color: var(--c-ink-2); font-size: 12px; line-height: 20px; }
+.drop-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.drop-action {
+  min-width: 0; min-height: 76px; padding: 12px 8px; display: flex; align-items: center; justify-content: center;
+  border-radius: 11px; background: var(--c-surface-2); color: var(--c-ink-2); font-size: 14px; font-weight: 500; line-height: 20px;
+  text-align: center; transition: background 0.12s, color 0.12s;
 }
-.drop-tile * { pointer-events: none; }
-.drop-tile svg { width: 22px; height: 22px; color: var(--c-ink-2); }
-.drop-tile strong { font-size: 13px; font-weight: 600; }
-.drop-tile span { font-size: 11px; color: var(--c-ink-3); }
-.drop-tile[data-active="true"] { border: 1.5px solid var(--c-accent); background: var(--c-accent-soft); transform: translateY(-1px); }
-.drop-tile[data-active="true"] svg, .drop-tile[data-active="true"] strong { color: var(--c-accent-ink); }
-.stage-drop[data-status="starting"] .drop-tiles { opacity: 0.5; }
-.stage-drop[data-status="failed"] .drop-header strong { color: var(--c-accent-ink); white-space: normal; }
+.drop-action[data-active="true"] { background: var(--c-accent-soft); color: var(--c-accent-ink); box-shadow: inset 0 0 0 2px var(--c-accent); }
+.stage-drop[data-status="starting"] .drop-actions { opacity: 0.5; }
+.stage-drop[data-status="failed"] .drop-file { display: none; }
+.stage-drop[data-status="failed"] .drop-hint { flex: 1; color: var(--c-accent-ink); }
+@keyframes drop-appear { from { opacity: 0; } to { opacity: 1; } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
