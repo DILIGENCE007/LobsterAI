@@ -45,6 +45,12 @@ export const LogReporterAction = {
   ConversationMessageAction: 'lobsterai_conversation_message_action',
   ConversationNavigationAction: 'lobsterai_conversation_navigation_action',
   DailyCheckInAction: 'lobsterai_daily_check_in_action',
+  DesktopCompanionAction: 'lobsterai_desktop_companion_action',
+  DesktopCompanionSettingChanged: 'lobsterai_desktop_companion_setting_changed',
+  DesktopCompanionTask: 'lobsterai_desktop_companion_task',
+  DesktopCompanionTool: 'lobsterai_desktop_companion_tool',
+  DesktopCompanionHint: 'lobsterai_desktop_companion_hint',
+  DesktopCompanionFileDrop: 'lobsterai_desktop_companion_file_drop',
   DreamingSettingChanged: 'lobsterai_dreaming_setting_changed',
   DshAction: 'lobsterai_dsh_action',
   EmailSkillConnectionTested: 'lobsterai_email_skill_connection_tested',
@@ -147,6 +153,7 @@ export const LogReporterSource = {
 export const PromptAnalyticsSurface = {
   Home: 'home',
   Conversation: 'conversation',
+  DesktopCompanion: 'desktop_companion',
 } as const;
 
 export type PromptAnalyticsSurface =

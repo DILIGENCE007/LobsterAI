@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 
+import { CompanionAnalyticsOutcome as Outcome, CompanionAnalyticsStage as Stage } from '../../shared/desktopCompanion/analytics';
 import { LANGUAGE_TOOL_DEVICE_HEADER, LanguageTool, LanguageToolCode, type LanguageToolEvent, LanguageToolEventType, TranslationTarget } from '../../shared/desktopCompanion/languageTools';
 import { CompanionLanguageClient } from './languageToolClient';
 
@@ -14,6 +15,22 @@ const deviceId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 const deviceDeps = { getInstallationId: () => deviceId, fetchAnonymous: vi.fn() };
 
 describe('desktop language tools', () => {
+  test.each([Outcome.Success, Outcome.Failed, Outcome.Cancelled])('counts one %s result without SSE text, audio or raw error codes', async outcome => {
+    const reportAnalytics = vi.fn();
+    let release!: (response: Response) => void;
+    const client = new CompanionLanguageClient({ ...deviceDeps, reportAnalytics,
+      fetchWithAuth: () => new Promise(resolve => { release = resolve; }),
+      getSessionKey: () => 'account', getServerApiBaseUrl: () => 'https://private.example',
+    });
+    client.start({ ...request, text: 'private selection' }, vi.fn());
+    if (outcome === Outcome.Cancelled) client.abort(request.requestId);
+    release(outcome === Outcome.Failed ? sse('event: error\ndata: {"code":123456}\n\n') : sse(delta + done));
+    await drain();
+    client.reset();
+    expect(reportAnalytics.mock.calls.map(([event]) => event.stage)).toEqual([Stage.Submit, Stage.Result]);
+    expect(reportAnalytics.mock.lastCall?.[0]).toMatchObject({ outcome, tool: LanguageTool.Translate });
+    expect(JSON.stringify(reportAnalytics.mock.calls)).not.toMatch(/private|你好|123456/);
+  });
   test('requires a session before any TTS request', () => {
     const tool = LanguageTool.Tts;
     const fetchWithAuth = vi.fn();

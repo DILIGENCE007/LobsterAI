@@ -3,6 +3,9 @@ import { EventEmitter } from 'events';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { CoworkSessionStatusValue } from '../../renderer/types/cowork';
+import { CompanionAnalyticsAction as AnalyticsAction, CompanionAnalyticsInteraction as Interaction,
+  CompanionAnalyticsSetting,
+  CompanionAnalyticsSource as AnalyticsSource, CompanionAnalyticsStage as AnalyticsStage } from '../../shared/desktopCompanion/analytics';
 import {
   COMPANION_COPY_MAX_BYTES,
   CompanionCapability,
@@ -18,6 +21,7 @@ import {
   DesktopCompanionStageCommandType,
   DesktopCompanionStageKind,
   DesktopCompanionStoreKey,
+  DesktopCompanionSurface,
   DesktopCompanionTiming,
 } from '../../shared/desktopCompanion/constants';
 import { CompanionFileKind } from '../../shared/desktopCompanion/fileKinds';
@@ -124,8 +128,10 @@ let openSettings: ReturnType<typeof vi.fn>;
 let foreground: FakeMonitor;
 let fileDrag: FakeMonitor;
 let getTaskInfo: ReturnType<typeof vi.fn<(id: string) => CompanionTaskInfo | null>>;
+let reportAnalytics: ReturnType<typeof vi.fn>;
 
 function create(languageClient?: CompanionLanguageClient) {
+  reportAnalytics = vi.fn();
   main = new BrowserWindow();
   openMain = vi.fn();
   openSettings = vi.fn();
@@ -133,6 +139,7 @@ function create(languageClient?: CompanionLanguageClient) {
   fileDrag = new FakeMonitor();
   getTaskInfo = vi.fn(id => ({ id, title: `Task ${id}`, status: 'completed', updatedAt: 1000 }));
   manager = new DesktopCompanionManager({
+    reportAnalytics,
     store: {
       get: <T>(key: string) => values.get(key) as T | undefined,
       set: (key, value) => { values.set(key, value); },
@@ -269,6 +276,56 @@ describe('orb edge snapping', () => {
 });
 
 describe('desktop companion lifecycle', () => {
+  test('counts saved setting changes once and excludes passive reads and pointer movement', () => {
+    create();
+    expect(reportAnalytics).not.toHaveBeenCalled();
+    invoke(DesktopCompanionIpc.SetPreferences, { enabled: true });
+    invoke(DesktopCompanionIpc.SetPreferences, { enabled: true });
+    invoke(DesktopCompanionIpc.GetState);
+    invoke(DesktopCompanionIpc.SetDraft, { prompt: 'secret', attachments: [] });
+    ipcMain.emit(DesktopCompanionIpc.Drag, { sender: orb().webContents, senderFrame: orb().webContents.mainFrame }, DesktopCompanionDragPhase.Move);
+    const changes = reportAnalytics.mock.calls.map(([event]) => event).filter(event => event.action === AnalyticsAction.SettingChanged);
+    expect(changes).toEqual([{ action: AnalyticsAction.SettingChanged, source: AnalyticsSource.Settings, setting: CompanionAnalyticsSetting.Enabled, enabled: true }]);
+    expect(JSON.stringify(reportAnalytics.mock.calls)).not.toContain('secret');
+    const count = reportAnalytics.mock.calls.length;
+    vi.mocked(globalShortcut.register).mockReturnValue(false);
+    expect(invoke(DesktopCompanionIpc.SetPreferences, { shortcut: 'Alt+X' }).success).toBe(false);
+    expect(reportAnalytics).toHaveBeenCalledTimes(count);
+  });
+
+  test('attributes panel openings to shortcut and orb without duplicate opens on readiness or resize', () => {
+    create();
+    const shortcut = vi.mocked(globalShortcut.register).mock.calls[0][1];
+    shortcut();
+    const panel = mocks.windows[1];
+    expect(readyPanel(panel)).toBe(true);
+    expect(readyPanel(panel)).toBe(true);
+    ipcMain.emit(DesktopCompanionIpc.ResizeSurface, { sender: panel.webContents, senderFrame: panel.webContents.mainFrame }, { width: 380, height: 300 });
+    shortcut();
+    invoke(DesktopCompanionIpc.ToggleOrb);
+    expect(readyPanel(panel)).toBe(true);
+    expect(reportAnalytics.mock.calls.map(([event]) => event).filter(event => event.interactionType === Interaction.Open)).toEqual([
+      expect.objectContaining({ source: AnalyticsSource.Shortcut, surface: DesktopCompanionSurface.Panel }),
+      expect.objectContaining({ source: AnalyticsSource.Orb, surface: DesktopCompanionSurface.Panel }),
+    ]);
+  });
+
+  test('validates analytics IPC sender, event family and payload before reporting', () => {
+    create();
+    manager.togglePanel();
+    const panel = mocks.windows[1];
+    reportAnalytics.mockClear();
+    const event = { action: AnalyticsAction.Task, source: AnalyticsSource.Orb, stage: AnalyticsStage.Submit, prompt: 'secret', sessionId: 'private-session' };
+    invoke(DesktopCompanionIpc.ReportAnalytics, event, panel.webContents);
+    expect(reportAnalytics).toHaveBeenCalledExactlyOnceWith({ action: AnalyticsAction.Task, source: AnalyticsSource.Panel, stage: AnalyticsStage.Submit });
+    invoke(DesktopCompanionIpc.ReportAnalytics, { ...event, action: AnalyticsAction.SettingChanged }, panel.webContents);
+    invoke(DesktopCompanionIpc.ReportAnalytics, event);
+    expect(reportAnalytics).toHaveBeenCalledTimes(1);
+    const foreign = new BrowserWindow();
+    expect(() => invoke(DesktopCompanionIpc.ReportAnalytics, event, foreign.webContents)).toThrow();
+    expect(() => mocks.handlers.get(DesktopCompanionIpc.ReportAnalytics)!({ sender: panel.webContents, senderFrame: {} }, event)).toThrow();
+  });
+
   test('selection task references survive panel dismissal and draft persistence until explicitly removed', () => {
     create();
     const selectionContext = {

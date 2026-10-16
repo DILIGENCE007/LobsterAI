@@ -139,6 +139,7 @@ import {
   type DataMigrationLastRestoreResult,
   DataMigrationRestoreStatus,
 } from '../shared/dataMigration/constants';
+import { CompanionAnalyticsSource } from '../shared/desktopCompanion/analytics';
 import { getCompanionTaskPreview } from '../shared/desktopCompanion/results';
 import { DialogIpc } from '../shared/dialog/constants';
 import {
@@ -14194,6 +14195,7 @@ if (!gotTheLock) {
   });
 
   const desktopLanguageClient = new CompanionLanguageClient({
+    reportAnalytics: event => getMainLogReporter().report(event),
     fetchWithAuth, fetchAnonymous: (url, options) => net.fetch(url, options),
     getInstallationId: getOrCreateInstallationId, getServerApiBaseUrl, getSessionKey: getAuthSessionKey,
   });
@@ -15052,7 +15054,7 @@ if (!gotTheLock) {
         isEnabled: () => desktopCompanionManager?.getState().preferences.enabled ?? false,
         toggleEnabled: () => desktopCompanionManager?.setPreferences({
           enabled: !desktopCompanionManager.getState().preferences.enabled,
-        }),
+        }, CompanionAnalyticsSource.Tray),
         openPanel: () => desktopCompanionManager?.togglePanel(),
       });
 
@@ -15924,13 +15926,15 @@ if (!gotTheLock) {
     createWindow();
     profiler.measure('createWindow');
     desktopCompanionManager = new DesktopCompanionManager({
+      reportAnalytics: event => getMainLogReporter().report(event),
       getTaskInfo: sessionId => {
         const task = getCoworkStore().getSession(sessionId, 1);
         return task ? { ...task, preview: getCompanionTaskPreview(task.messages.at(-1)) } : null;
       },
       services: {
         languageClient: desktopLanguageClient,
-        quickAnswer: new CompanionQuickAnswerService({ getSessionKey: getAuthSessionKey }),
+        quickAnswer: new CompanionQuickAnswerService({ getSessionKey: getAuthSessionKey,
+          reportAnalytics: event => getMainLogReporter().report(event) }),
       },
       store: getStore(),
       preloadPath: PRELOAD_PATH,

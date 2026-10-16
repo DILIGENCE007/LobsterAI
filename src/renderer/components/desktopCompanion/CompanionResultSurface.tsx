@@ -4,9 +4,11 @@ import { ArrowTurnDownLeftIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { CheckCircleIcon, ExclamationCircleIcon, PauseCircleIcon } from '@heroicons/react/24/solid';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { CompanionAnalyticsAction, CompanionAnalyticsInteraction, CompanionAnalyticsOutcome, CompanionAnalyticsSource } from '../../../shared/desktopCompanion/analytics';
 import type { DesktopCompanionState } from '../../../shared/desktopCompanion/constants';
 import type { CompanionRecentTask } from '../../../shared/desktopCompanion/results';
 import { i18nService } from '../../services/i18n';
+import { reportCompanionAnalytics } from './analytics';
 import { CompanionPhase, companionPhase } from './companionPresentation';
 import CompanionTaskFollowUp from './CompanionTaskFollowUp';
 import { SelectionError, SelectionThinking, StopGlyph } from './SelectionCard';
@@ -43,13 +45,18 @@ function TaskBubble({ task, expanded, onRefresh, onFollowUp, onCloseFollowUp }: 
   const stop = async () => {
     setStopping(true);
     setActionFailed(false);
+    let success = false;
     try {
       const result = await window.electron.cowork.stopSession(task.id);
+      success = result.success;
       if (result.success) onRefresh();
       else setActionFailed(true);
     } catch {
       setActionFailed(true);
     } finally {
+      reportCompanionAnalytics({ action: CompanionAnalyticsAction.Action, source: CompanionAnalyticsSource.Result,
+        interactionType: CompanionAnalyticsInteraction.Stop,
+        outcome: success ? CompanionAnalyticsOutcome.Success : CompanionAnalyticsOutcome.Failed });
       setStopping(false);
     }
   };

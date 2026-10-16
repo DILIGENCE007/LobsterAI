@@ -1,3 +1,4 @@
+import type { CompanionAnalyticsEvent } from './analytics';
 import type { CompanionAppCategory } from './appCategories';
 import type { CompanionFileKind } from './fileKinds';
 import type { CompanionHintTopic } from './hintPolicy';
@@ -10,6 +11,7 @@ import type { CompanionSelectionTaskContext } from './selectionTaskContext';
 import { type CompanionToolbarItem, DEFAULT_COMPANION_TOOLBAR_ORDER } from './selectionToolbar';
 
 export const DesktopCompanionIpc = {
+  ReportAnalytics: 'desktop-companion:report-analytics',
   GetState: 'desktop-companion:get-state',
   SetPreferences: 'desktop-companion:set-preferences',
   GetSelectionExcludedApps: 'desktop-companion:get-selection-excluded-apps',
@@ -305,6 +307,7 @@ export interface CompanionSurfaceSize {
 }
 
 export interface DesktopCompanionBridge extends LanguageToolsBridge, CompanionScreenshotBridge, CompanionResultsBridge {
+  reportAnalytics(event: CompanionAnalyticsEvent): Promise<void>;
   getState(): Promise<DesktopCompanionState>;
   setPreferences(patch: Partial<DesktopCompanionPreferences>): Promise<DesktopCompanionResult>;
   getSelectionExcludedApps(): Promise<CompanionSelectionApp[]>;

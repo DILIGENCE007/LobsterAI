@@ -12,6 +12,11 @@ import {
 import fs from 'fs';
 import path from 'path';
 
+import {
+  CompanionAnalyticsAction as AnalyticsAction, CompanionAnalyticsInteraction as Interaction,
+  CompanionAnalyticsOutcome as AnalyticsOutcome, CompanionAnalyticsSource as AnalyticsSource,
+  CompanionAnalyticsTool, normalizeCompanionAnalyticsEvent,
+} from '../../shared/desktopCompanion/analytics';
 import { categorizeCompanionApp, CompanionAppCategory, isCompanionQuietCategory } from '../../shared/desktopCompanion/appCategories';
 import {
   CompanionPermission as CompanionPermissionValue,
@@ -65,6 +70,7 @@ import { normalizeSelectionTaskContext } from '../../shared/desktopCompanion/sel
 import { normalizeCompanionToolbarOrder } from '../../shared/desktopCompanion/selectionToolbar';
 import { COMPANION_SKINS, companionOrbSize, normalizeCompanionSkin } from '../../shared/desktopCompanion/skins';
 import { t } from '../i18n';
+import { CompanionAnalytics, type CompanionAnalyticsReporter } from './companionAnalytics';
 import { copyCompanionText } from './companionClipboard';
 import { CompanionHintsController } from './companionHints';
 import { CompanionResultsController } from './companionResults';
@@ -105,6 +111,7 @@ interface DesktopCompanionOptions {
   openMain(sessionId?: string | null): void;
   openSettings?(): void;
   onPreferencesChanged(): void;
+  reportAnalytics?: CompanionAnalyticsReporter;
   services?: DesktopCompanionServices;
 }
 
@@ -206,8 +213,10 @@ export class DesktopCompanionManager {
   private readonly languageTools: CompanionLanguageToolsController;
   private readonly screenshot: CompanionScreenshotController;
   private readonly results: CompanionResultsController;
+  private readonly analytics: CompanionAnalytics;
 
   constructor(private readonly options: DesktopCompanionOptions) {
+    this.analytics = new CompanionAnalytics(options.reportAnalytics);
     const { store } = options;
     this.preferences = normalizeCompanionPreferences(store.get(DesktopCompanionStoreKey.Preferences));
     this.draft = normalizeCompanionDraft(store.get(DesktopCompanionStoreKey.Draft));
@@ -227,6 +236,7 @@ export class DesktopCompanionManager {
     this.quickAnswer = services.quickAnswer ?? new CompanionQuickAnswerService();
     this.screenshot = new CompanionScreenshotController(this.env);
     this.results = new CompanionResultsController({
+      analytics: this.analytics,
       store,
       getTaskInfo: id => options.getTaskInfo(id),
       getOrbBounds: () => this.orbBounds(),
@@ -238,6 +248,7 @@ export class DesktopCompanionManager {
       publish: () => this.publish(),
     }, this.sessionId);
     this.stage = new CompanionStageController({
+      analytics: this.analytics,
       getOrbBounds: () => this.orbBounds(),
       createWindow: (surface, focusable) => this.createWindow(surface, focusable),
       publish: () => this.publish(),
@@ -261,15 +272,17 @@ export class DesktopCompanionManager {
       showHint: (topic, variant) => this.showHint(topic, variant),
     });
     this.selection = new CompanionSelectionController({
+      analytics: this.analytics,
       preferences: () => this.preferences,
       isAvailable: () => this.isPresent() && !this.capturing,
       createWindow: (surface, focusable) => this.createWindow(surface, focusable),
-      setPreferences: patch => { this.setPreferences(patch); },
+      setPreferences: patch => { this.setPreferences(patch, AnalyticsSource.Selection); },
       publish: () => this.publish(),
       openSettings: () => this.options.openSettings?.(),
     }, this.quickAnswer, services.loadSelectionHook);
 
     this.languageTools = new CompanionLanguageToolsController({
+      analytics: this.analytics,
       createWindow: () => this.createWindow(DesktopCompanionSurface.LanguageTools, true),
       getSelectionAnchor: () => this.selection.selectionAnchor,
       getSelectionToolbarBounds: () => this.selection.selectionToolbarBounds,
@@ -325,7 +338,7 @@ export class DesktopCompanionManager {
     };
   }
 
-  setPreferences(patch: Partial<DesktopCompanionPreferences>): DesktopCompanionResult {
+  setPreferences(patch: Partial<DesktopCompanionPreferences>, source: AnalyticsSource = AnalyticsSource.Settings): DesktopCompanionResult {
     const next = { ...this.preferences };
     if (typeof patch?.enabled === 'boolean') next.enabled = patch.enabled;
     if (typeof patch?.shortcut === 'string') next.shortcut = patch.shortcut.trim().slice(0, 100);
@@ -347,6 +360,7 @@ export class DesktopCompanionManager {
     const turningOn = next.enabled && !this.preferences.enabled;
     const exclusionsChanged = next.selectionExcludedApps.join('\n') !== this.preferences.selectionExcludedApps.join('\n');
     const previousOrbSize = this.orbSize();
+    const previous = this.preferences;
     this.preferences = next;
     this.resizeOrb(previousOrbSize);
     if (!next.enabled) this.languageTools.reset();
@@ -357,11 +371,13 @@ export class DesktopCompanionManager {
     if (exclusionsChanged) this.selection.updateExclusions();
     this.publish();
     this.options.onPreferencesChanged();
+    this.analytics.preferences(previous, next, source);
     return { success: true, state: this.getState() };
   }
 
   private toggleOrb(fromPointer: boolean): void {
     if (this.capturing) return;
+    this.analytics.report({ action: AnalyticsAction.Action, source: AnalyticsSource.Orb, interactionType: Interaction.Click });
     const closeOnly = fromPointer && this.orbPressVisible;
     this.orbPressVisible = false;
     if (closeOnly || this.panelVisible || this.results.state.visible) {
@@ -370,13 +386,13 @@ export class DesktopCompanionManager {
       return;
     }
     this.results.open();
-    if (!this.results.state.visible) this.showPanel();
+    if (!this.results.state.visible) this.showPanel(AnalyticsSource.Orb);
   }
 
-  togglePanel(): void {
+  togglePanel(source: AnalyticsSource = AnalyticsSource.Tray): void {
     if (this.capturing) return;
     if (this.panelVisible) this.hidePanel();
-    else this.showPanel();
+    else this.showPanel(source);
   }
 
   resetLanguageTools(): void { this.languageTools.reset(); }
@@ -394,6 +410,8 @@ export class DesktopCompanionManager {
     const now = Date.now();
     this.snooze = { mode, until: mode === DesktopCompanionSnoozeMode.Hidden ? now + DesktopCompanionTiming.SnoozeHourMs : endOfToday(now) };
     this.options.store.set(DesktopCompanionStoreKey.Snooze, this.snooze);
+    this.analytics.report({ action: AnalyticsAction.Action, source: AnalyticsSource.ContextMenu,
+      interactionType: Interaction.Pause, snoozeMode: mode });
     this.stage.clear();
     this.scheduleSnoozeWake();
     this.applyActivity();
@@ -538,12 +556,17 @@ export class DesktopCompanionManager {
       win.on('closed', () => { if (this.orb === win) this.orb = null; });
       win.once('ready-to-show', () => {
         if (this.disposing || win.isDestroyed() || !this.isPresent()) return;
+        const wasVisible = win.isVisible();
         win.showInactive();
+        if (!wasVisible) this.analytics.report({ action: AnalyticsAction.Action, source: AnalyticsSource.System,
+          interactionType: Interaction.Open, surface: DesktopCompanionSurface.Mascot, skin: this.preferences.skin });
         this.hints.scheduleWelcome();
       });
       this.orb = win;
     } else if (!this.orb.webContents.isLoadingMainFrame() && !this.orb.isVisible()) {
       this.orb.showInactive();
+      this.analytics.report({ action: AnalyticsAction.Action, source: AnalyticsSource.System,
+        interactionType: Interaction.Open, surface: DesktopCompanionSurface.Mascot, skin: this.preferences.skin });
     }
   }
 
@@ -607,12 +630,14 @@ export class DesktopCompanionManager {
 
   // ── Panel ─────────────────────────────────────────────────
 
-  private showPanel(): void {
+  private showPanel(source: AnalyticsSource = AnalyticsSource.System): void {
     const opening = !this.panelVisible || !this.panel || this.panel.isDestroyed();
     this.results.hide();
     const stageKind = this.stage.stage.kind;
     if (stageKind === DesktopCompanionStageKind.Hint || stageKind === DesktopCompanionStageKind.Task) this.stage.clear();
     if (!this.panelVisible) {
+      this.analytics.report({ action: AnalyticsAction.Action, source, interactionType: Interaction.Open,
+        surface: DesktopCompanionSurface.Panel, enabled: this.preferences.enabled });
       // Without the orb, the panel opens on the display in use and stays there while it is open.
       this.panelWorkArea = this.orbBounds() ? null : screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
     }
@@ -708,13 +733,13 @@ export class DesktopCompanionManager {
     if (prompt && !this.draft.prompt.trim()) {
       this.setDraft({ ...this.draft, prompt: t(prompt) });
     }
-    this.showPanel();
+    this.showPanel(AnalyticsSource.Hint);
   }
 
-  private openPanelWithAttachments(attachments: DesktopCompanionAttachment[]): void {
+  private openPanelWithAttachments(attachments: DesktopCompanionAttachment[], source: AnalyticsSource = AnalyticsSource.FileDrop): void {
     const files = [...new Map([...this.draft.attachments, ...attachments].map(file => [file.path, file])).values()].slice(0, 20);
     this.setDraft({ ...this.draft, attachments: files });
-    this.showPanel();
+    this.showPanel(source);
   }
 
   private async askScreenshot(): Promise<void> {
@@ -723,6 +748,7 @@ export class DesktopCompanionManager {
       await dialog.showMessageBox({ type: 'info', message: t('desktopCompanionScreenshotFull') });
       return;
     }
+    const finish = this.analytics.tool({ source: AnalyticsSource.ContextMenu, tool: CompanionAnalyticsTool.Screenshot });
     this.capturing = true;
     const restorePanel = this.panelVisible;
     this.hidePanel();
@@ -738,10 +764,11 @@ export class DesktopCompanionManager {
       failed = true;
       console.error('[DesktopCompanion] Screenshot failed', error);
     } finally {
+      finish(failed ? AnalyticsOutcome.Failed : attachment ? AnalyticsOutcome.Success : AnalyticsOutcome.Cancelled);
       this.capturing = false;
       if (!this.disposing) {
         this.applyActivity();
-        if (attachment) this.openPanelWithAttachments([attachment]);
+        if (attachment) this.openPanelWithAttachments([attachment], AnalyticsSource.ContextMenu);
         else if (restorePanel) this.showPanel();
       }
     }
@@ -827,7 +854,7 @@ export class DesktopCompanionManager {
     if (shortcut === this.registeredShortcut) return true;
     if (shortcut && !/(?:^|\+)(?:CommandOrControl|Command|Cmd|Control|Ctrl|Alt|Option)\+/i.test(shortcut)) return false;
     try {
-      if (shortcut && !globalShortcut.register(shortcut, () => this.togglePanel())) return false;
+      if (shortcut && !globalShortcut.register(shortcut, () => this.togglePanel(AnalyticsSource.Shortcut))) return false;
     } catch {
       return false;
     }
@@ -855,9 +882,13 @@ export class DesktopCompanionManager {
   }
 
   private showContextMenu(): void {
+    this.analytics.report({ action: AnalyticsAction.Action, source: AnalyticsSource.Orb, interactionType: Interaction.ContextMenu });
     const template: MenuItemConstructorOptions[] = [
-      { label: t('desktopCompanionOpenApp'), click: () => { this.hidePanel(); this.options.openMain(this.sessionId); } },
-      { label: t('desktopCompanionOpenPanel'), click: () => this.showPanel() },
+      { label: t('desktopCompanionOpenApp'), click: () => {
+        this.analytics.report({ action: AnalyticsAction.Action, source: AnalyticsSource.ContextMenu, interactionType: Interaction.OpenMain, hasSession: !!this.sessionId });
+        this.hidePanel(); this.options.openMain(this.sessionId);
+      } },
+      { label: t('desktopCompanionOpenPanel'), click: () => this.showPanel(AnalyticsSource.ContextMenu) },
       ...(isSpeechActive(this.languageTools.speechStatus)
         ? [{ label: t('desktopToolsPlayback'), click: () => this.languageTools.open({ tool: LanguageTool.Tts }) }]
         : []),
@@ -867,14 +898,17 @@ export class DesktopCompanionManager {
         label: t('desktopCompanionChangeSkin'),
         submenu: COMPANION_SKINS.map(skin => ({
           label: t(skin.nameKey), type: 'radio' as const, checked: this.preferences.skin === skin.id,
-          click: () => this.setPreferences({ skin: skin.id }),
+          click: () => this.setPreferences({ skin: skin.id }, AnalyticsSource.ContextMenu),
         })),
       },
       { type: 'separator' },
       this.snooze
         ? { label: t('desktopCompanionWake'), click: () => this.wake() }
         : { label: t('desktopCompanionSnoozeToday'), click: () => this.snoozeFor(DesktopCompanionSnoozeMode.Quiet) },
-      ...(this.options.openSettings ? [{ label: t('desktopCompanionSettings'), click: () => this.options.openSettings?.() }] : []),
+      ...(this.options.openSettings ? [{ label: t('desktopCompanionSettings'), click: () => {
+        this.analytics.report({ action: AnalyticsAction.Action, source: AnalyticsSource.ContextMenu, interactionType: Interaction.OpenSettings });
+        this.options.openSettings?.();
+      } }] : []),
     ];
     Menu.buildFromTemplate(template).popup({ window: this.panelVisible ? this.panel ?? undefined : this.orb ?? undefined });
   }
@@ -887,8 +921,21 @@ export class DesktopCompanionManager {
         return callback(value, event.sender);
       });
     };
+    handle(DesktopCompanionIpc.ReportAnalytics, (value, sender) => {
+      const event = normalizeCompanionAnalyticsEvent(value);
+      if (!event) return;
+      const source = this.analyticsSource(sender.id);
+      // Renderer-owned task/drop interactions only; native events have one owner.
+      if (event.action === AnalyticsAction.Task && [AnalyticsSource.Panel, AnalyticsSource.FileDrop, AnalyticsSource.Result].some(item => item === source)) {
+        this.analytics.report({ ...event, source });
+      } else if (event.action === AnalyticsAction.FileDrop && source === AnalyticsSource.FileDrop) {
+        this.analytics.report({ ...event, source });
+      } else if (event.action === AnalyticsAction.Action && event.interactionType === Interaction.Stop && source === AnalyticsSource.Result) {
+        this.analytics.report({ ...event, source });
+      }
+    });
     handle(DesktopCompanionIpc.GetState, () => this.getState());
-    handle(DesktopCompanionIpc.SetPreferences, value => this.setPreferences(value as Partial<DesktopCompanionPreferences>));
+    handle(DesktopCompanionIpc.SetPreferences, (value, sender) => this.setPreferences(value as Partial<DesktopCompanionPreferences>, this.analyticsSource(sender.id)));
     handle(DesktopCompanionIpc.GetSelectionExcludedApps, () => getCompanionSelectionApps(this.preferences.selectionExcludedApps));
     handle(DesktopCompanionIpc.SetDraft, value => { this.setDraft(value); return this.getState(); });
     handle(DesktopCompanionIpc.SelectSession, value => { this.selectSession(value); return this.getState(); });
@@ -899,7 +946,7 @@ export class DesktopCompanionManager {
       this.followTask(value.slice(0, 200));
     });
     handle(DesktopCompanionIpc.ToggleOrb, value => this.toggleOrb(value === true));
-    handle(DesktopCompanionIpc.TogglePanel, () => this.togglePanel());
+    handle(DesktopCompanionIpc.TogglePanel, (_value, sender) => this.togglePanel(this.analyticsSource(sender.id)));
     handle(DesktopCompanionIpc.HidePanel, () => this.hidePanel());
     handle(DesktopCompanionIpc.PanelReady, (value, sender) => {
       const win = this.panel;
@@ -913,13 +960,16 @@ export class DesktopCompanionManager {
       return true;
     });
     handle(DesktopCompanionIpc.OpenMain, (value, sender) => {
+      this.analytics.report({ action: AnalyticsAction.Action, source: this.analyticsSource(sender.id), interactionType: Interaction.OpenMain, hasSession: typeof value === 'string' && !!value });
       if (sender.id === this.selection.webContentsId) this.selection.hide();
       if (sender.id === this.results.webContentsId) this.results.hide();
       this.hidePanel();
       this.options.openMain(typeof value === 'string' ? value : null);
     });
-    handle(DesktopCompanionIpc.OpenMainPage, value => {
+    handle(DesktopCompanionIpc.OpenMainPage, (value, sender) => {
       if (value !== DesktopCompanionMainPage.Kits && value !== DesktopCompanionMainPage.Skills) return;
+      this.analytics.report({ action: AnalyticsAction.Action, source: this.analyticsSource(sender.id),
+        interactionType: value === DesktopCompanionMainPage.Kits ? Interaction.OpenKits : Interaction.OpenSkills });
       // Keep the destination until the main renderer is ready, including window recreation.
       this.pendingMainPage = value;
       this.hidePanel();
@@ -936,13 +986,21 @@ export class DesktopCompanionManager {
     handle(DesktopCompanionIpc.ContextMenu, () => this.showContextMenu());
     handle(DesktopCompanionIpc.StageCommand, value => this.stage.handleCommand(value as DesktopCompanionStageCommand));
     handle(DesktopCompanionIpc.SelectionCommand, value => this.selection.handleCommand(value as DesktopCompanionSelectionCommand));
-    handle(DesktopCompanionIpc.QuickAnswerStart, (value, sender) => this.quickAnswer.start(sender, value as CompanionQuickAnswerRequest));
+    handle(DesktopCompanionIpc.QuickAnswerStart, (value, sender) => this.quickAnswer.start(sender, value as CompanionQuickAnswerRequest, this.analyticsSource(sender.id)));
     handle(DesktopCompanionIpc.QuickAnswerAbort, value => { if (typeof value === 'string') this.quickAnswer.abort(value); });
     handle(DesktopCompanionIpc.RequestPermission, value => {
-      if (value === CompanionPermissionValue.Accessibility) this.selection.requestPermission();
+      if (value === CompanionPermissionValue.Accessibility) {
+        this.analytics.report({ action: AnalyticsAction.Action, source: AnalyticsSource.Settings, interactionType: Interaction.Permission });
+        this.selection.requestPermission();
+      }
       return this.getState();
     });
-    handle(DesktopCompanionIpc.CopyText, value => copyCompanionText(value));
+    handle(DesktopCompanionIpc.CopyText, (value, sender) => {
+      const result = copyCompanionText(value);
+      this.analytics.report({ action: AnalyticsAction.Action, source: this.analyticsSource(sender.id), interactionType: Interaction.Copy,
+        outcome: result.success ? AnalyticsOutcome.Success : AnalyticsOutcome.Failed });
+      return result;
+    });
 
     const on = (channel: string, callback: (value: unknown, senderId: number) => void) => {
       ipcMain.on(channel, (event, value: unknown) => {
@@ -966,6 +1024,7 @@ export class DesktopCompanionManager {
     on(DesktopCompanionIpc.PanelLoginVisible, (value, senderId) => {
       if (!this.panel || this.panel.isDestroyed() || senderId !== this.panel.webContents.id || typeof value !== 'boolean') return;
       if (this.panelLoginVisible === value) return;
+      if (value) this.analytics.report({ action: AnalyticsAction.Action, source: AnalyticsSource.Panel, interactionType: Interaction.LoginShown });
       this.panelLoginVisible = value;
       this.positionPanel();
     });
@@ -985,5 +1044,15 @@ export class DesktopCompanionManager {
       else if (senderId === this.languageTools.webContentsId) this.languageTools.setContentSize(size);
       else if (senderId === this.results.webContentsId) this.results.setContentSize(size);
     });
+  }
+
+  private analyticsSource(senderId: number): AnalyticsSource {
+    if (senderId === this.orb?.webContents.id) return AnalyticsSource.Orb;
+    if (senderId === this.panel?.webContents.id) return AnalyticsSource.Panel;
+    if (senderId === this.stage.webContentsId) return AnalyticsSource.FileDrop;
+    if (senderId === this.selection.webContentsId) return AnalyticsSource.Selection;
+    if (senderId === this.languageTools.webContentsId) return AnalyticsSource.LanguageTools;
+    if (senderId === this.results.webContentsId) return AnalyticsSource.Result;
+    return AnalyticsSource.Settings;
   }
 }

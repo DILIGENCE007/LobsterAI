@@ -1,6 +1,8 @@
 import type { WebContents } from 'electron';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { CompanionAnalyticsOutcome as Outcome, CompanionAnalyticsReason as Reason, CompanionAnalyticsSource as Source,
+  CompanionAnalyticsStage as Stage } from '../../shared/desktopCompanion/analytics';
 import { CompanionQuickAnswerErrorCode, CompanionQuickAnswerEventType, DesktopCompanionIpc } from '../../shared/desktopCompanion/constants';
 import { buildCompanionQuickAnswerPrompt, CompanionSelectionAction } from '../../shared/desktopCompanion/selectionActions';
 import { ApiFormat, ProviderName } from '../../shared/providers/constants';
@@ -100,6 +102,44 @@ describe('selection quick-answer authentication', () => {
 });
 
 describe('translation follow-up through quick answers', () => {
+  test.each([Outcome.Success, Outcome.Failed, Outcome.Cancelled])('reports a single %s result without selected text, model URL or streaming chunks', async outcome => {
+    const reportAnalytics = vi.fn();
+    let release!: (response: Response) => void;
+    const service = new CompanionQuickAnswerService({ getSessionKey: () => 'account-secret', reportAnalytics,
+      resolveModel: () => ({ protocol: CoworkModelProtocol.Anthropic, apiKey: upstreamKey, baseURL: 'https://private.example', model: 'model' }),
+      fetch: () => new Promise(resolve => { release = resolve; }),
+    });
+    const sender = { id: 31, isDestroyed: () => false, send: vi.fn() } as unknown as WebContents;
+    service.start(sender, { requestId: 'private-request', action: CompanionSelectionAction.Ask, text: 'private selection',
+      history: [{ role: 'user', content: 'private question' }] }, Source.LanguageTools);
+    if (outcome === Outcome.Cancelled) service.abortOwnedBy(sender.id);
+    release(outcome === Outcome.Failed ? new Response('private error', { status: 500 }) : new Response(
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"private answer"}}\n\n'
+      + 'data: {"type":"message_stop"}\n\n',
+    ));
+    await vi.waitFor(() => expect(reportAnalytics).toHaveBeenCalledTimes(2));
+    // Allow a cancelled transport's late completion to run before checking deduplication.
+    await new Promise(resolve => setTimeout(resolve, 10));
+    service.dispose();
+    expect(reportAnalytics.mock.calls.map(([event]) => event.stage)).toEqual([Stage.Submit, Stage.Result]);
+    expect(reportAnalytics.mock.lastCall?.[0]).toMatchObject({ outcome, source: Source.LanguageTools, isFollowUp: true });
+    expect(JSON.stringify(reportAnalytics.mock.calls)).not.toMatch(/private|account-secret|test-upstream-key/);
+  });
+
+  test('reports login and model preflight blocks as results', () => {
+    const reportAnalytics = vi.fn();
+    let session: string | null = null;
+    const service = new CompanionQuickAnswerService({ getSessionKey: () => session, reportAnalytics, resolveModel: () => null });
+    const sender = { id: 31 } as WebContents;
+    const request = { requestId: 'test', action: CompanionSelectionAction.Ask, text: 'private' };
+    service.start(sender, request);
+    session = 'account';
+    service.start(sender, request);
+    expect(reportAnalytics.mock.calls.map(([event]) => event).filter(event => event.stage === Stage.Result)).toEqual([
+      expect.objectContaining({ outcome: Outcome.Blocked, reason: Reason.LoginRequired }),
+      expect.objectContaining({ outcome: Outcome.Blocked, reason: Reason.NoModel }),
+    ]);
+  });
   test('sends the selection, translation and previous turns together and streams to the owning card', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(
       'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"另一种译法"}}\n\n'

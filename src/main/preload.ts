@@ -157,6 +157,7 @@ import { OpenClawSessionPolicyIpc } from './openclawSessionPolicy/constants';
 // 暴露安全的 API 到渲染进程
 contextBridge.exposeInMainWorld('electron', {
   desktopCompanion: {
+    reportAnalytics: event => ipcRenderer.invoke(DesktopCompanionIpc.ReportAnalytics, event),
     ...createLanguageToolsBridge(),
     openResult: sessionId => ipcRenderer.invoke(CompanionResultIpc.Open, sessionId),
     hideResult: () => ipcRenderer.invoke(CompanionResultIpc.Hide),
