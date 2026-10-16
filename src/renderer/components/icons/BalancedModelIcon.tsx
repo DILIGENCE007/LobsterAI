@@ -1,46 +1,22 @@
-/*!
- * Tabler Icons — scale
- * https://github.com/tabler/tabler-icons/blob/main/icons/outline/scale.svg
- *
- * MIT License
- * Copyright (c) 2020-2026 Paweł Kuna
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
 import React from 'react';
 
 const BalancedModelIcon: React.FC<{ className?: string }> = ({ className }) => (
   <svg
-    viewBox="0 0 24 24"
+    viewBox="0 0 34 34"
     className={className}
     fill="none"
-    stroke="currentColor"
-    strokeWidth="1.8"
+    stroke="#277AFA"
+    strokeWidth="3"
     strokeLinecap="round"
-    strokeLinejoin="round"
     aria-hidden="true"
   >
-    <path d="M7 20l10 0" />
-    <path d="M6 6l6 -1l6 1" />
-    <path d="M12 3l0 17" />
-    <path d="M9 12l-3 -6l-3 6a3 3 0 0 0 6 0" />
-    <path d="M21 12l-3 -6l-3 6a3 3 0 0 0 6 0" />
+    <path d="M4.13513 8.59863H29.8649" />
+    <path d="M17.0038 4.13525L17.0038 29.865" />
+    <path d="M23.054 29.8647H10.9459" />
+    <path d="M3.2731 21.6914L7.38769 9.34766L11.8579 21.5393C12.0779 22.1392 11.9692 22.8283 11.4774 23.2362C9.03231 25.2642 5.41663 24.9999 3.55122 23.1737C3.16185 22.7925 3.10078 22.2084 3.2731 21.6914Z" strokeLinejoin="round" />
+    <path d="M11.75 20.8042H3.75V23.2529L7.75 25.0894L11.25 23.865L11.75 20.8042Z" fill="#277AFA" stroke="none" />
+    <path d="M30.75 20.8042H22.75V23.2529L26.75 25.0894L30.25 23.865L30.75 20.8042Z" fill="#277AFA" stroke="none" />
+    <path d="M22.059 21.6914L26.1735 9.34766L30.6438 21.5393C30.8638 22.1392 30.7551 22.8283 30.2633 23.2362C27.8182 25.2642 24.2025 24.9999 22.3371 23.1737C21.9477 22.7925 21.8866 22.2084 22.059 21.6914Z" strokeLinejoin="round" />
   </svg>
 );
 

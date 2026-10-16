@@ -10,8 +10,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
     modelPresetBalanced: '均衡',
     modelPresetUltimate: '旗舰',
-    modelPresetBalancedDescription: '兼顾速度与质量，适合大多数日常工作',
-    modelPresetUltimateDescription: '优先深度与准确性，适合复杂分析和高要求任务',
+    modelPresetBalancedDescription: '速度与效果均衡，高效胜任日常工作',
+    modelPresetUltimateDescription: '全能旗舰，擅长深度推理与精准分析',
     modelPresetThinkingDefault: '模型默认',
     modelPresetLoginRequired: '请登录后选择模型模式。',
     modelPresetInvalidSession: '无效的聊天模型模式或会话。',
@@ -4556,8 +4556,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
   en: {
     modelPresetBalanced: 'Balanced',
     modelPresetUltimate: 'Flagship',
-    modelPresetBalancedDescription: 'Balances speed and quality for most everyday work',
-    modelPresetUltimateDescription: 'Prioritizes depth and accuracy for complex analysis and demanding tasks',
+    modelPresetBalancedDescription: 'Balances speed and quality to handle everyday work efficiently',
+    modelPresetUltimateDescription: 'An all-round flagship for deep reasoning and precise analysis',
     modelPresetThinkingDefault: 'Model default',
     modelPresetLoginRequired: 'Sign in to choose a model preset.',
     modelPresetInvalidSession: 'Invalid chat model preset or session.',
