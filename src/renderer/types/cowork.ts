@@ -22,6 +22,7 @@ import type {
   KitReference,
   ResolvedKitCapabilities,
 } from '../../shared/kit/constants';
+import type { MediaSelection } from '../../shared/media/defaultPolicy';
 import { type ModelPresetId } from '../../shared/modelPresets/constants';
 import type {
   OpenClawConfigApplyPendingReason,
@@ -437,6 +438,7 @@ export interface CoworkStartOptions {
   systemPrompt?: string;
   title?: string;
   activeSkillIds?: string[];
+  inheritedSkillIds?: string[];
   runtimeSkillIds?: string[];
   kitIds?: string[];
   kitReferences?: KitReference[];
@@ -446,7 +448,7 @@ export interface CoworkStartOptions {
   modelPresetId?: ModelPresetId;
   thinkingLevel?: ModelThinkingLevel;
   imageAttachments?: CoworkImageAttachment[];
-  mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
+  mediaSelection?: MediaSelection;
   mediaReferences?: import('./mediaGeneration').MediaAttachmentRef[];
   selectedTextSnippets?: CoworkSelectedTextSnippet[];
   browserAnnotations?: CoworkBrowserAnnotationMessageBatch[];
@@ -459,12 +461,13 @@ export interface CoworkContinueOptions {
   prompt: string;
   systemPrompt?: string;
   activeSkillIds?: string[];
+  inheritedSkillIds?: string[];
   runtimeSkillIds?: string[];
   kitIds?: string[];
   kitReferences?: KitReference[];
   resolvedKitCapabilities?: ResolvedKitCapabilities;
   imageAttachments?: CoworkImageAttachment[];
-  mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
+  mediaSelection?: MediaSelection;
   mediaReferences?: import('./mediaGeneration').MediaAttachmentRef[];
   selectedTextSnippets?: CoworkSelectedTextSnippet[];
   browserAnnotations?: CoworkBrowserAnnotationMessageBatch[];

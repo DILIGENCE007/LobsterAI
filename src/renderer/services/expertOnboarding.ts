@@ -28,7 +28,7 @@ export function switchExpertInDraft(agentId: string, prompt: string): boolean {
   coworkService.clearSession();
   agentService.switchAgent(agent.id);
   store.dispatch(setSidebarRevealAgentId(agent.id));
-  store.dispatch(setDraftSkillIds({ draftKey: EXPERT_HOME_DRAFT_KEY, skillIds: agent.skillIds }));
+  store.dispatch(setDraftSkillIds({ draftKey: EXPERT_HOME_DRAFT_KEY, skillIds: agent.skillIds, inheritedSkillIds: agent.skillIds }));
   store.dispatch(setDraftPrompt({ sessionId: EXPERT_HOME_DRAFT_KEY, draft: prompt }));
   prepareExpertAnalytics(agent.id, agent.presetId, { entry: UsageEntry.Picker });
   return true;
@@ -45,7 +45,7 @@ export function openExpertDraft(agent: Agent, prompt: string): void {
   store.dispatch(clearDraftSelectedTextSnippets(EXPERT_HOME_DRAFT_KEY));
   store.dispatch(clearDraftBrowserAnnotationBatches(EXPERT_HOME_DRAFT_KEY));
   store.dispatch(setDraftKitIds({ draftKey: EXPERT_HOME_DRAFT_KEY, kitIds: [] }));
-  store.dispatch(setDraftSkillIds({ draftKey: EXPERT_HOME_DRAFT_KEY, skillIds: agent.skillIds }));
+  store.dispatch(setDraftSkillIds({ draftKey: EXPERT_HOME_DRAFT_KEY, skillIds: agent.skillIds, inheritedSkillIds: agent.skillIds }));
   store.dispatch(setDraftCollaborationMode({ draftKey: EXPERT_HOME_DRAFT_KEY, mode: CoworkCollaborationMode.Default }));
   store.dispatch(setDraftPrompt({ sessionId: EXPERT_HOME_DRAFT_KEY, draft: prompt }));
 }

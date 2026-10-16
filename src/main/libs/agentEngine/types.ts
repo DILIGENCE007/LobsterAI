@@ -14,6 +14,7 @@ import type {
   KitReference,
   ResolvedKitCapabilities,
 } from '../../../shared/kit/constants';
+import type { MediaSelection } from '../../../shared/media/defaultPolicy';
 import type { SkinWorkflowKind } from '../../../shared/skin/constants';
 import type { CoworkMessage, CoworkSessionStatus } from '../../coworkStore';
 
@@ -98,13 +99,7 @@ export type CoworkMediaAttachmentRef = {
   role?: 'first_frame' | 'last_frame' | 'reference_image' | 'reference_video' | 'reference_audio';
 };
 
-export type CoworkMediaSelection = {
-  mode: 'auto' | 'image' | 'video' | 'none';
-  modelId?: string;
-  modelName?: string;
-  imageModelId?: string;
-  videoModelId?: string;
-};
+export type CoworkMediaSelection = MediaSelection;
 
 export type CoworkStartOptions = {
   analytics?: UsageContext;

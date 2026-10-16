@@ -50,6 +50,7 @@ export interface CoworkStartRequestInput {
   kitIds: string[];
   /** The selected skills and kits, resolved with buildCoworkCapabilitySelection. */
   capabilities: CoworkCapabilitySelection;
+  inheritedSkillIds?: string[];
   collaborationMode: CoworkCollaborationMode;
   cwd: string;
   agentId: string;
@@ -95,6 +96,7 @@ export function buildCoworkStartPlan(input: CoworkStartRequestInput): CoworkStar
       // selected skills' prompt is combined with the configured system prompt.
       systemPrompt: buildCoworkSystemPrompt(input.skillPrompt, input.configSystemPrompt),
       activeSkillIds: directSkillIds.length > 0 ? directSkillIds : undefined,
+      inheritedSkillIds: input.inheritedSkillIds,
       runtimeSkillIds: isPlanMode ? [] : (effectiveRuntimeSkillIds.length > 0 ? effectiveRuntimeSkillIds : undefined),
       kitIds: displayKitIds.length > 0 ? displayKitIds : undefined,
       kitReferences: displayKitIds.length > 0 ? kitReferences : undefined,
@@ -104,7 +106,7 @@ export function buildCoworkStartPlan(input: CoworkStartRequestInput): CoworkStar
       modelPresetId: input.modelPresetId,
       thinkingLevel: input.thinkingLevel,
       imageAttachments: input.imageAttachments,
-      mediaSelection: input.mediaSelection && input.mediaSelection.mode !== 'none' ? input.mediaSelection : undefined,
+      mediaSelection: input.mediaSelection,
       mediaReferences: input.mediaReferences,
       selectedTextSnippets: input.selectedTextSnippets,
       browserAnnotations: input.browserAnnotations,

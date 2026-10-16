@@ -20,7 +20,7 @@ import { coworkService } from '../../services/cowork';
 import { buildCoworkCapabilitySelection } from '../../services/coworkCapabilitySelection';
 import { i18nService } from '../../services/i18n';
 import { quickActionService } from '../../services/quickAction';
-import { RootState } from '../../store';
+import { RootState, store } from '../../store';
 import {
   selectCurrentSession,
   selectIsStreaming,
@@ -413,6 +413,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         configSystemPrompt: config.systemPrompt,
         kitIds: sessionKitIds,
         capabilities,
+        inheritedSkillIds: store.getState().cowork.draftInheritedSkillIds.__home__,
         collaborationMode,
         cwd: currentAgentWorkingDirectory,
         agentId: currentAgentId,
@@ -630,12 +631,13 @@ const CoworkView: React.FC<CoworkViewProps> = ({
         prompt,
         systemPrompt: combinedSystemPrompt,
         activeSkillIds: displayDirectSkillIds.length > 0 ? displayDirectSkillIds : undefined,
+        inheritedSkillIds: store.getState().cowork.draftInheritedSkillIds[currentSession.id],
         runtimeSkillIds: isPlanMode ? [] : (effectiveRuntimeSkillIds.length > 0 ? effectiveRuntimeSkillIds : undefined),
         kitIds: displayKitIds.length > 0 ? displayKitIds : undefined,
         kitReferences: displayKitIds.length > 0 ? kitReferences : undefined,
         resolvedKitCapabilities: displayKitIds.length > 0 ? resolvedKitCapabilities : undefined,
         imageAttachments,
-        mediaSelection: mediaSelection && mediaSelection.mode !== 'none' ? mediaSelection : undefined,
+        mediaSelection,
         mediaReferences,
         selectedTextSnippets,
         browserAnnotations,

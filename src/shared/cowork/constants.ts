@@ -75,6 +75,8 @@ export const CoworkIpcChannel = {
   StreamPermissionDismiss: 'cowork:stream:permissionDismiss',
   CancelMediaTask: 'cowork:media:cancel',
   GetMediaModels: 'media:getModels',
+  GetMediaPreferences: 'media:getPreferences',
+  SetMediaPreference: 'media:setPreference',
   MediaStatusPollUpdate: 'cowork:media:statusPollUpdate',
   ForkSession: 'cowork:session:fork',
   DeleteSession: 'cowork:session:delete',
