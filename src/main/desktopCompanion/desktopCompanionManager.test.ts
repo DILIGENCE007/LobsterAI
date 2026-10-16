@@ -70,9 +70,9 @@ vi.mock('electron', async () => {
     setBounds(value: any) { this.bounds = value; }
     setFocusable(value: boolean) { this.focusable = value; }
     setIgnoreMouseEvents(value: boolean) { this.ignoreMouse = value; }
-    show() { this.visible = true; }
-    showInactive() { this.visible = true; }
-    hide() { this.visible = false; this.emit('hide'); }
+    show() { if (!this.visible) { this.visible = true; this.emit('show'); } }
+    showInactive() { this.show(); }
+    hide() { this.visible = false; this.focused = false; this.emit('hide'); }
     focus() { this.focused = true; this.emit('focus'); }
     blur() { this.focused = false; this.emit('blur'); }
     setMenu() {}
@@ -272,6 +272,120 @@ describe('orb edge snapping', () => {
     drag(DesktopCompanionDragPhase.End, cursorX, 430);
     expect(orb().bounds).toMatchObject({ x: edgeX, y: 400 });
     expect(values.get(DesktopCompanionStoreKey.Position)).toEqual({ x: edgeX, y: 400 });
+  });
+
+  describe('task bubbles across displays', () => {
+    const primary = { x: 0, y: 0, width: 1280, height: 900 };
+    const externalDisplays = [
+      { x: 1280, y: 25, width: 1920, height: 1055 },
+      { x: -1920, y: 25, width: 1920, height: 1055 },
+      { x: 0, y: -1080, width: 1920, height: 1080 },
+      { x: 0, y: 900, width: 1920, height: 1080 },
+    ];
+
+    function connectDisplay(external: typeof primary) {
+      const displayAt = ({ x, y }: { x: number; y: number }) => ({
+        workArea: x >= external.x && x < external.x + external.width
+          && y >= external.y && y < external.y + external.height ? external : primary,
+      }) as Electron.Display;
+      vi.spyOn(screen, 'getDisplayNearestPoint').mockImplementation(displayAt);
+      vi.spyOn(screen, 'getDisplayMatching').mockImplementation(bounds => displayAt({
+        x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2,
+      }));
+    }
+
+    function openTaskBubble() {
+      values.set(DesktopCompanionStoreKey.Position, { x: 1100, y: 300 });
+      values.set(DesktopCompanionStoreKey.Session, 'task');
+      create();
+      ipcMain.emit(DesktopCompanionIpc.TaskUpdated, { sender: orb().webContents, senderFrame: orb().webContents.mainFrame });
+      return mocks.windows.at(-1);
+    }
+
+    test.each(externalDisplays)('opens the shortcut composer to the left after dragging onto a display at $x, $y', external => {
+      connectDisplay(external);
+      create();
+      const shortcut = vi.mocked(globalShortcut.register).mock.calls[0][1];
+      // Start on the laptop, then reuse the same composer on the external display.
+      shortcut();
+      const panel = mocks.windows.at(-1);
+      readyPanel(panel);
+      shortcut();
+      drag(DesktopCompanionDragPhase.Start, 230);
+      const cursor = { x: external.x + 530, y: external.y + 430 };
+      drag(DesktopCompanionDragPhase.Move, cursor.x, cursor.y);
+      drag(DesktopCompanionDragPhase.End, cursor.x, cursor.y);
+      shortcut();
+      expect(mocks.windows.at(-1)).toBe(panel);
+      expect(readyPanel(panel)).toBe(true);
+      expect(panel.visible).toBe(true);
+      expect(panel.focused).toBe(true);
+      expect(manager.getState().panelPlacement).toBe(DesktopCompanionPanelPlacement.Left);
+      expect(panel.bounds.x + panel.bounds.width - DesktopCompanionSize.SurfacePad).toBe(orb().bounds.x);
+      expect(panel.bounds.x).toBeGreaterThanOrEqual(external.x);
+      expect(panel.bounds.y).toBeGreaterThanOrEqual(external.y);
+      expect(panel.bounds.y + panel.bounds.height).toBeLessThanOrEqual(external.y + external.height);
+      shortcut();
+      shortcut();
+      expect(readyPanel(panel)).toBe(true);
+      expect(manager.getState().panelPlacement).toBe(DesktopCompanionPanelPlacement.Left);
+    });
+
+    test.each(externalDisplays)('follows the orb live onto a display at $x, $y and keeps its left placement on reopen', external => {
+      connectDisplay(external);
+      const result = openTaskBubble();
+      const pad = DesktopCompanionSize.SurfacePad;
+      expect(result.bounds.x + result.bounds.width - pad).toBe(orb().bounds.x);
+      drag(DesktopCompanionDragPhase.Start, 1130);
+      // There is room to the left, even though the orb is on the external display's left half.
+      const cursor = { x: external.x + 530, y: external.y + 430 };
+      drag(DesktopCompanionDragPhase.Move, cursor.x, cursor.y);
+      expect(result.bounds.x).toBeGreaterThanOrEqual(external.x);
+      expect(result.bounds.y).toBeGreaterThanOrEqual(external.y);
+      expect(result.bounds.y + result.bounds.height).toBeLessThanOrEqual(external.y + external.height);
+      expect(result.bounds.x + result.bounds.width - pad).toBe(orb().bounds.x);
+      expect(result.visible).toBe(true);
+      drag(DesktopCompanionDragPhase.End, cursor.x, cursor.y);
+      const bounds = { ...result.bounds };
+      invoke(CompanionResultIpc.Hide, undefined, result.webContents);
+      invoke(CompanionResultIpc.Open);
+      expect(result.bounds).toEqual(bounds);
+      // A resize after reopening must still use the orb's current display.
+      ipcMain.emit(DesktopCompanionIpc.ResizeSurface,
+        { sender: result.webContents, senderFrame: result.webContents.mainFrame }, { width: 374, height: 220 });
+      expect(result.bounds.x + result.bounds.width - pad).toBe(orb().bounds.x);
+      drag(DesktopCompanionDragPhase.Start, cursor.x, cursor.y);
+      drag(DesktopCompanionDragPhase.Move, 1130);
+      expect(result.bounds.x + result.bounds.width - pad).toBe(orb().bounds.x);
+      expect(result.bounds.y).toBeGreaterThanOrEqual(primary.y);
+      drag(DesktopCompanionDragPhase.End, 1130);
+    });
+
+    test('keeps a manually detached task bubble on its own display when the orb crosses screens', () => {
+      connectDisplay(externalDisplays[0]);
+      const result = openTaskBubble();
+      result.emit('will-move');
+      result.bounds = { ...result.bounds, x: 300, y: 200 };
+      const bounds = { ...result.bounds };
+      drag(DesktopCompanionDragPhase.Start, 1130);
+      drag(DesktopCompanionDragPhase.Move, 1810, 455);
+      drag(DesktopCompanionDragPhase.End, 1810, 455);
+      expect(result.bounds).toEqual(bounds);
+      expect(manager.getState().result.pinned).toBe(true);
+    });
+
+    test('keeps a bubble opened without an orb on its initial display when the cursor changes screens', () => {
+      connectDisplay(externalDisplays[0]);
+      values.set(DesktopCompanionStoreKey.Preferences, { enabled: false });
+      values.set(DesktopCompanionStoreKey.Session, 'task');
+      create();
+      invoke(CompanionResultIpc.Open);
+      const result = mocks.windows.at(-1);
+      const bounds = { ...result.bounds };
+      vi.spyOn(screen, 'getCursorScreenPoint').mockReturnValue({ x: 1810, y: 455 });
+      screen.emit('display-metrics-changed');
+      expect(result.bounds).toEqual(bounds);
+    });
   });
 });
 
@@ -1789,6 +1903,36 @@ describe('stage: hints and drops', () => {
     ipcMain.emit(DesktopCompanionIpc.TaskUpdated, { sender: orb().webContents, senderFrame: orb().webContents.mainFrame });
     expect(manager.getState().panelVisible).toBe(true);
     expect(manager.getState().result.visible).toBe(false);
+  });
+
+  test('macOS task bubbles stay visible after submission and reappear on completion without focus', () => {
+    vi.useFakeTimers();
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    values.set(DesktopCompanionStoreKey.Preferences, { enabled: true });
+    create();
+    getTaskInfo.mockReturnValue({ id: 'task', title: 'Task', status: CoworkSessionStatusValue.Running, updatedAt: 1000 });
+    manager.togglePanel();
+    const panel = mocks.windows.at(-1);
+    readyPanel(panel);
+    invoke(DesktopCompanionIpc.TaskStarted, 'task', panel.webContents);
+    const result = mocks.windows.at(-1);
+    vi.advanceTimersByTime(5_000);
+    expect(manager.getState()).toMatchObject({ panelVisible: false, result: { visible: true } });
+    expect(result).toMatchObject({ visible: true, focused: false, focusable: false });
+
+    // Open a follow-up, then close it by clicking outside before the task finishes.
+    invoke(CompanionResultIpc.Open, undefined, result.webContents);
+    expect(result.focused).toBe(true);
+    result.blur();
+    vi.advanceTimersByTime(300);
+    expect(manager.getState().result.visible).toBe(false);
+    getTaskInfo.mockReturnValue({ id: 'task', title: 'Task', status: CoworkSessionStatusValue.Completed, updatedAt: 2000 });
+    ipcMain.emit(DesktopCompanionIpc.TaskUpdated, { sender: orb().webContents, senderFrame: orb().webContents.mainFrame });
+    vi.advanceTimersByTime(5_000);
+    expect(manager.getState().result.visible).toBe(true);
+    expect(result).toMatchObject({ visible: true, focused: false, focusable: false });
+    expect(invoke(CompanionResultIpc.Recent)).toMatchObject([{ id: 'task', status: CoworkSessionStatusValue.Completed }]);
+    expect(openMain).not.toHaveBeenCalled();
   });
 
   test('LobsterAI itself coming to the front keeps the context of the app the user came from', () => {

@@ -9,6 +9,7 @@ import {
   resolveCompanionCardBounds,
   resolveCompanionComposerLayout,
   resolveCompanionLoginLayout,
+  resolveCompanionResultBounds,
   resolveCompanionStageBounds,
   resolveCompanionToolbarBounds,
   resolveCompanionToolbarMenuBounds,
@@ -88,6 +89,39 @@ describe('orb placement', () => {
 describe('surfaces around the orb', () => {
   const area = { x: 0, y: 25, width: 1440, height: 875 };
 
+  describe('task bubbles', () => {
+    const size = { width: DesktopCompanionSize.ResultCompactWidth, height: 160 };
+    const pad = DesktopCompanionSize.SurfacePad;
+
+    test.each([-1920, 0, 1440])('stays left when it fits, including on the left half of a display at x=%i', x => {
+      const workArea = { ...area, x };
+      for (const offset of [size.width - pad, 500, 1100]) {
+        const anchor = { ...orb, x: x + offset, y: 300 };
+        const bounds = resolveCompanionResultBounds(anchor, size, workArea);
+        expect(bounds.x + bounds.width - pad).toBe(anchor.x);
+        expect(bounds.y + bounds.height).toBe(anchor.y + anchor.height + pad / 2);
+        expect(bounds).toEqual(clampCompanionBounds(bounds, workArea));
+      }
+    });
+
+    test('uses the right only when the left cannot fit and remains visible at screen corners', () => {
+      for (const position of [{ x: 0, y: 25 }, { x: size.width - pad - 1, y: 800 }]) {
+        const anchor = { ...orb, ...position };
+        const bounds = resolveCompanionResultBounds(anchor, size, area);
+        expect(bounds.x + pad).toBe(anchor.x + anchor.width);
+        expect(bounds).toEqual(clampCompanionBounds(bounds, area));
+      }
+    });
+
+    test('keeps the existing centered placement without an orb and clamps on a narrow display', () => {
+      expect(resolveCompanionResultBounds(null, size, area))
+        .toEqual(resolveCompanionComposerLayout(null, size, { above: 0, side: 0 }, area).bounds);
+      const narrow = { x: -300, y: 0, width: 300, height: 200 };
+      const bounds = resolveCompanionResultBounds({ ...orb, x: -150, y: 100 }, size, narrow);
+      expect(bounds).toEqual(clampCompanionBounds(bounds, narrow));
+    });
+  });
+
   describe('composer', () => {
     const pad = DesktopCompanionSize.SurfacePad;
     const card = { width: DesktopCompanionSize.Composer.width + pad * 2, height: 230 + pad * 2 };
@@ -110,6 +144,18 @@ describe('surfaces around the orb', () => {
       expect(placement).toBe(DesktopCompanionPanelPlacement.Right);
       expect(bounds.x + pad).toBe(left.x + left.width);
       expect(bounds.width).toBe(card.width + room.side);
+    });
+
+    test.each([-1920, 0, 1440])('prefers the left when the card fits on a display at x=%i, even without room for all menus', x => {
+      const workArea = { ...area, x, width: 2560 };
+      for (const offset of [card.width - pad, 500, 1100]) {
+        const anchor = { ...orb, x: x + offset, y: 700 };
+        const { bounds, placement } = resolveCompanionComposerLayout(anchor, card, room, workArea);
+        expect(placement).toBe(DesktopCompanionPanelPlacement.Left);
+        expect(bounds.x + bounds.width - pad).toBe(anchor.x);
+        expect(bounds.width).toBeGreaterThanOrEqual(card.width);
+        expect(bounds).toEqual(clampCompanionBounds(bounds, workArea));
+      }
     });
 
     test('keeps the card in place and trims the room near the screen edges', () => {

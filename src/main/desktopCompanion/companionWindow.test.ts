@@ -9,6 +9,7 @@ vi.mock('electron', () => ({ BrowserWindow: vi.fn() }));
 class ComposerWindow extends EventEmitter {
   visible = false;
   focused = false;
+  focusable = true;
   enabled = true;
   destroyed = false;
   children: ComposerWindow[] = [];
@@ -19,6 +20,7 @@ class ComposerWindow extends EventEmitter {
   isModal = () => true;
   getChildWindows = () => this.children;
   show() { this.visible = true; this.focused = true; this.emit('show'); }
+  showInactive() { this.visible = true; this.focused = false; this.emit('show'); }
   hide() { this.visible = false; this.emit('hide'); }
 }
 
@@ -30,7 +32,7 @@ beforeEach(() => {
   vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
   win = new ComposerWindow();
   dismiss = vi.fn(() => win.hide());
-  dismissCompanionPanelOnBlur(win as unknown as BrowserWindow, dismiss);
+  dismissCompanionPanelOnBlur(win as unknown as BrowserWindow, dismiss, () => win.focusable);
 });
 
 afterEach(() => {
@@ -40,6 +42,34 @@ afterEach(() => {
 });
 
 describe('composer outside dismissal', () => {
+  test('an automatic task notification stays visible without taking focus', () => {
+    win.focusable = false;
+    win.showInactive();
+    vi.advanceTimersByTime(5_000);
+    expect(dismiss).not.toHaveBeenCalled();
+    expect(win.visible).toBe(true);
+    expect(win.focused).toBe(false);
+
+    // A stale blur must not dismiss a window switched back to notification mode.
+    win.emit('blur');
+    vi.advanceTimersByTime(300);
+    expect(dismiss).not.toHaveBeenCalled();
+  });
+
+  test('opening a follow-up enables outside dismissal on an already visible notification', () => {
+    win.focusable = false;
+    win.showInactive();
+    vi.advanceTimersByTime(500);
+    win.focusable = true;
+    win.focused = true;
+    win.emit('focus');
+    vi.advanceTimersByTime(500);
+    expect(dismiss).not.toHaveBeenCalled();
+    win.focused = false;
+    vi.advanceTimersByTime(300);
+    expect(dismiss).toHaveBeenCalledOnce();
+  });
+
   test('a macOS panel closes after losing key focus without a blur event', () => {
     win.show();
     vi.advanceTimersByTime(500);

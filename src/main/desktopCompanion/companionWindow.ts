@@ -18,8 +18,8 @@ export interface CompanionWindowOptions {
 
 const PANEL_BLUR_DELAY_MS = 120;
 
-/** Dismiss an inactive composer, preserving native file pickers and brief focus handoffs. */
-export function dismissCompanionPanelOnBlur(win: BrowserWindow, dismiss: () => void): void {
+/** Dismiss interactive panels on blur, preserving passive notifications and native dialogs. */
+export function dismissCompanionPanelOnBlur(win: BrowserWindow, dismiss: () => void, shouldDismiss = () => true): void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let focusTimer: ReturnType<typeof setInterval> | undefined;
   let sheetOpen = false;
@@ -30,7 +30,7 @@ export function dismissCompanionPanelOnBlur(win: BrowserWindow, dismiss: () => v
     // sheet/disabled-owner state before deciding this was an outside click.
     timer = setTimeout(() => {
       timer = undefined;
-      if (win.isDestroyed() || !win.isVisible() || win.isFocused() || sheetOpen || !win.isEnabled()) return;
+      if (win.isDestroyed() || !win.isVisible() || !shouldDismiss() || win.isFocused() || sheetOpen || !win.isEnabled()) return;
       if (win.getChildWindows().some(child => !child.isDestroyed() && child.isVisible() && child.isModal())) return;
       dismiss();
     }, PANEL_BLUR_DELAY_MS);
@@ -42,13 +42,14 @@ export function dismissCompanionPanelOnBlur(win: BrowserWindow, dismiss: () => v
   };
   // macOS nonactivating panels can lose key-window status without resigning
   // main-window status (the source of Electron's blur event). Check key focus
-  // only while this composer is shown; showing it always requests focus.
+  // only while shown. Task notifications intentionally cannot take focus;
+  // opening a follow-up makes the same visible window focusable again.
   const watchFocus = () => {
     stop();
     if (process.platform !== 'darwin') return;
     focusTimer = setInterval(() => {
       if (win.isDestroyed() || !win.isVisible()) { stop(); return; }
-      if (win.isFocused()) cancel();
+      if (!shouldDismiss() || win.isFocused()) cancel();
       else scheduleDismiss();
     }, PANEL_BLUR_DELAY_MS);
   };

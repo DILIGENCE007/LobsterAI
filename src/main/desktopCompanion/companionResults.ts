@@ -3,7 +3,7 @@ import { type BrowserWindow, ipcMain, type Rectangle, screen } from 'electron';
 import { CoworkSessionStatusValue } from '../../renderer/types/cowork';
 import { CompanionAnalyticsAction, CompanionAnalyticsInteraction as Interaction, CompanionAnalyticsSource, CompanionAnalyticsStage } from '../../shared/desktopCompanion/analytics';
 import { type CompanionSurfaceSize, DesktopCompanionSize } from '../../shared/desktopCompanion/constants';
-import { clampCompanionBounds, resolveCompanionComposerLayout } from '../../shared/desktopCompanion/geometry';
+import { clampCompanionBounds, resolveCompanionResultBounds } from '../../shared/desktopCompanion/geometry';
 import {
   COMPANION_RECENT_TASK_LIMIT, COMPANION_RECENT_TASKS_KEY, type CompanionRecentTask,
   CompanionResultIpc, type CompanionResultState, type CompanionTaskInfo, type CompanionTaskRecord,
@@ -151,7 +151,7 @@ export class CompanionResultsController {
       const win = this.host.createWindow();
       this.window = win;
       win.once('ready-to-show', () => { if (this.visible && !win.isDestroyed()) this.reveal(win); });
-      dismissCompanionPanelOnBlur(win, () => { if (!this.pinned && !this.host.isCapturing()) this.hide(); });
+      dismissCompanionPanelOnBlur(win, () => { if (!this.pinned && !this.host.isCapturing()) this.hide(); }, () => this.focusOnShow);
       win.on('will-move', () => { this.moved = true; this.pinned = true; this.host.publish(); });
       // A native hide notification can arrive after a rapid reopen.
       win.on('hide', () => { if (!win.isVisible()) this.hide(); });
@@ -194,10 +194,12 @@ export class CompanionResultsController {
   reposition(): void {
     const win = this.browserWindow;
     if (!win || !this.workArea) return;
-    this.workArea = screen.getDisplayMatching(this.moved ? win.getBounds() : this.workArea).workArea;
+    const orb = this.host.getOrbBounds();
+    // Attached bubbles follow the orb across displays; detached/standalone cards keep their own display.
+    this.workArea = screen.getDisplayMatching(this.moved ? win.getBounds() : orb ?? this.workArea).workArea;
     const bounds = this.moved
       ? clampCompanionBounds({ ...win.getBounds(), ...this.size }, this.workArea)
-      : resolveCompanionComposerLayout(this.host.getOrbBounds(), this.size, { above: 0, side: 0 }, this.workArea).bounds;
+      : resolveCompanionResultBounds(orb, this.size, this.workArea);
     win.setBounds(bounds);
   }
 
