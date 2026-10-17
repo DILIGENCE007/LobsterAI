@@ -800,10 +800,6 @@ const normalizeBaseUrlPath = (rawBaseUrl: string, pathName: string): string => {
  * Strip the `/chat/completions` endpoint suffix from a base URL so that the
  * OpenClaw gateway can append its own path without duplication.
  *
- * Aligned with the detection logic in `buildOpenAIChatCompletionsURL`
- * (coworkFormatTransform.ts) which returns the URL as-is when it already
- * ends with `/chat/completions`.
- *
  * e.g. "https://gw.example.com/v1/chat/completions" → "https://gw.example.com/v1"
  *      "https://gw.example.com/v1"                   → "https://gw.example.com/v1"  (unchanged)
  */

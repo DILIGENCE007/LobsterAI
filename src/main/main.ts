@@ -367,11 +367,6 @@ import {
 } from './libs/copilotTokenManager';
 import { getCoworkLogPath } from './libs/coworkLogger';
 import {
-  registerProxyTokenRefresher,
-  startCoworkOpenAICompatProxy,
-  stopCoworkOpenAICompatProxy,
-} from './libs/coworkOpenAICompatProxy';
-import {
   type CoworkTempJanitor,
   createCoworkTempJanitor,
   ensureCoworkTempGitignore,
@@ -15404,11 +15399,6 @@ if (!gotTheLock) {
       });
     }
 
-    currentAppCleanupStep = 'openai-compat-proxy';
-    await stopCoworkOpenAICompatProxy().catch(error => {
-      console.error('Failed to stop OpenAI compatibility proxy:', error);
-    });
-
     currentAppCleanupStep = 'copilot-loopback-proxy';
     await stopCopilotLoopbackProxy().catch(error => {
       console.error('Failed to stop Copilot loopback proxy:', error);
@@ -15722,17 +15712,6 @@ if (!gotTheLock) {
         });
     }
 
-    registerProxyTokenRefresher(ProviderName.LobsteraiServer, async rejectedToken => {
-      const latestAccessToken = getAuthTokens()?.accessToken;
-      if (latestAccessToken && rejectedToken && latestAccessToken !== rejectedToken) {
-        return {
-          outcome: AuthRefreshOutcome.Success,
-          accessToken: latestAccessToken,
-        };
-      }
-      return authSessionManager.refresh(AuthRefreshReason.CompatProxy);
-    });
-
     // Start the lightweight token proxy before OpenClaw config sync so that
     // lobsterai-server provider can use the proxy URL in its config.
     profiler.mark('openClawTokenProxy');
@@ -15871,26 +15850,17 @@ if (!gotTheLock) {
     profiler.measure('applyProxyPreference');
 
     profiler.mark('copilotLoopbackProxy');
-    // Keeps the port remembered under the historical compatProxy key so the
-    // Copilot baseUrl rendered into openclaw.json stays the same.
+    // A stable port keeps the Copilot baseUrl rendered into openclaw.json the same.
     await startCopilotLoopbackProxy({
       authToken: getOpenClawLoopbackState().proxyToken,
-      preferredPort: getOpenClawLoopbackState().getPreferredPort(OpenClawLoopbackService.CompatProxy),
+      preferredPort: getOpenClawLoopbackState().getPreferredPort(OpenClawLoopbackService.CopilotProxy),
     }).then(() => {
       const copilotProxyPort = getCopilotLoopbackPort();
-      if (copilotProxyPort) getOpenClawLoopbackState().rememberPort(OpenClawLoopbackService.CompatProxy, copilotProxyPort);
+      if (copilotProxyPort) getOpenClawLoopbackState().rememberPort(OpenClawLoopbackService.CopilotProxy, copilotProxyPort);
     }).catch(error => {
       console.error('Failed to start Copilot loopback proxy:', error);
     });
     profiler.measure('copilotLoopbackProxy');
-
-    profiler.mark('coworkOpenAICompatProxy');
-    await startCoworkOpenAICompatProxy({
-      authToken: getOpenClawLoopbackState().proxyToken,
-    }).catch(error => {
-      console.error('Failed to start OpenAI compatibility proxy:', error);
-    });
-    profiler.measure('coworkOpenAICompatProxy');
 
     // ── Pre-warm quota & model caches so provider resolution and config sync
     // see real server data instead of empty defaults ──
