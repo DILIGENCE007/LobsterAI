@@ -123,6 +123,7 @@ import type {
 } from '../shared/media/defaultPolicy';
 import { type ModelPresetId, ModelPresetIpc } from '../shared/modelPresets/constants';
 import { OpenClawEngineIpc } from '../shared/openclawEngine/constants';
+import { OpenClawUserConfigIpc } from '../shared/openclawUserConfig/constants';
 import { PermissionIpcChannel } from '../shared/permissions/constants';
 import type { Platform } from '../shared/platform';
 import type { ModelThinkingLevel } from '../shared/providers/modelThinking';
@@ -457,6 +458,13 @@ contextBridge.exposeInMainWorld('electron', {
       get: () => ipcRenderer.invoke(OpenClawSessionPolicyIpc.Get),
       set: (config: { keepAlive: '1d' | '7d' | '30d' | '365d' }) =>
         ipcRenderer.invoke(OpenClawSessionPolicyIpc.Set, config),
+    },
+    userConfig: {
+      getStatus: () => ipcRenderer.invoke(OpenClawUserConfigIpc.GetStatus),
+      setEnabled: (enabled: boolean) => ipcRenderer.invoke(OpenClawUserConfigIpc.SetEnabled, enabled),
+      openFile: () => ipcRenderer.invoke(OpenClawUserConfigIpc.OpenFile),
+      revealFile: () => ipcRenderer.invoke(OpenClawUserConfigIpc.RevealFile),
+      apply: () => ipcRenderer.invoke(OpenClawUserConfigIpc.Apply),
     },
     session: {
       patch: (options: {
