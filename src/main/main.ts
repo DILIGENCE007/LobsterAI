@@ -4236,13 +4236,6 @@ const getIMGatewayManager = () => {
       },
     });
 
-    // Initialize with the skills provider
-    imGatewayManager.initialize({
-      getSkillsPrompt: async () => {
-        return getSkillManager().buildAutoRoutingPrompt();
-      },
-    });
-
     // Forward IM events to renderer
     imGatewayManager.on('statusChange', status => {
       const windows = BrowserWindow.getAllWindows();

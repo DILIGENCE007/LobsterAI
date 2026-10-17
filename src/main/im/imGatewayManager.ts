@@ -129,7 +129,6 @@ export class IMGatewayManager extends EventEmitter {
   });
   private imStore: IMStore;
   private coworkHandler: IMCoworkHandler | null = null;
-  private getSkillsPrompt: (() => Promise<string | null>) | null = null;
   private ensureCoworkReady: (() => Promise<void>) | null = null;
   private syncOpenClawConfig:
     | ((reason?: string, options?: { restartGatewayIfRunning?: boolean; requireSuccess?: boolean }) => Promise<void>)
@@ -211,15 +210,6 @@ export class IMGatewayManager extends EventEmitter {
   }
 
   /**
-   * Initialize the manager with the skills provider
-   */
-  initialize(options: {
-    getSkillsPrompt?: () => Promise<string | null>;
-  }): void {
-    this.getSkillsPrompt = options.getSkillsPrompt ?? null;
-  }
-
-  /**
    * Update or create Cowork handler
    * Always creates handler if dependencies are available (Cowork mode is always enabled for IM)
    */
@@ -230,7 +220,6 @@ export class IMGatewayManager extends EventEmitter {
         coworkRuntime: this.coworkRuntime,
         coworkStore: this.coworkStore,
         imStore: this.imStore,
-        getSkillsPrompt: this.getSkillsPrompt || undefined,
         sendAsyncReply: async (platform, conversationId, text) => {
           return this.sendConversationReply(platform, conversationId, text);
         },

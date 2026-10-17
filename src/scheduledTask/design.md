@@ -567,7 +567,7 @@ CronJobService 在 LobsterAI 前端类型和 OpenClaw Gateway 类型之间进行
 
 IM 消息都经 OpenClaw 渠道插件进入 Agent，提醒由 Agent 按 `buildScheduledTaskEnginePrompt()` 的规则调用原生 `automations` 工具（网关 `cron.add`）创建，LobsterAI 主进程不再预先识别提醒请求。
 
-原来的 LLM 识别管道（`looksLikeIMScheduledTaskCandidate` → `detectScheduledTaskRequest` → `normalizeDetectedScheduledTaskRequest`，以及 `imCoworkHandler` 直接调用 `createScheduledTask` 写入 USER/TOOL_USE/TOOL_RESULT/ASSISTANT 消息序列）只挂在 `IMCoworkHandler.processMessage()` 上。该入口随旧 NIM 直连网关一起失去调用方，这套管道已于 2026-10-17 删除。
+原来的 LLM 识别管道（`looksLikeIMScheduledTaskCandidate` → `detectScheduledTaskRequest` → `normalizeDetectedScheduledTaskRequest`，以及 `imCoworkHandler` 直接调用 `createScheduledTask` 写入 USER/TOOL_USE/TOOL_RESULT/ASSISTANT 消息序列）只挂在 `IMCoworkHandler.processMessage()` 上。该入口随旧 NIM 直连网关一起失去调用方，这套管道已于 2026-10-17 删除。随后 `processMessage()` 本身以及只供它使用的代码（会话创建、系统提示词拼装、`analyzeIMReply` 回复守卫）也一并删除。
 
 这个文件现在只保留 `isReminderSystemTurn()`：`imCoworkHandler` 在会话完成时用它判断本轮是否由提醒触发，是则把回复异步回传到原 IM 会话。
 
