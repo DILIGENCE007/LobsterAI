@@ -119,7 +119,7 @@ export function getCopilotLoopbackBaseUrl(): string | null; // http://127.0.0.1:
 
 必须保持不变的行为：
 
-- 端口：继续使用 `OpenClawLoopbackService.CompatProxy` 记住的端口（值 `'compatProxy'` 不改，常量名可以改），保证 `openclaw.json` 中 Copilot 的 `baseUrl` 不变；
+- 端口：继续使用原 `OpenClawLoopbackService.CompatProxy` 记住的端口。常量改名为 `CopilotProxy`，持久化的值 `'compatProxy'` 不变，保证 `openclaw.json` 中 Copilot 的 `baseUrl` 不变；
 - 路径：`/v1/copilot/chat/completions` 和 `/copilot/chat/completions`；
 - 鉴权：`Authorization: Bearer <LOBSTER_PROXY_TOKEN>`，`/healthz` 免鉴权；
 - 来源校验：保留 `isAllowedProxyHost()`；
@@ -187,7 +187,7 @@ export async function streamOneShotText(
 ### 3.4 调用方迁移
 
 - **快捷问答**：`resolveQuickAnswerModel()` 改为 `resolveOneShotTarget()`；`buildQuickAnswerHttpRequest()` 和两个流式解析函数并入或改调 `oneShotModelClient`。并发控制、中止、窗口归属校验、埋点保持不变。
-- **`check-api-config`**：改用 `resolveRawApiConfig()`，删除 `probeModel` 参数（preload、渲染进程类型同步删除）。返回结构 `{ hasConfig, config, error }` 不变；`config` 改为原始配置。渲染进程（`CoworkView`、`CompanionComposer`）只读 `hasConfig`。
+- **`check-api-config`**：改用 `resolveRawApiConfig()`，删除 `probeModel` 参数（preload、渲染进程类型同步删除）。返回值改为 `{ hasConfig, error }`，不再返回 `config`：原始配置里有真实 API Key，而渲染进程（`CoworkView`、`CompanionComposer`）只读 `hasConfig`。
 - **服务端模型兜底判断**（`main.ts`）：改用 `resolveRawApiConfig()`。
 
 ### 3.5 删除清单
@@ -199,7 +199,7 @@ export async function streamOneShotText(
 | `src/main/libs/coworkFormatTransform.ts` | 转换函数与 `OpenAIStreamChunk` 等类型；`AnthropicApiFormat`、`normalizeProviderApiFormat()` 移入 `claudeSettings.ts`，随后删除本文件及测试 |
 | `src/main/libs/claudeSettings.ts` | `resolveCurrentApiConfig()`、`getCurrentApiConfig()`、`buildEnvForConfig()`、对代理模块的 import；`ApiConfigResolution` 里只服务于代理的字段 |
 | `src/main/libs/coworkUtil.ts` | `getEnhancedEnv()`、`probeCoworkModelReadiness()`、`resolveSessionTitleApiConfig()` |
-| `src/main/libs/coworkConfigStore.ts` | 读写 `api-config.json` 的函数；`CoworkApiConfig` 类型如仍被引用则保留 |
+| `src/main/libs/coworkConfigStore.ts` | 整个文件；`CoworkApiConfig` 类型移入 `claudeSettings.ts` |
 | `src/main/main.ts` | `get-api-config`、`save-api-config` IPC；两个 `registerProxyTokenRefresher`；代理启动/停止改为 Copilot 模块 |
 | `src/main/preload.ts`、`src/renderer/types/electron.d.ts`、`src/renderer/services/cowork.ts` | `getApiConfig`、`saveApiConfig`、`probeModel` |
 | `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` | `setCoworkProxySessionId()` 两处调用 |
