@@ -356,6 +356,11 @@ import {
 } from './libs/claudeSettings';
 import { appendClientBannerVersion } from './libs/clientBannerRequest';
 import {
+  getCopilotLoopbackPort,
+  startCopilotLoopbackProxy,
+  stopCopilotLoopbackProxy,
+} from './libs/copilotLoopbackProxy';
+import {
   clearCopilotTokenState,
   initCopilotTokenManager,
   refreshCopilotTokenNow,
@@ -363,7 +368,6 @@ import {
 } from './libs/copilotTokenManager';
 import { getCoworkLogPath } from './libs/coworkLogger';
 import {
-  getCoworkOpenAICompatProxyPort,
   registerProxyTokenRefresher,
   startCoworkOpenAICompatProxy,
   stopCoworkOpenAICompatProxy,
@@ -15405,6 +15409,11 @@ if (!gotTheLock) {
       console.error('Failed to stop OpenAI compatibility proxy:', error);
     });
 
+    currentAppCleanupStep = 'copilot-loopback-proxy';
+    await stopCopilotLoopbackProxy().catch(error => {
+      console.error('Failed to stop Copilot loopback proxy:', error);
+    });
+
     currentAppCleanupStep = 'html-preview-server';
     await stopHtmlPreviewServer().catch(error => {
       console.error('[HtmlPreviewServer] Failed to stop:', error);
@@ -15861,13 +15870,23 @@ if (!gotTheLock) {
     await applyProxyPreference(getUseSystemProxyFromConfig(appConfig));
     profiler.measure('applyProxyPreference');
 
-    profiler.mark('coworkOpenAICompatProxy');
-    await startCoworkOpenAICompatProxy({
+    profiler.mark('copilotLoopbackProxy');
+    // Keeps the port remembered under the historical compatProxy key so the
+    // Copilot baseUrl rendered into openclaw.json stays the same.
+    await startCopilotLoopbackProxy({
       authToken: getOpenClawLoopbackState().proxyToken,
       preferredPort: getOpenClawLoopbackState().getPreferredPort(OpenClawLoopbackService.CompatProxy),
     }).then(() => {
-      const compatProxyPort = getCoworkOpenAICompatProxyPort();
-      if (compatProxyPort) getOpenClawLoopbackState().rememberPort(OpenClawLoopbackService.CompatProxy, compatProxyPort);
+      const copilotProxyPort = getCopilotLoopbackPort();
+      if (copilotProxyPort) getOpenClawLoopbackState().rememberPort(OpenClawLoopbackService.CompatProxy, copilotProxyPort);
+    }).catch(error => {
+      console.error('Failed to start Copilot loopback proxy:', error);
+    });
+    profiler.measure('copilotLoopbackProxy');
+
+    profiler.mark('coworkOpenAICompatProxy');
+    await startCoworkOpenAICompatProxy({
+      authToken: getOpenClawLoopbackState().proxyToken,
     }).catch(error => {
       console.error('Failed to start OpenAI compatibility proxy:', error);
     });

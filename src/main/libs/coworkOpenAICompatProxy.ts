@@ -7,6 +7,7 @@ import {
   type AuthTokenRefreshResult,
 } from '../../shared/auth/constants';
 import { OpenAIApiMode, ProviderName } from '../../shared/providers';
+import { isAllowedProxyHost } from './copilotLoopbackProxy';
 import {
   anthropicToOpenAI,
   buildOpenAIChatCompletionsURL,
@@ -141,46 +142,6 @@ let proxyAuthToken: string | null = null;
 let upstreamConfig: OpenAICompatUpstreamConfig | null = null;
 let lastProxyError: string | null = null;
 
-// ── DNS Rebinding protection: Host header validation ──
-
-const ALLOWED_PROXY_HOSTS = new Set([
-  '127.0.0.1',
-  'localhost',
-  '[::1]',
-  '::1',
-]);
-
-/**
- * Validate that the request Host header refers to a loopback address.
- * DNS Rebinding attacks send requests with the attacker's domain in the
- * Host header — rejecting those blocks the entire attack class.
- *
- * Requests without a Host header (e.g. HTTP/1.0 clients, non-browser
- * callers) are allowed because browsers always include the header.
- */
-export function isAllowedProxyHost(req: http.IncomingMessage): boolean {
-  const hostHeader = req.headers.host;
-  if (!hostHeader) {
-    return true;
-  }
-
-  let hostName: string;
-  if (hostHeader.startsWith('[')) {
-    // IPv6 bracket notation: [::1]:12345
-    const bracketEnd = hostHeader.indexOf(']');
-    hostName = bracketEnd >= 0
-      ? hostHeader.slice(0, bracketEnd + 1)
-      : hostHeader;
-  } else {
-    // IPv4 or hostname: 127.0.0.1:12345 or localhost:12345
-    const colonIndex = hostHeader.lastIndexOf(':');
-    hostName = colonIndex >= 0
-      ? hostHeader.slice(0, colonIndex)
-      : hostHeader;
-  }
-
-  return ALLOWED_PROXY_HOSTS.has(hostName);
-}
 /**
  * Per-provider token refreshers.  When the proxy receives a 401/403 from an
  * upstream, it looks up the refresher for the current provider and retries once
@@ -2336,97 +2297,6 @@ async function handleRequest(
   }
 
   console.log(`[CoworkProxy] ${method} ${url.pathname}`);
-
-  // Dedicated Copilot passthrough route. OpenClaw is configured with
-  // baseUrl = http://127.0.0.1:PORT/v1/copilot so it sends requests here.
-  // This route manages the Copilot token lifecycle independently of upstreamConfig
-  // and injects the required IDE headers (Editor-Version etc.) before forwarding
-  // to the real GitHub Copilot API.
-  if (method === 'POST' && (url.pathname === '/v1/copilot/chat/completions' || url.pathname === '/copilot/chat/completions')) {
-    let body = '';
-    try {
-      body = await readRequestBody(req);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Invalid request body';
-      writeJSON(res, 400, createAnthropicErrorBody(message, 'invalid_request_error'));
-      return;
-    }
-
-    const { getCurrentCopilotToken, refreshCopilotTokenNow } = await import('./copilotTokenManager');
-
-    let tokenState = getCurrentCopilotToken();
-    if (!tokenState) {
-      try {
-        tokenState = await refreshCopilotTokenNow();
-      } catch (err) {
-        console.warn('[CoworkProxy] Copilot passthrough: no token available and refresh failed:', err);
-        writeJSON(res, 503, createAnthropicErrorBody('Copilot token unavailable', 'service_unavailable'));
-        return;
-      }
-    }
-
-    const copilotBaseUrl = tokenState.baseUrl.replace(/\/+$/, '');
-    const copilotUrl = copilotBaseUrl.endsWith('/chat/completions')
-      ? copilotBaseUrl
-      : `${copilotBaseUrl}/chat/completions`;
-
-    const buildCopilotHeaders = (token: string): Record<string, string> => ({
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-      'Copilot-Integration-Id': 'vscode-chat',
-      'Editor-Version': 'vscode/1.96.2',
-      'Editor-Plugin-Version': 'copilot-chat/0.26.7',
-      'User-Agent': 'GitHubCopilotChat/0.26.7',
-      'Openai-Intent': 'conversation-panel',
-    });
-
-    console.log(`[CoworkProxy] Copilot passthrough → ${copilotUrl}`);
-    let upstreamResponse = await session.defaultSession.fetch(copilotUrl, {
-      method: 'POST',
-      headers: buildCopilotHeaders(tokenState.copilotToken),
-      body,
-    });
-
-    // Auto-retry once on auth error by refreshing the short-lived token
-    if (upstreamResponse.status === 401 || upstreamResponse.status === 403) {
-      console.log('[CoworkProxy] Copilot passthrough: auth error, refreshing token and retrying...');
-      try {
-        const refreshed = await refreshCopilotTokenNow();
-        const newCopilotUrl = refreshed.baseUrl.replace(/\/+$/, '').endsWith('/chat/completions')
-          ? refreshed.baseUrl.replace(/\/+$/, '')
-          : `${refreshed.baseUrl.replace(/\/+$/, '')}/chat/completions`;
-        upstreamResponse = await session.defaultSession.fetch(newCopilotUrl, {
-          method: 'POST',
-          headers: buildCopilotHeaders(refreshed.copilotToken),
-          body,
-        });
-        console.log(`[CoworkProxy] Copilot passthrough: retry status=${upstreamResponse.status}`);
-      } catch (refreshErr) {
-        console.warn('[CoworkProxy] Copilot passthrough: token refresh failed:', refreshErr);
-      }
-    }
-
-    res.writeHead(upstreamResponse.status, {
-      'Content-Type': upstreamResponse.headers.get('content-type') || 'application/json',
-      'Transfer-Encoding': upstreamResponse.headers.get('transfer-encoding') || '',
-    });
-    if (upstreamResponse.body) {
-      const reader = upstreamResponse.body.getReader();
-      const pump = async (): Promise<void> => {
-        const { done, value } = await reader.read();
-        if (done) {
-          res.end();
-          return;
-        }
-        res.write(Buffer.from(value));
-        return pump();
-      };
-      await pump();
-    } else {
-      res.end();
-    }
-    return;
-  }
 
   if (method !== 'POST' || url.pathname !== '/v1/messages') {
     writeJSON(res, 404, createAnthropicErrorBody('Not found', 'not_found_error'));
