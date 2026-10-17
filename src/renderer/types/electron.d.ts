@@ -2718,7 +2718,8 @@ interface WeixinOpenClawConfig {
 }
 
 interface IMSettings {
-  systemPrompt?: string;
+  /** Per-platform agent binding. Key = platform name, value = agent ID. Absent or 'main' = default. */
+  platformAgentBindings?: Record<string, string>;
 }
 
 interface IMGatewayStatus {

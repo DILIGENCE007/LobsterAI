@@ -583,7 +583,6 @@ export interface IMGatewayConfig {
 }
 
 export interface IMSettings {
-  systemPrompt?: string;
   /** Per-platform agent binding. Key = platform name, value = agent ID. Absent or 'main' = default. */
   platformAgentBindings?: Record<string, string>;
 }
@@ -877,9 +876,7 @@ export const DEFAULT_WEIXIN_CONFIG: WeixinOpenClawConfig = {
   debug: true,
 };
 
-export const DEFAULT_IM_SETTINGS: IMSettings = {
-  systemPrompt: '',
-};
+export const DEFAULT_IM_SETTINGS: IMSettings = {};
 
 export const DEFAULT_IM_CONFIG: IMGatewayConfig = {
   dingtalk: DEFAULT_DINGTALK_MULTI_INSTANCE_CONFIG,
