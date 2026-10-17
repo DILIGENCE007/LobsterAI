@@ -26,7 +26,6 @@ import {
   parseModelThinkingConfig,
 } from '../../shared/providers/modelThinking';
 import type { SqliteStore } from '../sqliteStore';
-import type { CoworkApiConfig } from './coworkConfigStore';
 import { type AnthropicApiFormat,normalizeProviderApiFormat } from './coworkFormatTransform';
 import {
   configureCoworkOpenAICompatProxy,
@@ -37,6 +36,13 @@ import {
 import { readOpenAICodexAuthFile } from './openaiCodexAuth';
 import { getOpenClawTokenProxyPort } from './openclawTokenProxy';
 import { hasXaiOAuthCredential } from './xaiAuth';
+
+export type CoworkApiConfig = {
+  apiKey: string;
+  baseURL: string;
+  model: string;
+  apiType?: 'anthropic' | 'openai';
+};
 
 type LocalProviderConfig = Omit<ProviderConfig, 'apiFormat'> & { apiFormat?: ApiFormat | 'native' };
 
@@ -981,16 +987,6 @@ export function resolveAllProviderApiKeys(): Record<string, string> {
   return result;
 }
 
-
-export function buildEnvForConfig(config: CoworkApiConfig): Record<string, string> {
-  const baseEnv = { ...process.env } as Record<string, string>;
-
-  baseEnv.ANTHROPIC_AUTH_TOKEN = config.apiKey;
-  baseEnv.ANTHROPIC_API_KEY = config.apiKey;
-  baseEnv.ANTHROPIC_BASE_URL = config.baseURL;
-  baseEnv.ANTHROPIC_MODEL = config.model;
-  return baseEnv;
-}
 
 export type ProviderRawConfig = {
   providerName: string;

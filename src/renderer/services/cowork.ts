@@ -2300,25 +2300,11 @@ class CoworkService {
     return false;
   }
 
-  async getApiConfig(): Promise<CoworkApiConfig | null> {
-    if (!window.electron?.getApiConfig) {
-      return null;
-    }
-    return window.electron.getApiConfig();
-  }
-
-  async checkApiConfig(options?: { probeModel?: boolean }): Promise<{ hasConfig: boolean; config: CoworkApiConfig | null; error?: string } | null> {
+  async checkApiConfig(): Promise<{ hasConfig: boolean; config: CoworkApiConfig | null; error?: string } | null> {
     if (!window.electron?.checkApiConfig) {
       return null;
     }
-    return window.electron.checkApiConfig(options);
-  }
-
-  async saveApiConfig(config: CoworkApiConfig): Promise<{ success: boolean; error?: string } | null> {
-    if (!window.electron?.saveApiConfig) {
-      return null;
-    }
-    return window.electron.saveApiConfig(config);
+    return window.electron.checkApiConfig();
   }
 
   async listMemoryEntries(input: {

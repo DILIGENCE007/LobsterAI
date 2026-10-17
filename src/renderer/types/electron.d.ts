@@ -893,11 +893,7 @@ interface IElectronAPI {
     onStreamError: (requestId: string, callback: (error: string) => void) => () => void;
     onStreamAbort: (requestId: string, callback: () => void) => () => void;
   };
-  getApiConfig: () => Promise<CoworkApiConfig | null>;
-  checkApiConfig: (options?: {
-    probeModel?: boolean;
-  }) => Promise<{ hasConfig: boolean; config: CoworkApiConfig | null; error?: string }>;
-  saveApiConfig: (config: CoworkApiConfig) => Promise<{ success: boolean; error?: string }>;
+  checkApiConfig: () => Promise<{ hasConfig: boolean; config: CoworkApiConfig | null; error?: string }>;
   generateSessionTitle: (request: GenerateSessionTitleRequest) => Promise<string | null>;
   getRecentCwds: (limit?: number) => Promise<string[]>;
   dsh: {

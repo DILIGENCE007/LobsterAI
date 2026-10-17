@@ -342,7 +342,6 @@ import {
   clearServerModelMetadata,
   evaluateServerModelRunGate,
   getAllServerModelMetadata,
-  getCurrentApiConfig,
   getServerModelMetadata,
   isKnownPackageKimiK3ModelId,
   resolveAllEnabledProviderConfigs,
@@ -362,7 +361,6 @@ import {
   refreshCopilotTokenNow,
   setCopilotTokenState,
 } from './libs/copilotTokenManager';
-import { saveCoworkApiConfig } from './libs/coworkConfigStore';
 import { getCoworkLogPath } from './libs/coworkLogger';
 import {
   getCoworkOpenAICompatProxyPort,
@@ -380,7 +378,6 @@ import { CoworkTurnUsageService } from './libs/coworkTurnUsage';
 import {
   ensureElectronNodeShim,
   getElectronNodeRuntimePath,
-  probeCoworkModelReadiness,
 } from './libs/coworkUtil';
 import {
   assertDataMigrationSqliteSnapshotMatchesLiveSync,
@@ -13649,43 +13646,10 @@ if (!gotTheLock) {
     return getCoworkStore().listRecentCwds(boundedLimit);
   });
 
-  ipcMain.handle('get-api-config', async () => {
-    return getCurrentApiConfig();
-  });
-
-  ipcMain.handle('check-api-config', async (_event, options?: { probeModel?: boolean }) => {
+  ipcMain.handle('check-api-config', async () => {
     const { config, error } = resolveCurrentApiConfig();
-    if (config && options?.probeModel) {
-      const probe = await probeCoworkModelReadiness();
-      if (probe.ok === false) {
-        return { hasConfig: false, config: null, error: probe.error };
-      }
-    }
     return { hasConfig: config !== null, config, error };
   });
-
-  ipcMain.handle(
-    'save-api-config',
-    async (
-      _event,
-      config: {
-        apiKey: string;
-        baseURL: string;
-        model: string;
-        apiType?: 'anthropic' | 'openai';
-      },
-    ) => {
-      try {
-        saveCoworkApiConfig(config);
-        return { success: true };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to save API config',
-        };
-      }
-    },
-  );
 
   // Dialog handlers
   ipcMain.handle('dialog:selectDirectory', async event => {
@@ -15758,20 +15722,6 @@ if (!gotTheLock) {
         };
       }
       return authSessionManager.refresh(AuthRefreshReason.CompatProxy);
-    });
-
-    registerProxyTokenRefresher(ProviderName.Copilot, async () => {
-      try {
-        const { refreshCopilotTokenNow } = await import('./libs/copilotTokenManager');
-        const refreshed = await refreshCopilotTokenNow();
-        return {
-          outcome: AuthRefreshOutcome.Success,
-          accessToken: refreshed.copilotToken,
-        };
-      } catch (err) {
-        console.warn('[Auth] Copilot proxy token refresh failed:', err);
-        return { outcome: AuthRefreshOutcome.TransientFailure };
-      }
     });
 
     // Start the lightweight token proxy before OpenClaw config sync so that

@@ -488,52 +488,6 @@ function extractStreamErrorMessage(event: string, payload: string): string | nul
   }
 }
 
-function estimateTokenCountForText(text: string): number {
-  const normalized = text.trim();
-  if (!normalized) {
-    return 0;
-  }
-  // Heuristic fallback for non-Anthropic backends that do not implement count_tokens.
-  return Math.max(1, Math.ceil(normalized.length / 4));
-}
-
-function estimateTokenCountFromUnknown(value: unknown): number {
-  if (value === null || value === undefined) {
-    return 0;
-  }
-
-  if (typeof value === 'string') {
-    return estimateTokenCountForText(value);
-  }
-
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return estimateTokenCountForText(String(value));
-  }
-
-  if (Array.isArray(value)) {
-    return value.reduce((sum, item) => sum + estimateTokenCountFromUnknown(item), 0);
-  }
-
-  if (typeof value === 'object') {
-    const obj = value as Record<string, unknown>;
-    let total = 0;
-    for (const [key, nested] of Object.entries(obj)) {
-      // Prefer semantically meaningful text fields; avoid double-counting structural keys.
-      if (key === 'text' || key === 'content' || key === 'system' || key === 'name' || key === 'description') {
-        total += estimateTokenCountFromUnknown(nested);
-      }
-    }
-    return total;
-  }
-
-  return 0;
-}
-
-function estimateAnthropicCountTokensRequestInputTokens(requestBody: unknown): number {
-  const estimated = estimateTokenCountFromUnknown(requestBody);
-  return Math.max(1, estimated);
-}
-
 function resolveUpstreamAPIType(provider?: string, openaiApiMode?: OpenAIApiMode): UpstreamAPIType {
   if (openaiApiMode === OpenAIApiMode.Responses) {
     return 'responses';
@@ -2383,35 +2337,6 @@ async function handleRequest(
 
   console.log(`[CoworkProxy] ${method} ${url.pathname}`);
 
-  if (method === 'POST' && url.pathname === '/api/event_logging/batch') {
-    writeJSON(res, 200, { ok: true });
-    return;
-  }
-
-  if (method === 'POST' && url.pathname === '/v1/messages/count_tokens') {
-    let requestBodyRaw = '';
-    try {
-      requestBodyRaw = await readRequestBody(req);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Invalid request body';
-      writeJSON(res, 400, createAnthropicErrorBody(message, 'invalid_request_error'));
-      return;
-    }
-
-    let parsedRequestBody: unknown;
-    try {
-      parsedRequestBody = JSON.parse(requestBodyRaw);
-    } catch {
-      writeJSON(res, 400, createAnthropicErrorBody('Request body must be valid JSON', 'invalid_request_error'));
-      return;
-    }
-
-    writeJSON(res, 200, {
-      input_tokens: estimateAnthropicCountTokensRequestInputTokens(parsedRequestBody),
-    });
-    return;
-  }
-
   // Dedicated Copilot passthrough route. OpenClaw is configured with
   // baseUrl = http://127.0.0.1:PORT/v1/copilot so it sends requests here.
   // This route manages the Copilot token lifecycle independently of upstreamConfig
@@ -2499,115 +2424,6 @@ async function handleRequest(
       await pump();
     } else {
       res.end();
-    }
-    return;
-  }
-
-  // OpenClaw sends requests to /v1/chat/completions (OpenAI format) when using
-  // the lobster provider. Transparently proxy these requests to the upstream with
-  // IDE headers injected (needed for GitHub Copilot).
-  if (method === 'POST' && (url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions')) {
-    if (!upstreamConfig) {
-      writeJSON(res, 503, createAnthropicErrorBody('Proxy not configured', 'service_unavailable'));
-      return;
-    }
-    let body = '';
-    try {
-      body = await readRequestBody(req);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Invalid request body';
-      writeJSON(res, 400, createAnthropicErrorBody(message, 'invalid_request_error'));
-      return;
-    }
-    const upstreamHeaders: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (upstreamConfig.apiKey) {
-      upstreamHeaders.Authorization = `Bearer ${upstreamConfig.apiKey}`;
-    }
-    if (upstreamConfig.provider === 'github-copilot') {
-      upstreamHeaders['Copilot-Integration-Id'] = 'vscode-chat';
-      upstreamHeaders['Editor-Version'] = 'vscode/1.96.2';
-      upstreamHeaders['Editor-Plugin-Version'] = 'copilot-chat/0.26.7';
-      upstreamHeaders['User-Agent'] = 'GitHubCopilotChat/0.26.7';
-      upstreamHeaders['Openai-Intent'] = 'conversation-panel';
-    }
-    // Build upstream URL: use the upstream baseURL + /chat/completions
-    const upstreamBase = upstreamConfig.baseURL.replace(/\/+$/, '');
-    const upstreamUrl = upstreamBase.endsWith('/chat/completions')
-      ? upstreamBase
-      : `${upstreamBase}/chat/completions`;
-    console.log(`[CoworkProxy] OpenAI passthrough → ${upstreamUrl} (provider: ${upstreamConfig.provider})`);
-    try {
-      const { session } = await import('electron');
-      let upstreamResponse = await session.defaultSession.fetch(upstreamUrl, {
-        method: 'POST',
-        headers: upstreamHeaders,
-        body,
-      });
-      // Auto-retry once for token expiry using provider-based refresher
-      if (
-        shouldRefreshProxyToken(upstreamResponse.status, upstreamConfig.provider)
-        && upstreamConfig.provider
-      ) {
-        const refresher = tokenRefreshers.get(upstreamConfig.provider);
-        if (refresher) {
-          console.log(`[CoworkProxy] OpenAI passthrough: ${upstreamConfig.provider} auth error, refreshing token and retrying...`);
-          try {
-            const refreshResult = await refresher(upstreamConfig.apiKey);
-            if (refreshResult.accessToken) {
-              upstreamConfig.apiKey = refreshResult.accessToken;
-              upstreamHeaders.Authorization = `Bearer ${refreshResult.accessToken}`;
-              upstreamResponse = await session.defaultSession.fetch(upstreamUrl, {
-                method: 'POST',
-                headers: upstreamHeaders,
-                body,
-              });
-              console.log(`[CoworkProxy] OpenAI passthrough: retry status=${upstreamResponse.status}`);
-            } else if (isTemporaryLobsterAIAuthRefreshFailure(
-              upstreamConfig.provider,
-              refreshResult,
-            )) {
-              writeJSON(
-                res,
-                503,
-                createAnthropicErrorBody(
-                  'Login verification is temporarily unavailable. Please retry.',
-                  'service_unavailable',
-                ),
-              );
-              return;
-            }
-          } catch (refreshErr) {
-            console.warn(`[CoworkProxy] OpenAI passthrough: ${upstreamConfig.provider} token refresh failed:`, refreshErr);
-          }
-        }
-      }
-      // Pipe response back
-      res.writeHead(upstreamResponse.status, {
-        'Content-Type': upstreamResponse.headers.get('content-type') || 'application/json',
-        'Transfer-Encoding': upstreamResponse.headers.get('transfer-encoding') || '',
-      });
-      if (upstreamResponse.body) {
-        const reader = upstreamResponse.body.getReader();
-        const pump = async () => {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) { res.end(); return; }
-            res.write(Buffer.from(value));
-          }
-        };
-        await pump();
-      } else {
-        const text = await upstreamResponse.text();
-        res.end(text);
-      }
-    } catch (proxyError) {
-      console.error('[CoworkProxy] OpenAI passthrough error:', proxyError);
-      writeJSON(res, 502, createAnthropicErrorBody(
-        proxyError instanceof Error ? proxyError.message : 'Upstream error',
-        'api_error',
-      ));
     }
     return;
   }
