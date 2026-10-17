@@ -26,8 +26,8 @@ import {
   normalizeGeminiBaseUrl,
 } from '../libs/coworkModelApi';
 import { getCoworkOpenAICompatProxyToken } from '../libs/coworkOpenAICompatProxy';
+import { readAnthropicStreamEvent, readGeminiStreamEvent, splitSseEvents, type StreamChunk } from '../libs/sse';
 import { CompanionAnalytics, type CompanionAnalyticsReporter } from './companionAnalytics';
-import { readAnthropicStreamEvent, readGeminiStreamEvent, splitSseEvents, type StreamChunk } from './sse';
 
 const MAX_OUTPUT_TOKENS = 2_048;
 const REQUEST_TIMEOUT_MS = 90_000;
