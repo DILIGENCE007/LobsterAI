@@ -52,7 +52,7 @@ const REPAIR_BACKUP_RUN_NAME = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d
 /** Repair runs kept on disk, including the run that just finished. */
 export const OPENCLAW_REPAIR_BACKUP_RETENTION = 2;
 /** Runs older than this are removed even when within the retention count. */
-export const OPENCLAW_REPAIR_BACKUP_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+export const OPENCLAW_REPAIR_BACKUP_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 // A run written to this recently may still be in progress: never touch it.
 const REPAIR_BACKUP_IN_PROGRESS_GUARD_MS = 60 * 60 * 1000;
 

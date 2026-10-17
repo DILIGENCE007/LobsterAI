@@ -162,7 +162,7 @@ test('pruning removes runs past the age limit, falling back to mtime when the na
     { name: runName('2026-10-15T00:00:00.000Z') },
     { name: '2026-13-01T00-00-00-000Z-oldmtm', modifiedAt: NOW - 40 * DAY_MS },
   ]);
-  expect(OPENCLAW_REPAIR_BACKUP_MAX_AGE_MS).toBe(30 * DAY_MS);
+  expect(OPENCLAW_REPAIR_BACKUP_MAX_AGE_MS).toBe(14 * DAY_MS);
 
   const result = await pruneOpenClawRepairBackups(base, { now: NOW });
 
@@ -198,7 +198,7 @@ test.each([
 
 test('retained runs lose regenerable caches but keep state and site data, and the manifest records it', async () => {
   const { base, runs } = backupRuns([
-    { name: runName('2026-10-06T04:42:33.345Z', '4W3ZYj') }, { name: runName('2026-09-20T06:43:26.330Z', 'vRNFCI') },
+    { name: runName('2026-10-06T04:42:33.345Z', '4W3ZYj') }, { name: runName('2026-10-04T06:43:26.330Z', 'vRNFCI') },
   ]);
   fs.writeFileSync(path.join(runs[0], OPENCLAW_REPAIR_SNAPSHOT_MANIFEST), JSON.stringify({ version: 1, generatedPluginSkillLinks: [] }));
 

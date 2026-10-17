@@ -1144,7 +1144,6 @@ export class OpenClawEngineManager extends EventEmitter {
 
     const compileCacheDir = path.join(this.stateDir, '.compile-cache');
     console.log(`[OpenClaw] compile cache dir: ${compileCacheDir}`);
-    scheduleOpenClawStartupDiskCleanup({ baseDir: this.baseDir, stateDir: this.stateDir, compileCacheDir });
     const electronNodeRuntimePath = getElectronNodeRuntimePath();
     const cliShimDir = this.ensureBundledCliShims();
     const skillsRoot = getSkillsRoot().replace(/\\/g, '/');
@@ -1414,6 +1413,8 @@ export class OpenClawEngineManager extends EventEmitter {
       message: `OpenClaw gateway is running on loopback:${port}.`,
       canRetry: false,
     });
+    // Deferred so reclaiming old caches and backups never slows gateway startup.
+    scheduleOpenClawStartupDiskCleanup({ baseDir: this.baseDir, stateDir: this.stateDir, compileCacheDir });
 
     return this.getStatus();
   }
