@@ -345,7 +345,6 @@ import {
   getServerModelMetadata,
   isKnownPackageKimiK3ModelId,
   resolveAllEnabledProviderConfigs,
-  resolveCurrentApiConfig,
   resolveRawApiConfig,
   type ServerModelMetadataInput,
   ServerModelRunGateReason,
@@ -2653,7 +2652,7 @@ const shouldRefreshServerQuotaForSession = (sessionId: string): boolean => {
     return isLobsteraiServerModelRef(agentModelRef);
   }
 
-  const apiConfig = resolveCurrentApiConfig();
+  const apiConfig = resolveRawApiConfig();
   return apiConfig.providerMetadata?.providerName === ProviderName.LobsteraiServer;
 };
 
@@ -13650,9 +13649,10 @@ if (!gotTheLock) {
     return getCoworkStore().listRecentCwds(boundedLimit);
   });
 
+  // Only reports whether a model is usable: the raw config carries API keys.
   ipcMain.handle('check-api-config', async () => {
-    const { config, error } = resolveCurrentApiConfig();
-    return { hasConfig: config !== null, config, error };
+    const { config, error } = resolveRawApiConfig();
+    return { hasConfig: config !== null, error };
   });
 
   // Dialog handlers
@@ -16007,6 +16007,7 @@ if (!gotTheLock) {
       services: {
         languageClient: desktopLanguageClient,
         quickAnswer: new CompanionQuickAnswerService({ getSessionKey: getAuthSessionKey,
+          getProxyToken: () => getOpenClawLoopbackState().proxyToken,
           reportAnalytics: event => getMainLogReporter().report(event) }),
       },
       store: getStore(),
