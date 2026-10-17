@@ -2719,7 +2719,6 @@ interface WeixinOpenClawConfig {
 
 interface IMSettings {
   systemPrompt?: string;
-  skillsEnabled: boolean;
 }
 
 interface IMGatewayStatus {
