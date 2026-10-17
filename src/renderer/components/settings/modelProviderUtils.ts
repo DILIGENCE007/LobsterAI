@@ -3,14 +3,17 @@
  * Used by both Settings.tsx and ModelSettingsSection.tsx.
  */
 import {
+  isOpenAIApiModeAvailable,
   ModelRuntimeProfile,
   ModelRuntimeProfileSource,
   normalizeModelIdForComparison,
+  OpenAIApiMode,
   OpenClawApi,
   ProviderAuthType,
   ProviderName,
   ProviderRegistry,
   resolveModelRuntimeProfile,
+  resolveProviderOpenAIApiMode,
 } from '../../../shared/providers';
 import { type AppConfig, defaultConfig, isCustomProvider } from '../../config';
 import { i18nService } from '../../services/i18n';
@@ -165,6 +168,50 @@ export const shouldShowApiFormatSelector = (
   || (provider === ProviderName.Moonshot && value === 'anthropic')
 );
 
+// UI-only protocol choice; persisted as apiFormat + openaiApiMode.
+export const ApiFormatOption = {
+  Anthropic: 'anthropic',
+  OpenAIChatCompletions: 'openai-chat-completions',
+  OpenAIResponses: 'openai-responses',
+} as const;
+export type ApiFormatOption = typeof ApiFormatOption[keyof typeof ApiFormatOption];
+
+type OpenAIApiModeConfig = {
+  apiFormat?: unknown;
+  openaiApiMode?: unknown;
+  codingPlanEnabled?: unknown;
+  authType?: unknown;
+};
+
+export const getApiFormatOptions = (provider: string, config?: OpenAIApiModeConfig): ApiFormatOption[] => (
+  isOpenAIApiModeAvailable(provider, config)
+    ? [ApiFormatOption.OpenAIChatCompletions, ApiFormatOption.Anthropic, ApiFormatOption.OpenAIResponses]
+    : [ApiFormatOption.OpenAIChatCompletions, ApiFormatOption.Anthropic]
+);
+
+export const getApiFormatOption = (provider: string, config: OpenAIApiModeConfig): ApiFormatOption => {
+  const apiFormat = getEffectiveApiFormat(provider, config.apiFormat);
+  if (apiFormat !== 'openai') {
+    return ApiFormatOption.Anthropic;
+  }
+  return resolveProviderOpenAIApiMode(provider, { ...config, apiFormat }) === OpenAIApiMode.Responses
+    ? ApiFormatOption.OpenAIResponses
+    : ApiFormatOption.OpenAIChatCompletions;
+};
+
+export const resolveApiFormatOption = (
+  option: ApiFormatOption,
+): { apiFormat: 'anthropic' | 'openai'; openaiApiMode: OpenAIApiMode } => {
+  switch (option) {
+    case ApiFormatOption.OpenAIResponses:
+      return { apiFormat: 'openai', openaiApiMode: OpenAIApiMode.Responses };
+    case ApiFormatOption.OpenAIChatCompletions:
+      return { apiFormat: 'openai', openaiApiMode: OpenAIApiMode.ChatCompletions };
+    default:
+      return { apiFormat: 'anthropic', openaiApiMode: OpenAIApiMode.ChatCompletions };
+  }
+};
+
 export const getProviderDefaultBaseUrl = (
   provider: ProviderType,
   apiFormat: 'anthropic' | 'openai' | 'gemini'
@@ -276,8 +323,12 @@ export const buildOpenAIResponsesUrl = (baseUrl: string): string => {
   return `${normalized}/v1/responses`;
 };
 
-export const shouldUseOpenAIResponsesForProvider = (provider: string): boolean => (
+export const shouldUseOpenAIResponsesForProvider = (
+  provider: string,
+  config?: OpenAIApiModeConfig,
+): boolean => (
   provider === 'openai'
+  || resolveProviderOpenAIApiMode(provider, config) === OpenAIApiMode.Responses
 );
 
 export const shouldUseMaxCompletionTokensForOpenAI = (provider: string, modelId?: string): boolean => {

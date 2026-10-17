@@ -37,8 +37,10 @@ import {
   AuthType,
   findKimiK3ReservedCustomParamKeys,
   getModelRuntimeProfileDefinition,
+  isOpenAIApiModeAvailable,
   ModelRuntimeProfile,
   ModelRuntimeProfileSource,
+  OpenAIApiMode,
   OpenClawApi as OpenClawApiConst,
   OpenClawProviderId,
   ProviderName,
@@ -814,6 +816,13 @@ const stripChatCompletionsSuffix = (rawBaseUrl: string): string => {
   return normalized;
 };
 
+// OpenClaw appends `/responses` itself; drop it when the user pasted the full endpoint.
+const stripResponsesSuffix = (baseUrl: string): string => (
+  baseUrl.endsWith('/responses')
+    ? baseUrl.slice(0, -'/responses'.length).replace(/\/+$/, '')
+    : baseUrl
+);
+
 const isLoopbackProviderBaseUrl = (rawBaseUrl: string): boolean => {
   try {
     const host = new URL(rawBaseUrl).hostname.toLowerCase().replace(/^\[|\]$/g, '');
@@ -1167,6 +1176,7 @@ export const buildProviderSelection = (options: {
   baseURL: string;
   modelId: string;
   apiType: 'anthropic' | 'openai' | undefined;
+  openaiApiMode?: OpenAIApiMode;
   providerName?: string;
   authType?: 'apikey' | 'oauth';
   codingPlanEnabled?: boolean;
@@ -1184,10 +1194,21 @@ export const buildProviderSelection = (options: {
 
   let baseUrl =
     descriptor.resolveRuntimeBaseUrl?.() ?? descriptor.normalizeBaseUrl(options.baseURL);
-  const api = descriptor.resolveApi({
+  const descriptorApi = descriptor.resolveApi({
     apiType: options.apiType,
     baseURL: options.baseURL,
   });
+  // Users can move an OpenAI-compatible provider onto OpenClaw's generic
+  // openai-responses transport; the shared allowlist keeps providers whose
+  // OpenClaw plugin or runtime profile assumes Chat Completions out.
+  const api = descriptorApi === OpenClawApiConst.OpenAICompletions
+    && options.openaiApiMode === OpenAIApiMode.Responses
+    && isOpenAIApiModeAvailable(providerName, options)
+    ? (OpenClawApiConst.OpenAIResponses as OpenClawTransportApi)
+    : descriptorApi;
+  if (api === OpenClawApiConst.OpenAIResponses) {
+    baseUrl = stripResponsesSuffix(baseUrl);
+  }
 
   // When DashScope Anthropic URL is forced to OpenAI format, rewrite the
   // base URL to the corresponding OpenAI-compatible endpoint.
@@ -2201,6 +2222,7 @@ export class OpenClawConfigSync {
         baseURL,
         modelId,
         apiType,
+        openaiApiMode: apiResolution.providerMetadata?.openaiApiMode,
         providerName: apiResolution.providerMetadata?.providerName,
         authType: apiResolution.providerMetadata?.authType,
         codingPlanEnabled: apiResolution.providerMetadata?.codingPlanEnabled,
@@ -2234,6 +2256,7 @@ export class OpenClawConfigSync {
             baseURL: p.baseURL,
             modelId: m.id,
             apiType: p.apiType,
+            openaiApiMode: p.openaiApiMode,
             providerName: p.providerName,
             authType: p.authType,
             codingPlanEnabled: p.codingPlanEnabled,

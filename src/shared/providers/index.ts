@@ -3,6 +3,7 @@ export type { ProviderDef } from './constants';
 export {
   ApiFormat,
   AuthType,
+  OpenAIApiMode,
   OpenClawApi,
   OpenClawProviderId,
   ProviderAuthType,
@@ -53,4 +54,10 @@ export {
   resolveOpenClawThinkingLevel,
   resolveProductThinkingLevel,
 } from './modelThinking';
+export {
+  isOpenAIApiModeAvailable,
+  normalizeOpenAIApiMode,
+  resolveProviderOpenAIApiMode,
+  supportsOpenAIApiModeSelection,
+} from './openaiApiMode';
 export type { ProviderConfig } from './types';

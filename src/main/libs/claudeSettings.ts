@@ -1,5 +1,13 @@
 import type { ModelPresetId } from '../../shared/modelPresets/constants';
-import { type ApiFormat,type ProviderConfig, ProviderName, ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
+import {
+  type ApiFormat,
+  type OpenAIApiMode,
+  type ProviderConfig,
+  ProviderName,
+  ProviderRegistry,
+  resolveCodingPlanBaseUrl,
+  resolveProviderOpenAIApiMode,
+} from '../../shared/providers';
 import {
   type LobsterAIRequestCapability,
   parseLobsterAIRequestCapabilities,
@@ -147,6 +155,7 @@ export type ApiConfigResolution = {
     modelName?: string;
     contextWindow?: number;
     maxTokens?: number;
+    openaiApiMode?: OpenAIApiMode;
   };
 };
 
@@ -760,11 +769,16 @@ export function resolveCurrentApiConfig(target: OpenAICompatProxyTarget = 'local
     };
   }
 
+  const openaiApiMode = resolveProviderOpenAIApiMode(matched.providerName, {
+    ...matched.providerConfig,
+    apiFormat: matched.apiFormat,
+  });
   configureCoworkOpenAICompatProxy({
     baseURL: resolvedBaseURL,
     apiKey: resolvedApiKey || undefined,
     model: matched.modelId,
     provider: matched.providerName,
+    openaiApiMode,
   });
 
   const proxyBaseURL = getCoworkOpenAICompatProxyBaseURL(target);
@@ -794,6 +808,7 @@ export function resolveCurrentApiConfig(target: OpenAICompatProxyTarget = 'local
       modelName: matched.modelName,
       contextWindow: matched.contextWindow,
       maxTokens: matched.maxTokens,
+      ...(openaiApiMode ? { openaiApiMode } : {}),
     },
   };
 }
@@ -860,6 +875,10 @@ export function resolveRawApiConfig(): ApiConfigResolution {
   // the request with "No API key found for provider".
   const effectiveApiKey = apiKey
     || (!providerRequiresApiKey(matched.providerName) ? 'sk-lobsterai-local' : '');
+  const openaiApiMode = resolveProviderOpenAIApiMode(matched.providerName, {
+    ...matched.providerConfig,
+    apiFormat: effectiveApiFormat,
+  });
   return {
     config: {
       apiKey: effectiveApiKey,
@@ -880,6 +899,7 @@ export function resolveRawApiConfig(): ApiConfigResolution {
       modelName: matched.modelName,
       contextWindow: matched.contextWindow,
       maxTokens: matched.maxTokens,
+      ...(openaiApiMode ? { openaiApiMode } : {}),
     },
   };
 }
@@ -955,6 +975,7 @@ export type ProviderRawConfig = {
   baseURL: string;
   apiKey: string;
   apiType: 'anthropic' | 'openai';
+  openaiApiMode?: OpenAIApiMode;
   authType?: ProviderConfig['authType'];
   codingPlanEnabled: boolean;
   models: ProviderModelConfig[];
@@ -1077,11 +1098,16 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
     const models = normalizeProviderModels(providerName, providerConfig.models);
     if (models.length === 0) continue;
 
+    const openaiApiMode = resolveProviderOpenAIApiMode(providerName, {
+      ...providerConfig,
+      apiFormat: effectiveApiFormat,
+    });
     result.push({
       providerName,
       baseURL: effectiveBaseURL,
       apiKey: apiKey || 'sk-lobsterai-local',
       apiType: effectiveApiFormat === 'anthropic' ? 'anthropic' : 'openai',
+      ...(openaiApiMode ? { openaiApiMode } : {}),
       authType: providerConfig.authType,
       codingPlanEnabled: !!providerConfig.codingPlanEnabled,
       models,

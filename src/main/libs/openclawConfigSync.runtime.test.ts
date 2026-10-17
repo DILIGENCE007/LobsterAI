@@ -54,6 +54,7 @@ const mockRuntimeState = vi.hoisted(() => ({
     baseURL: string;
     apiKey: string;
     apiType: 'anthropic' | 'openai';
+    openaiApiMode?: 'chat-completions' | 'responses';
     authType?: 'apikey' | 'oauth';
     codingPlanEnabled: boolean;
     models: Array<{
@@ -104,6 +105,7 @@ const mockRuntimeState = vi.hoisted(() => ({
       modelName?: string;
       contextWindow?: number;
       maxTokens?: number;
+      openaiApiMode?: 'chat-completions' | 'responses';
     };
   },
 }));
@@ -3023,6 +3025,166 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(selection.providerConfig.auth).toBe(AuthType.OAuth);
     expect(selection.providerConfig).not.toHaveProperty('headers');
     expect(selection.providerConfig).not.toHaveProperty('apiKey');
+  });
+
+  test('maps custom provider Responses mode to the openai-responses transport', async () => {
+    const { OpenAIApiMode, OpenClawApi } = await import('../../shared/providers');
+    const { buildProviderSelection } = await import('./openclawConfigSync');
+
+    const selection = buildProviderSelection({
+      apiKey: 'sk-custom',
+      baseURL: 'https://gateway.example.com/v1/responses/',
+      modelId: 'gpt-5.5',
+      apiType: 'openai',
+      openaiApiMode: OpenAIApiMode.Responses,
+      providerName: 'custom_0',
+    });
+
+    expect(selection.providerId).toBe('custom_0');
+    expect(selection.providerConfig.api).toBe(OpenClawApi.OpenAIResponses);
+    expect(selection.providerConfig.models[0].api).toBe(OpenClawApi.OpenAIResponses);
+    expect(selection.providerConfig.baseUrl).toBe('https://gateway.example.com/v1');
+  });
+
+  test('keeps Chat Completions for custom providers without Responses mode', async () => {
+    const { OpenAIApiMode, OpenClawApi } = await import('../../shared/providers');
+    const { buildProviderSelection } = await import('./openclawConfigSync');
+
+    for (const openaiApiMode of [undefined, OpenAIApiMode.ChatCompletions]) {
+      const selection = buildProviderSelection({
+        apiKey: 'sk-custom',
+        baseURL: 'https://gateway.example.com/v1',
+        modelId: 'gpt-5.5',
+        apiType: 'openai',
+        openaiApiMode,
+        providerName: 'custom_0',
+      });
+      expect(selection.providerConfig.api).toBe(OpenClawApi.OpenAICompletions);
+    }
+
+    const anthropicSelection = buildProviderSelection({
+      apiKey: 'sk-custom',
+      baseURL: 'https://gateway.example.com',
+      modelId: 'claude-sonnet-4-6',
+      apiType: 'anthropic',
+      openaiApiMode: OpenAIApiMode.Responses,
+      providerName: 'custom_0',
+    });
+    expect(anthropicSelection.providerConfig.api).toBe(OpenClawApi.AnthropicMessages);
+  });
+
+  test('ignores Responses mode for built-in providers with their own routing', async () => {
+    const { OpenAIApiMode, OpenClawApi, ProviderName } = await import('../../shared/providers');
+    const { buildProviderSelection } = await import('./openclawConfigSync');
+
+    const selection = buildProviderSelection({
+      apiKey: 'sk-deepseek',
+      baseURL: 'https://api.deepseek.com',
+      modelId: 'deepseek-v4-flash',
+      apiType: 'openai',
+      openaiApiMode: OpenAIApiMode.Responses,
+      providerName: ProviderName.DeepSeek,
+    });
+
+    expect(selection.providerConfig.api).toBe(OpenClawApi.OpenAICompletions);
+  });
+
+  test('maps reviewed built-in providers to openai-responses in Responses mode', async () => {
+    const { OpenAIApiMode, OpenClawApi, OpenClawProviderId, ProviderName } = await import('../../shared/providers');
+    const { buildProviderSelection } = await import('./openclawConfigSync');
+
+    const cases = [
+      { providerName: ProviderName.OpenRouter, baseURL: 'https://openrouter.ai/api/v1', providerId: OpenClawProviderId.OpenRouter },
+      { providerName: ProviderName.Volcengine, baseURL: 'https://ark.cn-beijing.volces.com/api/v3', providerId: OpenClawProviderId.Volcengine },
+      { providerName: ProviderName.Minimax, baseURL: 'https://api.minimaxi.com/v1', providerId: OpenClawProviderId.Minimax },
+      { providerName: ProviderName.LmStudio, baseURL: 'http://localhost:1234/v1', providerId: OpenClawProviderId.LmStudio },
+    ];
+    for (const { providerName, baseURL, providerId } of cases) {
+      const selection = buildProviderSelection({
+        apiKey: 'sk-test',
+        baseURL,
+        modelId: 'test-model',
+        apiType: 'openai',
+        openaiApiMode: OpenAIApiMode.Responses,
+        providerName,
+      });
+      expect(selection.providerId).toBe(providerId);
+      expect(selection.providerConfig.api).toBe(OpenClawApi.OpenAIResponses);
+      expect(selection.providerConfig.baseUrl).toBe(baseURL);
+    }
+  });
+
+  test('keeps Chat Completions for Responses mode on coding plan and OAuth routes', async () => {
+    const { OpenAIApiMode, OpenClawApi, ProviderName } = await import('../../shared/providers');
+    const { buildProviderSelection } = await import('./openclawConfigSync');
+
+    const codingPlan = buildProviderSelection({
+      apiKey: 'sk-ark',
+      baseURL: 'https://ark.cn-beijing.volces.com/api/coding/v3',
+      modelId: 'ark-code-latest',
+      apiType: 'openai',
+      openaiApiMode: OpenAIApiMode.Responses,
+      providerName: ProviderName.Volcengine,
+      codingPlanEnabled: true,
+    });
+    expect(codingPlan.providerConfig.api).toBe(OpenClawApi.OpenAICompletions);
+
+    const oauth = buildProviderSelection({
+      apiKey: 'sk-custom',
+      baseURL: 'https://gateway.example.com/v1',
+      modelId: 'gpt-5.5',
+      apiType: 'openai',
+      openaiApiMode: OpenAIApiMode.Responses,
+      providerName: 'custom_0',
+      authType: 'oauth',
+    });
+    expect(oauth.providerConfig.api).toBe(OpenClawApi.OpenAICompletions);
+  });
+
+  test('writes Responses transport for custom providers during sync', async () => {
+    mockRuntimeState.rawApiConfig = {
+      config: {
+        baseURL: 'https://gateway.example.com/v1',
+        apiKey: 'sk-custom',
+        model: 'gpt-5.5',
+        apiType: 'openai',
+      },
+      providerMetadata: {
+        providerName: 'custom_0',
+        codingPlanEnabled: false,
+        supportsImage: true,
+        modelName: 'GPT 5.5',
+        openaiApiMode: 'responses',
+      },
+    };
+    mockRuntimeState.enabledProviders = [
+      {
+        providerName: 'custom_0',
+        baseURL: 'https://gateway.example.com/v1',
+        apiKey: 'sk-custom',
+        apiType: 'openai',
+        openaiApiMode: 'responses',
+        codingPlanEnabled: false,
+        models: [
+          { id: 'gpt-5.5', name: 'GPT 5.5', supportsImage: true },
+          { id: 'gpt-5.5-mini', name: 'GPT 5.5 Mini', supportsImage: true },
+        ],
+      },
+    ];
+
+    const sync = await createSync();
+    const result = sync.sync('custom-responses-api');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const customProvider = config.models.providers.custom_0;
+    expect(customProvider.api).toBe('openai-responses');
+    expect(customProvider.baseUrl).toBe('https://gateway.example.com/v1');
+    expect(customProvider.models.map((model: { id: string; api: string }) => [model.id, model.api])).toEqual([
+      ['gpt-5.5', 'openai-responses'],
+      ['gpt-5.5-mini', 'openai-responses'],
+    ]);
+    expect(config.agents.defaults.model.primary).toBe('custom_0/gpt-5.5');
   });
 
   test('maps MiniMax OAuth mode to the MiniMax portal provider', async () => {

@@ -1,8 +1,11 @@
 import { expect, test } from 'vitest';
 
-import { OpenClawProviderId, ProviderAuthType, ProviderName } from '../../../shared/providers';
+import { ApiFormat, OpenAIApiMode, OpenClawProviderId, ProviderAuthType, ProviderName } from '../../../shared/providers';
 import {
+  ApiFormatOption,
   buildOpenAIConnectionTestRequestBody,
+  getApiFormatOption,
+  getApiFormatOptions,
   getOpenClawProviderIdForConfig,
   hasEquivalentProviderModelId,
   hasProviderAuthConfigured,
@@ -11,7 +14,9 @@ import {
   parseMaxOutputTokensInput,
   type ProviderConfig,
   providerRequiresApiKey,
+  resolveApiFormatOption,
   shouldShowApiFormatSelector,
+  shouldUseOpenAIResponsesForProvider,
 } from './modelProviderUtils';
 
 const providerConfig = (overrides: Partial<ProviderConfig> = {}): ProviderConfig => ({
@@ -20,6 +25,67 @@ const providerConfig = (overrides: Partial<ProviderConfig> = {}): ProviderConfig
   baseUrl: 'https://api.example.com',
   models: [],
   ...overrides,
+});
+
+test('connection tests use Responses for OpenAI and custom providers in Responses mode', () => {
+  expect(shouldUseOpenAIResponsesForProvider(ProviderName.OpenAI)).toBe(true);
+  expect(shouldUseOpenAIResponsesForProvider('custom_0')).toBe(false);
+  expect(shouldUseOpenAIResponsesForProvider('custom_0', {
+    apiFormat: ApiFormat.OpenAI,
+    openaiApiMode: OpenAIApiMode.Responses,
+  })).toBe(true);
+  expect(shouldUseOpenAIResponsesForProvider('custom_0', {
+    apiFormat: ApiFormat.Anthropic,
+    openaiApiMode: OpenAIApiMode.Responses,
+  })).toBe(false);
+  expect(shouldUseOpenAIResponsesForProvider(ProviderName.DeepSeek, {
+    apiFormat: ApiFormat.OpenAI,
+    openaiApiMode: OpenAIApiMode.Responses,
+  })).toBe(false);
+  expect(shouldUseOpenAIResponsesForProvider(ProviderName.OpenRouter, {
+    apiFormat: ApiFormat.OpenAI,
+    openaiApiMode: OpenAIApiMode.Responses,
+  })).toBe(true);
+});
+
+test('API format dropdown offers Responses only where the choice applies', () => {
+  const withResponses = [
+    ApiFormatOption.OpenAIChatCompletions,
+    ApiFormatOption.Anthropic,
+    ApiFormatOption.OpenAIResponses,
+  ];
+  const withoutResponses = [ApiFormatOption.OpenAIChatCompletions, ApiFormatOption.Anthropic];
+  expect(getApiFormatOptions('custom_0')).toEqual(withResponses);
+  expect(getApiFormatOptions(ProviderName.OpenRouter)).toEqual(withResponses);
+  expect(getApiFormatOptions(ProviderName.Volcengine, { codingPlanEnabled: false })).toEqual(withResponses);
+  expect(getApiFormatOptions(ProviderName.Volcengine, { codingPlanEnabled: true })).toEqual(withoutResponses);
+  expect(getApiFormatOptions(ProviderName.DeepSeek)).toEqual(withoutResponses);
+});
+
+test('API format dropdown value reflects apiFormat and openaiApiMode', () => {
+  expect(getApiFormatOption('custom_0', { apiFormat: ApiFormat.Anthropic, openaiApiMode: OpenAIApiMode.Responses }))
+    .toBe(ApiFormatOption.Anthropic);
+  expect(getApiFormatOption('custom_0', { apiFormat: ApiFormat.OpenAI }))
+    .toBe(ApiFormatOption.OpenAIChatCompletions);
+  expect(getApiFormatOption('custom_0', { apiFormat: ApiFormat.OpenAI, openaiApiMode: OpenAIApiMode.Responses }))
+    .toBe(ApiFormatOption.OpenAIResponses);
+  expect(getApiFormatOption(ProviderName.DeepSeek, { apiFormat: ApiFormat.OpenAI, openaiApiMode: OpenAIApiMode.Responses }))
+    .toBe(ApiFormatOption.OpenAIChatCompletions);
+  expect(getApiFormatOption(ProviderName.Volcengine, {
+    apiFormat: ApiFormat.OpenAI,
+    openaiApiMode: OpenAIApiMode.Responses,
+    codingPlanEnabled: true,
+  })).toBe(ApiFormatOption.OpenAIChatCompletions);
+});
+
+test('API format dropdown options round-trip to persisted fields', () => {
+  for (const option of Object.values(ApiFormatOption)) {
+    expect(getApiFormatOption('custom_0', resolveApiFormatOption(option))).toBe(option);
+  }
+  expect(resolveApiFormatOption(ApiFormatOption.Anthropic)).toEqual({
+    apiFormat: ApiFormat.Anthropic,
+    openaiApiMode: OpenAIApiMode.ChatCompletions,
+  });
 });
 
 test('GitHub Copilot does not require a persisted API key', () => {

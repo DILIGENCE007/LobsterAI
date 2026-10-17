@@ -4274,7 +4274,10 @@ const Settings: React.FC<SettingsProps> = ({
           }),
         });
       } else {
-        const useResponsesApi = shouldUseOpenAIResponsesForProvider(testingProvider);
+        const useResponsesApi = shouldUseOpenAIResponsesForProvider(testingProvider, {
+          ...providerConfig,
+          apiFormat: effectiveApiFormat,
+        });
         const openaiUrl = useResponsesApi
           ? buildOpenAIResponsesUrl(normalizedBaseUrl)
           : buildOpenAICompatibleChatCompletionsUrl(normalizedBaseUrl, testingProvider);

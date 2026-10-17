@@ -504,6 +504,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     apiFormatNative: 'Anthropic 兼容',
     apiFormatOpenAI: 'OpenAI 兼容',
     apiFormatHint: '需与 Base URL 的接口协议一致，OpenAI 兼容地址通常以 /v1 结尾',
+    apiFormatAnthropicMessages: 'Anthropic 兼容（Messages）',
+    apiFormatOpenAIChatCompletions: 'OpenAI 兼容（Chat Completions）',
+    apiFormatOpenAIResponses: 'OpenAI 兼容（Responses）',
+    apiFormatResponsesHint: '需服务商支持 OpenAI Responses 接口，请求地址为 Base URL + /responses',
     zhipuCodingPlanHint: '启用后使用 GLM Coding Plan 专属 API 端点',
     zhipuCodingPlanEndpointHint: '使用 GLM Coding Plan 时，系统将自动切换到 Coding 专属端点',
     qwenCodingPlanHint: '启用后使用阿里云百炼 Coding Plan 专属 API 端点',
@@ -5062,6 +5066,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     apiFormatOpenAI: 'OpenAI Compatible',
     apiFormatHint:
       'Must match the protocol behind your Base URL; OpenAI-compatible URLs usually end with /v1',
+    apiFormatAnthropicMessages: 'Anthropic Compatible (Messages)',
+    apiFormatOpenAIChatCompletions: 'OpenAI Compatible (Chat Completions)',
+    apiFormatOpenAIResponses: 'OpenAI Compatible (Responses)',
+    apiFormatResponsesHint: 'Requires the provider to support the OpenAI Responses API. Requests go to Base URL + /responses.',
     zhipuCodingPlanHint: 'When enabled, uses the GLM Coding Plan dedicated API endpoint',
     zhipuCodingPlanEndpointHint:
       'When using GLM Coding Plan, the system will automatically switch to the dedicated Coding endpoint',
