@@ -508,6 +508,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     apiFormatOpenAIChatCompletions: 'OpenAI 兼容（Chat Completions）',
     apiFormatOpenAIResponses: 'OpenAI 兼容（Responses）',
     apiFormatResponsesHint: '需服务商支持 OpenAI Responses 接口，请求地址为 Base URL + /responses',
+    apiFormatGemini: 'Gemini（generateContent）',
+    apiFormatGeminiHint: 'Gemini 原生接口，Base URL 未带版本号时会自动补上 /v1beta',
     zhipuCodingPlanHint: '启用后使用 GLM Coding Plan 专属 API 端点',
     zhipuCodingPlanEndpointHint: '使用 GLM Coding Plan 时，系统将自动切换到 Coding 专属端点',
     qwenCodingPlanHint: '启用后使用阿里云百炼 Coding Plan 专属 API 端点',
@@ -5070,6 +5072,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     apiFormatOpenAIChatCompletions: 'OpenAI Compatible (Chat Completions)',
     apiFormatOpenAIResponses: 'OpenAI Compatible (Responses)',
     apiFormatResponsesHint: 'Requires the provider to support the OpenAI Responses API. Requests go to Base URL + /responses.',
+    apiFormatGemini: 'Gemini (generateContent)',
+    apiFormatGeminiHint: 'Native Gemini API. /v1beta is appended when the Base URL has no version.',
     zhipuCodingPlanHint: 'When enabled, uses the GLM Coding Plan dedicated API endpoint',
     zhipuCodingPlanEndpointHint:
       'When using GLM Coding Plan, the system will automatically switch to the dedicated Coding endpoint',

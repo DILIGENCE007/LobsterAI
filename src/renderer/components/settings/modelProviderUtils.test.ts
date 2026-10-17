@@ -3,6 +3,7 @@ import { expect, test } from 'vitest';
 import { ApiFormat, OpenAIApiMode, OpenClawProviderId, ProviderAuthType, ProviderName } from '../../../shared/providers';
 import {
   ApiFormatOption,
+  buildGeminiConnectionTestRequest,
   buildOpenAIConnectionTestRequestBody,
   getApiFormatOption,
   getApiFormatOptions,
@@ -45,21 +46,20 @@ test('connection tests use Responses for OpenAI and custom providers in Response
   expect(shouldUseOpenAIResponsesForProvider(ProviderName.OpenRouter, {
     apiFormat: ApiFormat.OpenAI,
     openaiApiMode: OpenAIApiMode.Responses,
-  })).toBe(true);
+  })).toBe(false);
 });
 
-test('API format dropdown offers Responses only where the choice applies', () => {
-  const withResponses = [
+test('API format dropdown offers Responses and Gemini only on custom providers', () => {
+  const builtIn = [ApiFormatOption.OpenAIChatCompletions, ApiFormatOption.Anthropic];
+  expect(getApiFormatOptions('custom_0')).toEqual([
     ApiFormatOption.OpenAIChatCompletions,
     ApiFormatOption.Anthropic,
     ApiFormatOption.OpenAIResponses,
-  ];
-  const withoutResponses = [ApiFormatOption.OpenAIChatCompletions, ApiFormatOption.Anthropic];
-  expect(getApiFormatOptions('custom_0')).toEqual(withResponses);
-  expect(getApiFormatOptions(ProviderName.OpenRouter)).toEqual(withResponses);
-  expect(getApiFormatOptions(ProviderName.Volcengine, { codingPlanEnabled: false })).toEqual(withResponses);
-  expect(getApiFormatOptions(ProviderName.Volcengine, { codingPlanEnabled: true })).toEqual(withoutResponses);
-  expect(getApiFormatOptions(ProviderName.DeepSeek)).toEqual(withoutResponses);
+    ApiFormatOption.Gemini,
+  ]);
+  expect(getApiFormatOptions(ProviderName.OpenRouter)).toEqual(builtIn);
+  expect(getApiFormatOptions(ProviderName.Volcengine)).toEqual(builtIn);
+  expect(getApiFormatOptions(ProviderName.DeepSeek)).toEqual(builtIn);
 });
 
 test('API format dropdown value reflects apiFormat and openaiApiMode', () => {
@@ -71,11 +71,20 @@ test('API format dropdown value reflects apiFormat and openaiApiMode', () => {
     .toBe(ApiFormatOption.OpenAIResponses);
   expect(getApiFormatOption(ProviderName.DeepSeek, { apiFormat: ApiFormat.OpenAI, openaiApiMode: OpenAIApiMode.Responses }))
     .toBe(ApiFormatOption.OpenAIChatCompletions);
-  expect(getApiFormatOption(ProviderName.Volcengine, {
-    apiFormat: ApiFormat.OpenAI,
-    openaiApiMode: OpenAIApiMode.Responses,
-    codingPlanEnabled: true,
-  })).toBe(ApiFormatOption.OpenAIChatCompletions);
+  expect(getApiFormatOption('custom_0', { apiFormat: ApiFormat.Gemini }))
+    .toBe(ApiFormatOption.Gemini);
+  expect(getApiFormatOption(ProviderName.DeepSeek, { apiFormat: ApiFormat.Gemini }))
+    .toBe(ApiFormatOption.Anthropic);
+});
+
+test('custom Gemini connection test calls native generateContent', () => {
+  expect(buildGeminiConnectionTestRequest('https://relay.example.com/', 'gemini-3-pro')).toEqual({
+    url: 'https://relay.example.com/v1beta/models/gemini-3-pro:generateContent',
+    body: {
+      contents: [{ role: 'user', parts: [{ text: 'Hi' }] }],
+      generationConfig: { maxOutputTokens: 64 },
+    },
+  });
 });
 
 test('API format dropdown options round-trip to persisted fields', () => {

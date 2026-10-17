@@ -37,6 +37,14 @@ const API_FORMAT_OPTION_LABEL_KEYS: Record<ApiFormatOption, string> = {
   [ApiFormatOption.Anthropic]: 'apiFormatAnthropicMessages',
   [ApiFormatOption.OpenAIChatCompletions]: 'apiFormatOpenAIChatCompletions',
   [ApiFormatOption.OpenAIResponses]: 'apiFormatOpenAIResponses',
+  [ApiFormatOption.Gemini]: 'apiFormatGemini',
+};
+
+const API_FORMAT_OPTION_HINT_KEYS: Record<ApiFormatOption, string> = {
+  [ApiFormatOption.Anthropic]: 'apiFormatHint',
+  [ApiFormatOption.OpenAIChatCompletions]: 'apiFormatHint',
+  [ApiFormatOption.OpenAIResponses]: 'apiFormatResponsesHint',
+  [ApiFormatOption.Gemini]: 'apiFormatGeminiHint',
 };
 
 // Context Window slider constants & helpers
@@ -1896,9 +1904,7 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                     }))}
                   />
                   <p className="mt-1 text-xs text-secondary">
-                    {getApiFormatOption(activeProvider, providers[activeProvider]) === ApiFormatOption.OpenAIResponses
-                      ? i18nService.t('apiFormatResponsesHint')
-                      : i18nService.t('apiFormatHint')}
+                    {i18nService.t(API_FORMAT_OPTION_HINT_KEYS[getApiFormatOption(activeProvider, providers[activeProvider])])}
                   </p>
                 </div>
               )}

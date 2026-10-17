@@ -11,6 +11,12 @@ export {
   ProviderRegistry,
 } from './constants';
 export {
+  isCustomProviderKey,
+  normalizeGeminiApiBaseUrl,
+  supportsGeminiApiFormatSelection,
+  usesCustomGeminiApiFormat,
+} from './customProviders';
+export {
   LOBSTERAI_REQUEST_OPTIONS_FIELD,
   LOBSTERAI_REQUEST_OPTIONS_VERSION,
   LobsterAIRequestCapability,

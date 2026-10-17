@@ -1,12 +1,14 @@
 import type { ModelPresetId } from '../../shared/modelPresets/constants';
 import {
   type ApiFormat,
+  normalizeGeminiApiBaseUrl,
   type OpenAIApiMode,
   type ProviderConfig,
   ProviderName,
   ProviderRegistry,
   resolveCodingPlanBaseUrl,
   resolveProviderOpenAIApiMode,
+  usesCustomGeminiApiFormat,
 } from '../../shared/providers';
 import {
   type LobsterAIRequestCapability,
@@ -156,8 +158,16 @@ export type ApiConfigResolution = {
     contextWindow?: number;
     maxTokens?: number;
     openaiApiMode?: OpenAIApiMode;
+    /** Custom provider speaking native Gemini generateContent. */
+    geminiNative?: boolean;
   };
 };
+
+/** Whether the resolved provider should be called with the native Gemini protocol. */
+export function usesGeminiNativeApi(resolution: ApiConfigResolution): boolean {
+  return resolution.providerMetadata?.providerName === ProviderName.Gemini
+    || resolution.providerMetadata?.geminiNative === true;
+}
 
 // Store getter function injected from main.ts
 let storeGetter: (() => SqliteStore | null) | null = null;
@@ -476,10 +486,16 @@ type MatchedProvider = {
   modelName?: string;
   contextWindow?: number;
   maxTokens?: number;
+  geminiNative?: boolean;
 };
 
 function getEffectiveProviderApiFormat(providerName: string, apiFormat: unknown): AnthropicApiFormat {
   if (providerName === ProviderName.OpenAI || providerName === ProviderName.Gemini || providerName === ProviderName.Xai || providerName === ProviderName.StepFun || providerName === ProviderName.Youdaozhiyun || providerName === ProviderName.Copilot) {
+    return 'openai';
+  }
+  // Like the built-in Gemini provider: not Anthropic; native routing is
+  // carried separately as geminiNative.
+  if (usesCustomGeminiApiFormat(providerName, apiFormat)) {
     return 'openai';
   }
   if (providerName === ProviderName.Anthropic) {
@@ -655,7 +671,10 @@ function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvide
   }
 
   let apiFormat = getEffectiveProviderApiFormat(providerName, providerConfig.apiFormat);
-  let baseURL = providerConfig.baseUrl?.trim();
+  const geminiNative = usesCustomGeminiApiFormat(providerName, providerConfig.apiFormat);
+  let baseURL = geminiNative
+    ? normalizeGeminiApiBaseUrl(providerConfig.baseUrl ?? '')
+    : providerConfig.baseUrl?.trim();
 
   if (providerConfig.codingPlanEnabled) {
     const resolved = resolveCodingPlanBaseUrl(providerName, true, apiFormat, baseURL ?? '');
@@ -699,6 +718,7 @@ function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvide
       modelName: matchedModel?.name,
       contextWindow: matchedModel?.contextWindow,
       maxTokens: matchedModel?.maxTokens,
+      ...(geminiNative ? { geminiNative } : {}),
     },
   };
 }
@@ -809,6 +829,7 @@ export function resolveCurrentApiConfig(target: OpenAICompatProxyTarget = 'local
       contextWindow: matched.contextWindow,
       maxTokens: matched.maxTokens,
       ...(openaiApiMode ? { openaiApiMode } : {}),
+      ...(matched.geminiNative ? { geminiNative: true } : {}),
     },
   };
 }
@@ -900,6 +921,7 @@ export function resolveRawApiConfig(): ApiConfigResolution {
       contextWindow: matched.contextWindow,
       maxTokens: matched.maxTokens,
       ...(openaiApiMode ? { openaiApiMode } : {}),
+      ...(matched.geminiNative ? { geminiNative: true } : {}),
     },
   };
 }
@@ -976,6 +998,7 @@ export type ProviderRawConfig = {
   apiKey: string;
   apiType: 'anthropic' | 'openai';
   openaiApiMode?: OpenAIApiMode;
+  geminiNative?: boolean;
   authType?: ProviderConfig['authType'];
   codingPlanEnabled: boolean;
   models: ProviderModelConfig[];
@@ -1082,7 +1105,10 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
     const apiKey = providerConfig.apiKey?.trim() || '';
     if (!apiKey && providerRequiresApiKey(providerName)) continue;
 
-    const baseURL = providerConfig.baseUrl?.trim() || '';
+    const geminiNative = usesCustomGeminiApiFormat(providerName, providerConfig.apiFormat);
+    const baseURL = geminiNative
+      ? normalizeGeminiApiBaseUrl(providerConfig.baseUrl ?? '')
+      : providerConfig.baseUrl?.trim() || '';
 
     let effectiveBaseURL = baseURL;
     let effectiveApiFormat = getEffectiveProviderApiFormat(providerName, providerConfig.apiFormat);
@@ -1108,6 +1134,7 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
       apiKey: apiKey || 'sk-lobsterai-local',
       apiType: effectiveApiFormat === 'anthropic' ? 'anthropic' : 'openai',
       ...(openaiApiMode ? { openaiApiMode } : {}),
+      ...(geminiNative ? { geminiNative } : {}),
       authType: providerConfig.authType,
       codingPlanEnabled: !!providerConfig.codingPlanEnabled,
       models,

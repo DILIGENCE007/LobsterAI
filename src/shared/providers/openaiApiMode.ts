@@ -1,20 +1,5 @@
-import { ApiFormat, OpenAIApiMode, ProviderAuthType, ProviderName } from './constants';
-
-const CUSTOM_PROVIDER_KEY_PATTERN = /^custom_[0-9]+$/;
-
-/**
- * Built-in providers whose OpenAI-compatible endpoint serves `/responses` and
- * whose OpenClaw provider plugin leaves Responses payloads alone. Before adding
- * one, check that its plugin's stream wrappers gate on `openai-completions`
- * (DeepSeek V4 and Xiaomi MiMo thinking wrappers currently do not) and that no
- * LobsterAI runtime profile requires Chat Completions (Moonshot Kimi K3).
- */
-const RESPONSES_CAPABLE_BUILTIN_PROVIDERS: ReadonlySet<string> = new Set([
-  ProviderName.OpenRouter,
-  ProviderName.Volcengine,
-  ProviderName.Minimax,
-  ProviderName.LmStudio,
-]);
+import { ApiFormat, OpenAIApiMode, ProviderAuthType } from './constants';
+import { isCustomProviderKey } from './customProviders';
 
 type OpenAIApiModeContext = {
   apiFormat?: unknown;
@@ -23,11 +8,13 @@ type OpenAIApiModeContext = {
   authType?: unknown;
 };
 
-/** Whether this provider can ever offer the Chat Completions / Responses choice. */
-export const supportsOpenAIApiModeSelection = (providerName: string): boolean => (
-  CUSTOM_PROVIDER_KEY_PATTERN.test(providerName)
-  || RESPONSES_CAPABLE_BUILTIN_PROVIDERS.has(providerName)
-);
+/**
+ * Whether this provider can offer the Chat Completions / Responses choice.
+ * Custom providers only: built-in providers' OpenClaw plugins and runtime
+ * profiles are tuned for Chat Completions (e.g. DeepSeek V4 and Xiaomi MiMo
+ * thinking wrappers inject Chat Completions fields regardless of transport).
+ */
+export const supportsOpenAIApiModeSelection = isCustomProviderKey;
 
 /**
  * Whether the choice applies to the provider's current setup. Coding plan and

@@ -1,4 +1,11 @@
-import { OpenAIApiMode, ProviderName, resolveCodingPlanBaseUrl, resolveProviderOpenAIApiMode } from '../../shared/providers';
+import {
+  normalizeGeminiApiBaseUrl,
+  OpenAIApiMode,
+  ProviderName,
+  resolveCodingPlanBaseUrl,
+  resolveProviderOpenAIApiMode,
+  usesCustomGeminiApiFormat,
+} from '../../shared/providers';
 import { store } from '../store';
 import { ChatMessagePayload, ChatUserMessageInput, ImageAttachment } from '../types/chat';
 import { configService } from './config';
@@ -320,7 +327,8 @@ class ApiService {
         
         return {
           apiKey: runtimeCredential?.apiKey ?? providerConfig.apiKey,
-          baseUrl: runtimeCredential?.baseUrl ?? baseUrl,
+          baseUrl: runtimeCredential?.baseUrl
+            ?? (usesCustomGeminiApiFormat(provider, apiFormat) ? normalizeGeminiApiBaseUrl(baseUrl) : baseUrl),
           provider: provider,
           apiFormat,
           openaiApiMode: resolveProviderOpenAIApiMode(provider, { ...providerConfig, apiFormat }),

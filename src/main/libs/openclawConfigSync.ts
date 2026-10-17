@@ -40,12 +40,14 @@ import {
   isOpenAIApiModeAvailable,
   ModelRuntimeProfile,
   ModelRuntimeProfileSource,
+  normalizeGeminiApiBaseUrl,
   OpenAIApiMode,
   OpenClawApi as OpenClawApiConst,
   OpenClawProviderId,
   ProviderName,
   ProviderRegistry,
   resolveModelRuntimeProfile,
+  supportsGeminiApiFormatSelection,
 } from '../../shared/providers';
 import {
   LOBSTERAI_REQUEST_OPTIONS_VERSION,
@@ -1177,6 +1179,8 @@ export const buildProviderSelection = (options: {
   modelId: string;
   apiType: 'anthropic' | 'openai' | undefined;
   openaiApiMode?: OpenAIApiMode;
+  /** Custom provider speaking native Gemini generateContent. */
+  geminiNative?: boolean;
   providerName?: string;
   authType?: 'apikey' | 'oauth';
   codingPlanEnabled?: boolean;
@@ -1198,15 +1202,24 @@ export const buildProviderSelection = (options: {
     apiType: options.apiType,
     baseURL: options.baseURL,
   });
-  // Users can move an OpenAI-compatible provider onto OpenClaw's generic
-  // openai-responses transport; the shared allowlist keeps providers whose
-  // OpenClaw plugin or runtime profile assumes Chat Completions out.
-  const api = descriptorApi === OpenClawApiConst.OpenAICompletions
+  // Custom providers may opt into OpenClaw's generic Google GenAI or
+  // openai-responses transports; the shared helpers keep built-in providers,
+  // whose OpenClaw plugins assume their own transport, out.
+  const usesGeminiTransport = options.geminiNative === true
+    && supportsGeminiApiFormatSelection(providerName);
+  const usesResponsesTransport = !usesGeminiTransport
+    && descriptorApi === OpenClawApiConst.OpenAICompletions
     && options.openaiApiMode === OpenAIApiMode.Responses
-    && isOpenAIApiModeAvailable(providerName, options)
-    ? (OpenClawApiConst.OpenAIResponses as OpenClawTransportApi)
-    : descriptorApi;
-  if (api === OpenClawApiConst.OpenAIResponses) {
+    && isOpenAIApiModeAvailable(providerName, options);
+  const api = usesGeminiTransport
+    ? (OpenClawApiConst.GoogleGenerativeAI as OpenClawTransportApi)
+    : usesResponsesTransport
+      ? (OpenClawApiConst.OpenAIResponses as OpenClawTransportApi)
+      : descriptorApi;
+  if (usesGeminiTransport) {
+    // The Google GenAI SDK appends `/models/...` to a versioned base URL.
+    baseUrl = normalizeGeminiApiBaseUrl(options.baseURL);
+  } else if (usesResponsesTransport) {
     baseUrl = stripResponsesSuffix(baseUrl);
   }
 
@@ -2223,6 +2236,7 @@ export class OpenClawConfigSync {
         modelId,
         apiType,
         openaiApiMode: apiResolution.providerMetadata?.openaiApiMode,
+        geminiNative: apiResolution.providerMetadata?.geminiNative,
         providerName: apiResolution.providerMetadata?.providerName,
         authType: apiResolution.providerMetadata?.authType,
         codingPlanEnabled: apiResolution.providerMetadata?.codingPlanEnabled,
@@ -2257,6 +2271,7 @@ export class OpenClawConfigSync {
             modelId: m.id,
             apiType: p.apiType,
             openaiApiMode: p.openaiApiMode,
+            geminiNative: p.geminiNative,
             providerName: p.providerName,
             authType: p.authType,
             codingPlanEnabled: p.codingPlanEnabled,

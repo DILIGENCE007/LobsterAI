@@ -3089,29 +3089,44 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(selection.providerConfig.api).toBe(OpenClawApi.OpenAICompletions);
   });
 
-  test('maps reviewed built-in providers to openai-responses in Responses mode', async () => {
-    const { OpenAIApiMode, OpenClawApi, OpenClawProviderId, ProviderName } = await import('../../shared/providers');
+  test('keeps built-in providers on their own transport in Responses or Gemini mode', async () => {
+    const { OpenAIApiMode, OpenClawApi, ProviderName } = await import('../../shared/providers');
     const { buildProviderSelection } = await import('./openclawConfigSync');
 
-    const cases = [
-      { providerName: ProviderName.OpenRouter, baseURL: 'https://openrouter.ai/api/v1', providerId: OpenClawProviderId.OpenRouter },
-      { providerName: ProviderName.Volcengine, baseURL: 'https://ark.cn-beijing.volces.com/api/v3', providerId: OpenClawProviderId.Volcengine },
-      { providerName: ProviderName.Minimax, baseURL: 'https://api.minimaxi.com/v1', providerId: OpenClawProviderId.Minimax },
-      { providerName: ProviderName.LmStudio, baseURL: 'http://localhost:1234/v1', providerId: OpenClawProviderId.LmStudio },
-    ];
-    for (const { providerName, baseURL, providerId } of cases) {
+    for (const providerName of [ProviderName.OpenRouter, ProviderName.Volcengine, ProviderName.Minimax]) {
       const selection = buildProviderSelection({
         apiKey: 'sk-test',
-        baseURL,
+        baseURL: 'https://api.example.com/v1',
         modelId: 'test-model',
         apiType: 'openai',
         openaiApiMode: OpenAIApiMode.Responses,
+        geminiNative: true,
         providerName,
       });
-      expect(selection.providerId).toBe(providerId);
-      expect(selection.providerConfig.api).toBe(OpenClawApi.OpenAIResponses);
-      expect(selection.providerConfig.baseUrl).toBe(baseURL);
+      expect(selection.providerConfig.api).toBe(OpenClawApi.OpenAICompletions);
     }
+  });
+
+  test('maps custom Gemini providers to the Google GenAI transport', async () => {
+    const { OpenClawApi } = await import('../../shared/providers');
+    const { buildProviderSelection } = await import('./openclawConfigSync');
+
+    const selection = buildProviderSelection({
+      apiKey: 'sk-gemini',
+      baseURL: 'https://relay.example.com/gemini',
+      modelId: 'gemini-3-pro',
+      apiType: 'openai',
+      geminiNative: true,
+      providerName: 'custom_1',
+      supportsThinking: true,
+    });
+
+    expect(selection.providerId).toBe('custom_1');
+    expect(selection.primaryModel).toBe('custom_1/gemini-3-pro');
+    expect(selection.providerConfig.api).toBe(OpenClawApi.GoogleGenerativeAI);
+    expect(selection.providerConfig.models[0].api).toBe(OpenClawApi.GoogleGenerativeAI);
+    expect(selection.providerConfig.baseUrl).toBe('https://relay.example.com/gemini/v1beta');
+    expect(selection.providerConfig.apiKey).toBe('${LOBSTER_APIKEY_CUSTOM_1}');
   });
 
   test('keeps Chat Completions for Responses mode on coding plan and OAuth routes', async () => {

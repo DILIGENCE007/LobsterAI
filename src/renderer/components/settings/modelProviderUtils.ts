@@ -6,6 +6,7 @@ import {
   isOpenAIApiModeAvailable,
   ModelRuntimeProfile,
   ModelRuntimeProfileSource,
+  normalizeGeminiApiBaseUrl,
   normalizeModelIdForComparison,
   OpenAIApiMode,
   OpenClawApi,
@@ -14,6 +15,8 @@ import {
   ProviderRegistry,
   resolveModelRuntimeProfile,
   resolveProviderOpenAIApiMode,
+  supportsGeminiApiFormatSelection,
+  usesCustomGeminiApiFormat,
 } from '../../../shared/providers';
 import { type AppConfig, defaultConfig, isCustomProvider } from '../../config';
 import { i18nService } from '../../services/i18n';
@@ -157,6 +160,9 @@ export const getEffectiveApiFormat = (provider: string, value: unknown): 'anthro
   if (provider === ProviderName.Moonshot && value === 'anthropic') {
     return 'anthropic';
   }
+  if (usesCustomGeminiApiFormat(provider, value)) {
+    return 'gemini';
+  }
   return getFixedApiFormatForProvider(provider) ?? normalizeApiFormat(value);
 };
 
@@ -173,6 +179,7 @@ export const ApiFormatOption = {
   Anthropic: 'anthropic',
   OpenAIChatCompletions: 'openai-chat-completions',
   OpenAIResponses: 'openai-responses',
+  Gemini: 'gemini',
 } as const;
 export type ApiFormatOption = typeof ApiFormatOption[keyof typeof ApiFormatOption];
 
@@ -183,14 +190,18 @@ type OpenAIApiModeConfig = {
   authType?: unknown;
 };
 
-export const getApiFormatOptions = (provider: string, config?: OpenAIApiModeConfig): ApiFormatOption[] => (
-  isOpenAIApiModeAvailable(provider, config)
-    ? [ApiFormatOption.OpenAIChatCompletions, ApiFormatOption.Anthropic, ApiFormatOption.OpenAIResponses]
-    : [ApiFormatOption.OpenAIChatCompletions, ApiFormatOption.Anthropic]
-);
+export const getApiFormatOptions = (provider: string, config?: OpenAIApiModeConfig): ApiFormatOption[] => [
+  ApiFormatOption.OpenAIChatCompletions,
+  ApiFormatOption.Anthropic,
+  ...(isOpenAIApiModeAvailable(provider, config) ? [ApiFormatOption.OpenAIResponses] : []),
+  ...(supportsGeminiApiFormatSelection(provider) ? [ApiFormatOption.Gemini] : []),
+];
 
 export const getApiFormatOption = (provider: string, config: OpenAIApiModeConfig): ApiFormatOption => {
   const apiFormat = getEffectiveApiFormat(provider, config.apiFormat);
+  if (apiFormat === 'gemini' && supportsGeminiApiFormatSelection(provider)) {
+    return ApiFormatOption.Gemini;
+  }
   if (apiFormat !== 'openai') {
     return ApiFormatOption.Anthropic;
   }
@@ -201,8 +212,10 @@ export const getApiFormatOption = (provider: string, config: OpenAIApiModeConfig
 
 export const resolveApiFormatOption = (
   option: ApiFormatOption,
-): { apiFormat: 'anthropic' | 'openai'; openaiApiMode: OpenAIApiMode } => {
+): { apiFormat: 'anthropic' | 'openai' | 'gemini'; openaiApiMode: OpenAIApiMode } => {
   switch (option) {
+    case ApiFormatOption.Gemini:
+      return { apiFormat: 'gemini', openaiApiMode: OpenAIApiMode.ChatCompletions };
     case ApiFormatOption.OpenAIResponses:
       return { apiFormat: 'openai', openaiApiMode: OpenAIApiMode.Responses };
     case ApiFormatOption.OpenAIChatCompletions:
@@ -346,6 +359,18 @@ export const shouldUseMaxCompletionTokensForOpenAI = (provider: string, modelId?
 };
 
 export const CONNECTIVITY_TEST_TOKEN_BUDGET = 64;
+
+/** Native Gemini connectivity probe for custom providers in Gemini format. */
+export const buildGeminiConnectionTestRequest = (baseUrl: string, modelId: string): {
+  url: string;
+  body: Record<string, unknown>;
+} => ({
+  url: `${normalizeGeminiApiBaseUrl(baseUrl)}/models/${encodeURIComponent(modelId)}:generateContent`,
+  body: {
+    contents: [{ role: 'user', parts: [{ text: 'Hi' }] }],
+    generationConfig: { maxOutputTokens: CONNECTIVITY_TEST_TOKEN_BUDGET },
+  },
+});
 
 export const buildOpenAIConnectionTestRequestBody = (options: {
   provider: ProviderType;
