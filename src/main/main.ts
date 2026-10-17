@@ -199,7 +199,6 @@ import {
   OpenClawLoopbackRepairOutcome,
 } from '../shared/openclawEngine/constants';
 import { OpenClawRepairPhase, OpenClawRepairStage } from '../shared/openclawEngine/repair';
-import { PlatformRegistry } from '../shared/platform';
 import type { ProviderConfig } from '../shared/providers';
 import {
   ModelRuntimeProfile,
@@ -474,11 +473,7 @@ import {
   shouldSyncServerModelConfig,
   syncServerModelConfigIfNeeded,
 } from './libs/openclawAgentModels';
-import {
-  buildManagedSessionKey,
-  DEFAULT_MANAGED_AGENT_ID,
-  OpenClawChannelSessionSync,
-} from './libs/openclawChannelSessionSync';
+import { OpenClawChannelSessionSync } from './libs/openclawChannelSessionSync';
 import { createOpenClawRepairBackupDirectory, OpenClawRepairFailure, runOpenClawCompatibilityRepair, runOpenClawDoctorRepair } from './libs/openclawCompatibilityRepair';
 import { OpenClawModelRuntimeChange, resolveOpenClawModelRuntimeChange } from './libs/openclawConfigAdmission';
 import { createOpenClawConfigAutoRestoreHandler } from './libs/openclawConfigAutoRestore';
@@ -4239,109 +4234,10 @@ const getIMGatewayManager = () => {
       getOpenClawSessionKeysForCoworkSession: (sessionId: string) => {
         return openClawRuntimeAdapter?.getSessionKeysForSession(sessionId) ?? [];
       },
-      createScheduledTask: async ({ sessionId, message, request }) => {
-        // if (message.platform === 'dingtalk') {
-        //   await getIMGatewayManager().primeConversationReplyRoute(
-        //     message.platform,
-        //     message.conversationId,
-        //     sessionId,
-        //   );
-        // }
-        const channelName = PlatformRegistry.channelOf(message.platform);
-        const hasChannel = !!(channelName && message.conversationId);
-        // Strip IM subtype prefix (e.g. "direct:ou_xxx" -> "ou_xxx")
-        let deliveryTo = message.conversationId;
-        if (hasChannel && deliveryTo) {
-          const colonIdx = deliveryTo.indexOf(':');
-          if (colonIdx > 0) {
-            deliveryTo = deliveryTo.slice(colonIdx + 1);
-          }
-        }
-        const task = await getCronJobService().addJob({
-          name: request.taskName,
-          description: '',
-          enabled: true,
-          schedule: {
-            kind: 'at',
-            at: request.scheduleAt,
-          },
-          sessionTarget: hasChannel ? 'isolated' : 'main',
-          wakeMode: 'now',
-          payload: hasChannel
-            ? { kind: 'agentTurn', message: request.payloadText }
-            : { kind: 'systemEvent', text: request.payloadText },
-          delivery: {
-            mode: hasChannel ? 'announce' : 'none',
-            ...(channelName ? { channel: channelName } : {}),
-            ...(hasChannel
-              ? { to: deliveryTo }
-              : message.conversationId
-                ? { to: message.conversationId }
-                : {}),
-          },
-          agentId: DEFAULT_MANAGED_AGENT_ID,
-          ...(hasChannel
-            ? {}
-            : { sessionKey: buildManagedSessionKey(sessionId, DEFAULT_MANAGED_AGENT_ID) }),
-        });
-        return {
-          id: task.id,
-          name: task.name,
-          agentId: task.agentId,
-          sessionKey: task.sessionKey,
-          payloadText:
-            task.payload.kind === 'systemEvent'
-              ? task.payload.text
-              : task.payload.kind === 'agentTurn'
-                ? task.payload.message
-                : '',
-          scheduleAt: task.schedule.kind === 'at' ? task.schedule.at : request.scheduleAt,
-        };
-      },
     });
 
-    // Initialize with LLM config provider
+    // Initialize with the skills provider
     imGatewayManager.initialize({
-      getLLMConfig: async () => {
-        type LlmProviderConfig = {
-          enabled?: boolean;
-          apiKey?: string;
-          baseUrl?: string;
-          models?: Array<{ id: string }>;
-        };
-        type LlmAppConfig = {
-          providers?: Record<string, LlmProviderConfig>;
-          api?: { key?: string; baseUrl?: string };
-          model?: { defaultModel?: string };
-        };
-        const appConfig = sqliteStore.get<LlmAppConfig>('app_config');
-        if (!appConfig) return null;
-
-        // Find first enabled provider
-        const providers = appConfig.providers || {};
-        for (const [providerName, providerConfig] of Object.entries(providers)) {
-          if (providerConfig.enabled && providerConfig.apiKey) {
-            const model = providerConfig.models?.[0]?.id;
-            return {
-              apiKey: providerConfig.apiKey,
-              baseUrl: providerConfig.baseUrl,
-              model: model,
-              provider: providerName,
-            };
-          }
-        }
-
-        // Fallback to legacy api config
-        if (appConfig.api?.key) {
-          return {
-            apiKey: appConfig.api.key,
-            baseUrl: appConfig.api.baseUrl,
-            model: appConfig.model?.defaultModel,
-          };
-        }
-
-        return null;
-      },
       getSkillsPrompt: async () => {
         return getSkillManager().buildAutoRoutingPrompt();
       },

@@ -45,6 +45,10 @@ class FakeCoworkStore {
     return this.config;
   }
 
+  getAgent() {
+    return null;
+  }
+
   createSession(title, cwd, systemPrompt, executionMode) {
     const id = `session-${++this.sessionCounter}`;
     const session = {
@@ -150,131 +154,6 @@ function createMessage(overrides = {}) {
   };
 }
 
-test('IM scheduled-task requests bypass agent execution and create a real cron.add turn', async () => {
-  const runtime = new FakeRuntime();
-  const coworkStore = new FakeCoworkStore();
-  const imStore = new FakeIMStore();
-  let createdParams = null;
-
-  const handler = new IMCoworkHandler({
-    coworkRuntime: runtime,
-    coworkStore,
-    imStore,
-    detectScheduledTaskRequest: async () => ({
-      kind: 'create',
-      sourceText: '2分钟后提醒我喝水',
-      reminderBody: '喝水',
-      delayMs: 120000,
-      delayLabel: '2分钟后',
-      runAt: new Date('2026-03-15T16:30:00+08:00'),
-      scheduleAt: '2026-03-15T16:30:00+08:00',
-      taskName: '喝水提醒',
-      payloadText: '⏰ 提醒：喝水',
-      confirmationText: '好的，已设置好提醒！2分钟后（16:30）会提醒你喝水。',
-    }),
-    createScheduledTask: async (params) => {
-      createdParams = params;
-      return {
-        id: 'job-1',
-        name: params.request.taskName,
-        agentId: 'main',
-        sessionKey: `agent:main:lobsterai:${params.sessionId}`,
-        payloadText: params.request.payloadText,
-        scheduleAt: params.request.scheduleAt,
-      };
-    },
-  });
-
-  const reply = await handler.processMessage(createMessage());
-
-  assert.match(reply, /2分钟后（16:30）会提醒你喝水/u);
-  assert.equal(runtime.startCalls.length, 0);
-  assert.equal(runtime.continueCalls.length, 0);
-  assert.ok(createdParams);
-  assert.equal(createdParams.request.taskName, '喝水提醒');
-  assert.equal(createdParams.request.payloadText, '⏰ 提醒：喝水');
-
-  const [session] = [...coworkStore.sessions.values()];
-  assert.ok(session);
-  assert.deepEqual(
-    session.messages.map((message) => message.type),
-    ['user', 'tool_use', 'tool_result', 'assistant'],
-  );
-  assert.equal(session.messages[1].metadata.toolName, 'cron');
-  assert.equal(session.messages[1].metadata.toolInput.action, 'add');
-  assert.equal(session.messages[2].metadata.isError, false);
-
-  handler.destroy();
-});
-
-test('async reminder turns on IM-created sessions relay back to the original IM conversation', async () => {
-  const runtime = new FakeRuntime();
-  const coworkStore = new FakeCoworkStore();
-  const imStore = new FakeIMStore();
-  const relayedReplies = [];
-
-  const handler = new IMCoworkHandler({
-    coworkRuntime: runtime,
-    coworkStore,
-    imStore,
-    detectScheduledTaskRequest: async () => ({
-      kind: 'create',
-      sourceText: '2分钟后提醒我喝水',
-      reminderBody: '喝水',
-      delayMs: 120000,
-      delayLabel: '2分钟后',
-      runAt: new Date('2026-03-15T16:30:00+08:00'),
-      scheduleAt: '2026-03-15T16:30:00+08:00',
-      taskName: '喝水提醒',
-      payloadText: '⏰ 提醒：喝水',
-      confirmationText: '好的，已设置好提醒！2分钟后（16:30）会提醒你喝水。',
-    }),
-    createScheduledTask: async (params) => ({
-      id: 'job-1',
-      name: params.request.taskName,
-      agentId: 'main',
-      sessionKey: `agent:main:lobsterai:${params.sessionId}`,
-      payloadText: params.request.payloadText,
-      scheduleAt: params.request.scheduleAt,
-    }),
-    sendAsyncReply: async (platform, conversationId, text) => {
-      relayedReplies.push({ platform, conversationId, text });
-      return true;
-    },
-  });
-
-  await handler.processMessage(createMessage());
-  const [session] = [...coworkStore.sessions.values()];
-
-  runtime.emit('message', session.id, {
-    id: 'system-1',
-    type: 'system',
-    content: '⏰ 提醒：喝水',
-    timestamp: Date.now(),
-    metadata: {},
-  });
-  runtime.emit('message', session.id, {
-    id: 'assistant-1',
-    type: 'assistant',
-    content: '⏰ 该喝水啦！起身喝一杯水吧。',
-    timestamp: Date.now(),
-    metadata: {},
-  });
-  runtime.emit('complete', session.id, null);
-
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.deepEqual(relayedReplies, [
-    {
-      platform: 'nim',
-      conversationId: 'conv-1',
-      text: '⏰ 该喝水啦！起身喝一杯水吧。',
-    },
-  ]);
-
-  handler.destroy();
-});
-
 test('async reminder turns on channel-synced sessions are tracked lazily and relay back', async () => {
   const runtime = new FakeRuntime();
   const coworkStore = new FakeCoworkStore();
@@ -323,7 +202,7 @@ test('async reminder turns on channel-synced sessions are tracked lazily and rel
   handler.destroy();
 });
 
-test('falls back to normal agent execution when detector does not recognize a scheduled task', async () => {
+test('runs ordinary IM messages through agent execution', async () => {
   const runtime = new FakeRuntime();
   const coworkStore = new FakeCoworkStore();
   const imStore = new FakeIMStore();
@@ -332,7 +211,6 @@ test('falls back to normal agent execution when detector does not recognize a sc
     coworkRuntime: runtime,
     coworkStore,
     imStore,
-    detectScheduledTaskRequest: async () => null,
   });
 
   const pending = handler.processMessage(createMessage({ content: '帮我总结一下今天的会议纪要' }));

@@ -29,7 +29,6 @@ Agent 运行时换成 OpenClaw 之后，主链路已经不经过这个代理：O
 
 - 不改 Copilot 的接入方式，不切换到 OpenClaw 原生的 `github-copilot` provider（见第 8 节）。
 - 不改 `openclawTokenProxy`（LobsterAI 服务端模型的鉴权代理）。
-- 不迁移 IM 旧 handler 的直连逻辑（见第 8 节）。
 
 ---
 
@@ -310,5 +309,5 @@ export async function streamOneShotText(
 
 ## 8. 后续（不在本次范围）
 
-- **IM 旧 handler**：`imChatHandler` 和定时任务意图识别通过 `getLLMConfig()` 取"第一个启用且有 apiKey 的 provider"，并固定按 OpenAI 格式请求，没有考虑 API 格式和默认模型。可以迁到 `oneShotModelClient`。
+- **IM 旧 handler（已处理）**：`imChatHandler` 和定时任务意图识别通过 `getLLMConfig()` 取"第一个启用且有 apiKey 的 provider"，并固定按 OpenAI 格式请求。核查后发现两者都已没有调用方：`IMGatewayManager` 只创建 `IMChatHandler` 而从不调用；意图识别只在 `IMCoworkHandler.processMessage()` 里使用，而该入口随旧 NIM 直连网关（dcc6f27a）一起失去了调用方。因此没有迁到 `oneShotModelClient`，而是连同 `getLLMConfig` 和 `createScheduledTask` 回调一起删除。`IMCoworkHandler.processMessage()` 本身的去留另行评估。
 - **Copilot 改用 OpenClaw 原生 provider**：OpenClaw 自带 `github-copilot` provider，通过 `COPILOT_GITHUB_TOKEN` 自行换取短期 token。上游在 v2026.10.x 修复了 Copilot 模型首轮失败的问题（openclaw/openclaw#167941）。升级 OpenClaw 后可以评估切换，届时 `copilotLoopbackProxy.ts` 也可以删除。

@@ -13,12 +13,7 @@ import { t } from '../i18n';
 import type { CoworkRuntime, PermissionRequest, PermissionResult } from '../libs/agentEngine/types';
 import { buildIMMediaInstruction } from './imMediaInstruction';
 import { analyzeIMReply, DEFAULT_IM_EMPTY_REPLY, stripThinkingBlocks } from './imReplyGuard';
-import {
-  type IMScheduledTaskCreationResult,
-  type IMScheduledTaskRequestDetector,
-  isReminderSystemTurn,
-  type ParsedIMScheduledTaskRequest,
-} from './imScheduledTaskHandler';
+import { isReminderSystemTurn } from './imScheduledTaskHandler';
 import type { IMStore } from './imStore';
 import type { IMMediaAttachment, IMMessage, IMSessionMapping,Platform } from './types';
 
@@ -64,12 +59,6 @@ export interface IMCoworkHandlerOptions {
   coworkStore: CoworkStore;
   imStore: IMStore;
   getSkillsPrompt?: () => Promise<string | null>;
-  detectScheduledTaskRequest?: IMScheduledTaskRequestDetector;
-  createScheduledTask?: (params: {
-    sessionId: string;
-    message: IMMessage;
-    request: ParsedIMScheduledTaskRequest;
-  }) => Promise<IMScheduledTaskCreationResult>;
   sendAsyncReply?: (platform: Platform, conversationId: string, text: string) => Promise<boolean>;
 }
 
@@ -78,12 +67,6 @@ export class IMCoworkHandler extends EventEmitter {
   private coworkStore: CoworkStore;
   private imStore: IMStore;
   private getSkillsPrompt?: () => Promise<string | null>;
-  private detectScheduledTaskRequest?: IMScheduledTaskRequestDetector;
-  private createScheduledTask?: (params: {
-    sessionId: string;
-    message: IMMessage;
-    request: ParsedIMScheduledTaskRequest;
-  }) => Promise<IMScheduledTaskCreationResult>;
   private sendAsyncReply?: (platform: Platform, conversationId: string, text: string) => Promise<boolean>;
 
   // Track active sessions' message accumulation
@@ -106,8 +89,6 @@ export class IMCoworkHandler extends EventEmitter {
     this.coworkStore = options.coworkStore;
     this.imStore = options.imStore;
     this.getSkillsPrompt = options.getSkillsPrompt;
-    this.detectScheduledTaskRequest = options.detectScheduledTaskRequest;
-    this.createScheduledTask = options.createScheduledTask;
     this.sendAsyncReply = options.sendAsyncReply;
 
     this.initializeMappedSessions();
@@ -201,19 +182,6 @@ export class IMCoworkHandler extends EventEmitter {
     });
 
     const formattedContent = this.formatMessageWithMedia(message);
-    const directScheduledTaskRequest = this.createScheduledTask && this.detectScheduledTaskRequest
-      ? await this.detectScheduledTaskRequest(message)
-      : null;
-
-    if (directScheduledTaskRequest && this.createScheduledTask) {
-      return this.handleDirectScheduledTaskRequest(
-        coworkSessionId,
-        message,
-        formattedContent,
-        directScheduledTaskRequest
-      );
-    }
-
     const responsePromise = this.createAccumulatorPromise(coworkSessionId);
 
     // Start or continue session
@@ -422,102 +390,6 @@ export class IMCoworkHandler extends EventEmitter {
     }
 
     return sections.join('\n\n');
-  }
-
-  private async handleDirectScheduledTaskRequest(
-    sessionId: string,
-    message: IMMessage,
-    formattedContent: string,
-    request: ParsedIMScheduledTaskRequest,
-  ): Promise<string> {
-    const toolUseId = `cron:${Date.now()}`;
-
-    this.coworkStore.addMessage(sessionId, {
-      type: 'user',
-      content: formattedContent,
-      metadata: {},
-    });
-    this.coworkStore.addMessage(sessionId, {
-      type: 'tool_use',
-      content: 'Using tool: cron',
-      metadata: {
-        toolName: 'cron',
-        toolUseId,
-        toolInput: {
-          action: 'add',
-          job: {
-            name: request.taskName,
-            schedule: {
-              kind: 'at',
-              at: request.scheduleAt,
-            },
-            payload: {
-              kind: 'systemEvent',
-              text: request.payloadText,
-            },
-            sessionTarget: 'main',
-            enabled: true,
-          },
-        },
-      },
-    });
-
-    try {
-      const created = await this.createScheduledTask!({
-        sessionId,
-        message,
-        request,
-      });
-      const toolResultText = JSON.stringify(created);
-      this.coworkStore.addMessage(sessionId, {
-        type: 'tool_result',
-        content: toolResultText,
-        metadata: {
-          toolUseId,
-          toolResult: toolResultText,
-          isError: false,
-        },
-      });
-      this.coworkStore.addMessage(sessionId, {
-        type: 'assistant',
-        content: request.confirmationText,
-        metadata: {},
-      });
-      console.log('[IMCoworkHandler] Created IM scheduled task via cron.add', JSON.stringify({
-        sessionId,
-        platform: message.platform,
-        conversationId: message.conversationId,
-        taskId: created.id,
-        taskName: created.name,
-        scheduleAt: created.scheduleAt,
-      }));
-      return request.confirmationText;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.coworkStore.addMessage(sessionId, {
-        type: 'tool_result',
-        content: errorMessage,
-        metadata: {
-          toolUseId,
-          toolResult: errorMessage,
-          error: errorMessage,
-          isError: true,
-        },
-      });
-      const reply = `定时任务创建失败：${errorMessage}`;
-      this.coworkStore.addMessage(sessionId, {
-        type: 'assistant',
-        content: reply,
-        metadata: {},
-      });
-      console.warn('[IMCoworkHandler] Failed to create IM scheduled task via cron.add', JSON.stringify({
-        sessionId,
-        platform: message.platform,
-        conversationId: message.conversationId,
-        error: errorMessage,
-      }));
-      return reply;
-    }
   }
 
   private isSessionNotFoundError(error: unknown): boolean {
