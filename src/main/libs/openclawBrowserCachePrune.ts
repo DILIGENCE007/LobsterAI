@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { type DiskCleanupThrottle, isDiskCleanupStopped, UNTHROTTLED_DISK_CLEANUP } from './openclawDiskCleanupThrottle';
 import { removeTreeNoFollow } from './removeTreeNoFollow';
 
 /** A managed Chrome user-data dir's caches are reclaimed once they exceed this. */
@@ -24,6 +25,7 @@ export interface OpenClawBrowserCachePruneOptions {
   platform?: NodeJS.Platform;
   homeDir?: string;
   isPidAlive?: (pid: number) => boolean;
+  throttle?: DiskCleanupThrottle;
 }
 
 function isPidAlive(pid: number): boolean {
@@ -85,12 +87,13 @@ function resolveCacheMirrorDir(userDataDir: string, options: Required<OpenClawBr
 }
 
 /** Sum file sizes under the targets, stopping once the limit is exceeded. */
-async function measureUpTo(targets: string[], limit: number): Promise<number> {
+async function measureUpTo(targets: string[], limit: number, throttle: DiskCleanupThrottle): Promise<number> {
   let total = 0;
   const pending = [...targets];
   while (pending.length && total <= limit) {
     const target = pending.pop()!;
     const stats = await lstatOrNull(target);
+    await throttle.step();
     if (!stats || stats.isSymbolicLink()) continue;
     if (!stats.isDirectory()) {
       total += stats.size;
@@ -110,7 +113,8 @@ async function pruneUserDataDir(userDataDir: string, options: Required<OpenClawB
   ];
   // Finish removals a previous run staged but could not complete.
   for (const staged of (await Promise.all(profileDirs.map(dir => listDirectories(dir, STAGED_ENTRY)))).flat()) {
-    await removeTreeNoFollow(staged).catch((error: unknown) => {
+    await removeTreeNoFollow(staged, () => options.throttle.step()).catch((error: unknown) => {
+      if (isDiskCleanupStopped(error)) throw error;
       console.warn(`[OpenClaw] could not remove staged browser cache ${staged}:`, error);
     });
   }
@@ -121,7 +125,7 @@ async function pruneUserDataDir(userDataDir: string, options: Required<OpenClawB
       if ((await lstatOrNull(candidate))?.isDirectory()) candidates.push(candidate);
     }
   }
-  if (await measureUpTo(candidates, options.thresholdBytes) <= options.thresholdBytes) return [];
+  if (await measureUpTo(candidates, options.thresholdBytes, options.throttle) <= options.thresholdBytes) return [];
   // Chrome may have started while measuring. Each rename is atomic, so a
   // browser launched after this check sees a cache dir whole or gone, never
   // half-deleted; the slow removal then runs on the staged copies.
@@ -139,9 +143,10 @@ async function pruneUserDataDir(userDataDir: string, options: Required<OpenClawB
   const removed: string[] = [];
   for (const { candidate, stagedPath } of staged) {
     try {
-      await removeTreeNoFollow(stagedPath);
+      await removeTreeNoFollow(stagedPath, () => options.throttle.step());
       removed.push(candidate);
     } catch (error) {
+      if (isDiskCleanupStopped(error)) throw error;
       console.warn(`[OpenClaw] could not remove browser cache ${stagedPath}:`, error);
     }
   }
@@ -152,7 +157,9 @@ async function pruneUserDataDir(userDataDir: string, options: Required<OpenClawB
  * Reclaim regenerable caches of OpenClaw-managed Chrome profiles
  * (`<stateDir>/browser/<name>/user-data`) whose total cache size exceeds the
  * threshold, skipping any profile a running Chrome still holds. Best-effort:
- * failures are logged and skipped. Returns the removed cache directories.
+ * failures are logged and skipped. With a throttle, a stopped pass throws
+ * DiskCleanupStoppedError; staged copies are finished on the next pass.
+ * Returns the removed cache directories.
  */
 export async function pruneOpenClawBrowserCaches(
   stateDir: string, options: OpenClawBrowserCachePruneOptions = {},
@@ -162,6 +169,7 @@ export async function pruneOpenClawBrowserCaches(
     platform: options.platform ?? process.platform,
     homeDir: options.homeDir ?? os.homedir(),
     isPidAlive: options.isPidAlive ?? isPidAlive,
+    throttle: options.throttle ?? UNTHROTTLED_DISK_CLEANUP,
   };
   let browserProfiles: string[];
   try {
@@ -176,6 +184,7 @@ export async function pruneOpenClawBrowserCaches(
     try {
       removed.push(...await pruneUserDataDir(userDataDir, resolved));
     } catch (error) {
+      if (isDiskCleanupStopped(error)) throw error;
       console.warn(`[OpenClaw] could not prune browser caches in ${userDataDir}:`, error);
     }
   }

@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 
+import { type DiskCleanupThrottle, isDiskCleanupStopped, UNTHROTTLED_DISK_CLEANUP } from './openclawDiskCleanupThrottle';
+
 // Mirrors OpenClaw v2026.8.1 isSessionStoreTempArtifactName() for the default
 // store name: `sessions.json.<pid>.<uuid>.tmp` (legacy: no pid). The atomic
 // writer renames these within milliseconds; one left behind is a crash orphan
@@ -27,9 +29,10 @@ async function listSessionDirectories(stateDir: string): Promise<string[]> {
  * Best-effort: failures are logged and skipped. Returns the removed files.
  */
 export async function pruneOrphanOpenClawSessionStoreTemps(
-  stateDir: string, options: { now?: number } = {},
+  stateDir: string, options: { now?: number; throttle?: DiskCleanupThrottle } = {},
 ): Promise<string[]> {
   const cutoff = (options.now ?? Date.now()) - OPENCLAW_SESSION_STORE_TEMP_MAX_AGE_MS;
+  const throttle = options.throttle ?? UNTHROTTLED_DISK_CLEANUP;
   const removed: string[] = [];
   let directories: string[];
   try {
@@ -55,7 +58,9 @@ export async function pruneOrphanOpenClawSessionStoreTemps(
         if ((await fs.promises.lstat(filePath)).mtimeMs > cutoff) continue;
         await fs.promises.unlink(filePath);
         removed.push(filePath);
+        await throttle.step();
       } catch (error) {
+        if (isDiskCleanupStopped(error)) throw error;
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
           console.warn(`[OpenClaw] could not remove orphan session store temp ${filePath}:`, error);
         }

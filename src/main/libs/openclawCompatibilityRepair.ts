@@ -11,6 +11,7 @@ import {
 } from '../../shared/openclawEngine/repair';
 import { OpenClawStartupCompatibilityMode } from '../../shared/openclawEngine/startupCompatibility';
 import { OpenClawStartupMigrationStatus } from '../../shared/openclawEngine/startupMigration';
+import { type DiskCleanupThrottle, isDiskCleanupStopped, UNTHROTTLED_DISK_CLEANUP } from './openclawDiskCleanupThrottle';
 import { runOpenClawRepairPreflight } from './openclawRepairPreflight';
 import { createOpenClawRepairRunner } from './openclawRepairProcess';
 import { isRegenerableSnapshotPath, REGENERABLE_SNAPSHOT_PATH_MAX_DEPTH } from './openclawRepairSnapshotPaths';
@@ -55,6 +56,10 @@ export const OPENCLAW_REPAIR_BACKUP_RETENTION = 2;
 export const OPENCLAW_REPAIR_BACKUP_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 // A run written to this recently may still be in progress: never touch it.
 const REPAIR_BACKUP_IN_PROGRESS_GUARD_MS = 60 * 60 * 1000;
+// Runs are renamed to this prefix before removal. A partly removed run then no
+// longer matches REPAIR_BACKUP_RUN_NAME, so it cannot pass for an in-progress
+// run, and the next prune finishes it.
+const REPAIR_BACKUP_STAGED_PREFIX = '.lobsterai-stale-';
 
 export function createOpenClawRepairBackupDirectory(baseDir: string): string {
   const root = path.join(baseDir, REPAIR_BACKUPS_DIRECTORY);
@@ -69,7 +74,7 @@ export interface OpenClawRepairBackupPruneResult {
 }
 
 /** Drop caches that snapshots taken before the exclusion rules still contain. */
-async function stripRegenerableSnapshotPaths(run: string): Promise<string[]> {
+async function stripRegenerableSnapshotPaths(run: string, throttle: DiskCleanupThrottle): Promise<string[]> {
   const original = path.join(run, 'original');
   const stripped: string[] = [];
   async function visit(relative: string, depth: number): Promise<void> {
@@ -85,7 +90,7 @@ async function stripRegenerableSnapshotPaths(run: string): Promise<string[]> {
       if (!entry.isDirectory()) continue;
       const child = relative ? path.join(relative, entry.name) : entry.name;
       if (isRegenerableSnapshotPath(child)) {
-        await removeTreeNoFollow(path.join(original, child));
+        await removeTreeNoFollow(path.join(original, child), () => throttle.step());
         stripped.push(child);
       } else if ((relative || entry.name === 'browser') && depth + 1 < REGENERABLE_SNAPSHOT_PATH_MAX_DEPTH) {
         await visit(child, depth + 1);
@@ -122,19 +127,24 @@ function runCreatedAt(name: string, stats: fs.Stats): number {
  * limit, and strip regenerable caches from the runs that remain. A run written
  * within the last hour, other than the finished current run, may still be in
  * progress and is left untouched. Entries this module did not create are
- * ignored. Best-effort: failures are logged and skipped.
+ * ignored. Best-effort: failures are logged and skipped. With a throttle, a
+ * stopped pass throws DiskCleanupStoppedError and the next prune resumes.
  */
 export async function pruneOpenClawRepairBackups(
-  baseDir: string, options: { currentBackupDir?: string; now?: number } = {},
+  baseDir: string, options: { currentBackupDir?: string; now?: number; throttle?: DiskCleanupThrottle } = {},
 ): Promise<OpenClawRepairBackupPruneResult> {
   const result: OpenClawRepairBackupPruneResult = { removedRuns: [], strippedPaths: [] };
   const root = path.join(baseDir, REPAIR_BACKUPS_DIRECTORY);
   const now = options.now ?? Date.now();
+  const throttle = options.throttle ?? UNTHROTTLED_DISK_CLEANUP;
   const current = options.currentBackupDir ? path.resolve(options.currentBackupDir) : undefined;
   let runs: Array<{ run: string; createdAt: number; mtimeMs: number }>;
+  let staged: string[];
   try {
-    const entries = (await fs.promises.readdir(root, { withFileTypes: true }))
-      .filter(entry => entry.isDirectory() && REPAIR_BACKUP_RUN_NAME.test(entry.name));
+    const allEntries = await fs.promises.readdir(root, { withFileTypes: true });
+    staged = allEntries.filter(entry => entry.isDirectory() && entry.name.startsWith(REPAIR_BACKUP_STAGED_PREFIX))
+      .map(entry => path.join(root, entry.name));
+    const entries = allEntries.filter(entry => entry.isDirectory() && REPAIR_BACKUP_RUN_NAME.test(entry.name));
     runs = await Promise.all(entries.map(async (entry) => {
       const run = path.join(root, entry.name);
       const stats = await fs.promises.stat(run);
@@ -145,6 +155,15 @@ export async function pruneOpenClawRepairBackups(
       console.warn('[OpenClawRepair] could not list repair backups:', error);
     }
     return result;
+  }
+  // Finish removals an earlier, stopped prune staged.
+  for (const stagedRun of staged) {
+    try {
+      await removeTreeNoFollow(stagedRun, () => throttle.step());
+    } catch (error) {
+      if (isDiskCleanupStopped(error)) throw error;
+      console.warn(`[OpenClawRepair] could not finish removing repair backup ${stagedRun}:`, error);
+    }
   }
   // Names start with the creation time, so a name sort is chronological.
   runs.sort((left, right) => (left.run < right.run ? 1 : -1));
@@ -166,17 +185,21 @@ export async function pruneOpenClawRepairBackups(
       continue;
     }
     try {
+      const stagedRun = path.join(root, `${REPAIR_BACKUP_STAGED_PREFIX}${path.basename(run)}`);
+      await fs.promises.rename(run, stagedRun);
       // Snapshots recreate links and Windows junctions; never follow them.
-      await removeTreeNoFollow(run);
+      await removeTreeNoFollow(stagedRun, () => throttle.step());
       result.removedRuns.push(run);
     } catch (error) {
+      if (isDiskCleanupStopped(error)) throw error;
       console.warn(`[OpenClawRepair] could not remove old repair backup ${run}:`, error);
     }
   }
   for (const run of toStrip) {
     try {
-      result.strippedPaths.push(...(await stripRegenerableSnapshotPaths(run)).map(item => path.join(run, 'original', item)));
+      result.strippedPaths.push(...(await stripRegenerableSnapshotPaths(run, throttle)).map(item => path.join(run, 'original', item)));
     } catch (error) {
+      if (isDiskCleanupStopped(error)) throw error;
       console.warn(`[OpenClawRepair] could not strip caches from repair backup ${run}:`, error);
     }
   }

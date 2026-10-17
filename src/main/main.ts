@@ -524,6 +524,7 @@ import {
   sameOpenClawConfigContent,
 } from './libs/openclawConfigTarget';
 import { getRecentOpenClawDailyLogEntries } from './libs/openclawDailyLogs';
+import { createDiskCleanupThrottle, isDiskCleanupStopped } from './libs/openclawDiskCleanupThrottle';
 import { OpenClawEngineManager, type OpenClawEngineStatus } from './libs/openclawEngineManager';
 import {
   backupOpenClawConfig,
@@ -3788,8 +3789,14 @@ const repairOpenClawGatewayState = (): Promise<OpenClawGatewayRepairResult> => {
       openClawManualRepairBarrier = null;
       if (backupPath) {
         // Each run snapshots the whole state directory; keep only recent runs.
-        void pruneOpenClawRepairBackups(manager.getBaseDir(), { currentBackupDir: backupPath }).then(({ removedRuns }) => {
+        // Paced like the startup cleanup; a stopped pass resumes there.
+        void pruneOpenClawRepairBackups(manager.getBaseDir(), {
+          currentBackupDir: backupPath, throttle: createDiskCleanupThrottle(),
+        }).then(({ removedRuns }) => {
           if (removedRuns.length) console.log(`[OpenClawRepair] removed ${removedRuns.length} old repair backup(s).`);
+        }).catch((error: unknown) => {
+          if (isDiskCleanupStopped(error)) return;
+          console.warn('[OpenClawRepair] could not prune old repair backups:', error);
         });
       }
     }

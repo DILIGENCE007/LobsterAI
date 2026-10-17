@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, expect, test } from 'vitest';
 
+import { DiskCleanupStoppedError,DiskCleanupStopReason } from './openclawDiskCleanupThrottle';
 import { OPENCLAW_SESSION_IMPORT_ARCHIVE_MAX_AGE_MS, pruneExpiredOpenClawSessionImportArchives } from './openclawSessionImportArchiveCleanup';
 
 const NOW = Date.parse('2026-10-17T12:00:00.000Z');
@@ -112,4 +113,29 @@ test.skipIf(process.platform === 'win32')('never follows a symlinked archive', a
 
   expect(await pruneExpiredOpenClawSessionImportArchives(state, { now: NOW })).toEqual([]);
   expect(fs.readFileSync(path.join(outside, 'keep.jsonl'), 'utf8')).toBe('keep');
+});
+
+test('a removal stopped part-way is finished on the next prune, even though deleting bumped its mtime', async () => {
+  const state = stateDir();
+  run(state, 'session-sqlite-1', { startedAt: iso(40 * DAY_MS), completedAt: iso(40 * DAY_MS) });
+  const dir = archive(state, 'main', 30 * DAY_MS);
+  for (const name of ['a', 'b', 'c']) fs.writeFileSync(path.join(dir, `${name}.jsonl.imported-1`), name);
+  setAge(dir, 30 * DAY_MS);
+  let steps = 0;
+  const stopping = {
+    step: async () => {
+      steps += 1;
+      if (steps === 2) throw new DiskCleanupStoppedError(DiskCleanupStopReason.Budget);
+    },
+  };
+
+  await expect(pruneExpiredOpenClawSessionImportArchives(state, { now: NOW, throttle: stopping }))
+    .rejects.toBeInstanceOf(DiskCleanupStoppedError);
+  const owner = path.dirname(dir);
+  const leftovers = fs.readdirSync(owner).filter(name => name.startsWith('session-sqlite-import-archive'));
+  expect(leftovers).toHaveLength(1);
+  expect(leftovers[0]).toMatch(/^session-sqlite-import-archive\.lobsterai-stale-[0-9a-f]+$/);
+
+  await pruneExpiredOpenClawSessionImportArchives(state, { now: NOW });
+  expect(fs.readdirSync(owner).filter(name => name.startsWith('session-sqlite-import-archive'))).toEqual([]);
 });

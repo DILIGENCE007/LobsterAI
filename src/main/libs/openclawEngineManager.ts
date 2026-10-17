@@ -1,6 +1,6 @@
 import { type ChildProcess } from 'child_process';
 import crypto from 'crypto';
-import { app } from 'electron';
+import { app, powerMonitor } from 'electron';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import net from 'net';
@@ -1414,7 +1414,10 @@ export class OpenClawEngineManager extends EventEmitter {
       canRetry: false,
     });
     // Deferred so reclaiming old caches and backups never slows gateway startup.
-    scheduleOpenClawStartupDiskCleanup({ baseDir: this.baseDir, stateDir: this.stateDir, compileCacheDir });
+    scheduleOpenClawStartupDiskCleanup(
+      { baseDir: this.baseDir, stateDir: this.stateDir, compileCacheDir },
+      { isOnBatteryPower: () => powerMonitor.isOnBatteryPower() },
+    );
 
     return this.getStatus();
   }

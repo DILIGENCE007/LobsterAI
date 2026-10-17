@@ -11,6 +11,7 @@ import {
   createOpenClawRepairBackupDirectory, OPENCLAW_DOCTOR_REPAIR_ARGS, OPENCLAW_REPAIR_BACKUP_MAX_AGE_MS,
   OPENCLAW_REPAIR_BACKUP_RETENTION, pruneOpenClawRepairBackups, runOpenClawCompatibilityRepair, runOpenClawDoctorRepair,
 } from './openclawCompatibilityRepair';
+import { DiskCleanupStoppedError,DiskCleanupStopReason } from './openclawDiskCleanupThrottle';
 import type { StartupMigrationRunner } from './openclawStartupStateMigration';
 
 const directories: string[] = [];
@@ -225,10 +226,11 @@ test('pruning tolerates a missing root and keeps going when one backup cannot be
     .toEqual({ removedRuns: [], strippedPaths: [] });
   const { base, runs } = backupRuns(['2026-10-01T00:00:00.000Z', '2026-10-05T00:00:00.000Z', '2026-10-10T00:00:00.000Z', '2026-10-15T00:00:00.000Z']
     .map(iso => ({ name: runName(iso) })));
-  const rmdir = fs.promises.rmdir;
-  vi.spyOn(fs.promises, 'rmdir').mockImplementation(async (target, ...args) => {
-    if (target === runs[1]) throw Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' });
-    return rmdir(target, ...args);
+  // A run that is locked (e.g. open in Explorer on Windows) fails at the rename that stages it.
+  const rename = fs.promises.rename;
+  vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
+    if (from === runs[1]) throw Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' });
+    return rename(from, to);
   });
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   expect((await pruneOpenClawRepairBackups(base, { currentBackupDir: runs[3], now: NOW })).removedRuns).toEqual([runs[0]]);
@@ -369,4 +371,27 @@ test.each([
   await expect(runOpenClawCompatibilityRepair({ ...params, phase: OpenClawRepairPhase.Recovery, runner }))
     .rejects.toThrow(helperError ?? error);
   expect(runner).toHaveBeenCalledTimes(repeat ? 3 : helperError ? 2 : 1);
+});
+
+test('a prune stopped mid-removal resumes later without the partial run taking a retention slot', async () => {
+  const { root, base, runs } = backupRuns(['2026-10-15T00:00:00.000Z', '2026-10-10T00:00:00.000Z', '2026-10-05T00:00:00.000Z']
+    .map(iso => ({ name: runName(iso) })));
+  let steps = 0;
+  const stopping = {
+    step: async () => {
+      steps += 1;
+      if (steps === 3) throw new DiskCleanupStoppedError(DiskCleanupStopReason.Budget);
+    },
+  };
+
+  await expect(pruneOpenClawRepairBackups(base, { now: NOW, throttle: stopping })).rejects.toBeInstanceOf(DiskCleanupStoppedError);
+  // The oldest run was renamed aside before removal started, so it no longer looks like a fresh run.
+  const staged = `.lobsterai-stale-${path.basename(runs[2])}`;
+  expect(fs.readdirSync(root).sort()).toEqual([path.basename(runs[0]), path.basename(runs[1]), staged].sort());
+
+  const resumed = await pruneOpenClawRepairBackups(base, { now: NOW });
+
+  expect(resumed.removedRuns).toEqual([]);
+  expect(fs.readdirSync(root).sort()).toEqual([path.basename(runs[0]), path.basename(runs[1])].sort());
+  for (const run of runs.slice(0, 2)) expect(existsIn(run, 'state/openclaw.sqlite')).toBe(true);
 });

@@ -31,3 +31,25 @@ test.each([
   expect(fs.readFileSync(path.join(external, 'keep.txt'), 'utf8')).toBe('external');
   await expect(remove(tree)).resolves.toBeUndefined();
 });
+
+test('async removal calls the hook after every removal and stops when it throws', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lobster-remove-tree-'));
+  roots.push(root);
+  const tree = path.join(root, 'tree');
+  fs.mkdirSync(path.join(tree, 'a'), { recursive: true });
+  for (const name of ['1', '2', '3']) fs.writeFileSync(path.join(tree, 'a', name), name);
+
+  let removals = 0;
+  const stop = new Error('stop');
+  await expect(removeTreeNoFollow(tree, async () => {
+    removals += 1;
+    if (removals === 2) throw stop;
+  })).rejects.toBe(stop);
+  expect(fs.readdirSync(path.join(tree, 'a'))).toHaveLength(1);
+
+  removals = 0;
+  await removeTreeNoFollow(tree, async () => { removals += 1; });
+  // The last file, then a/, then tree/.
+  expect(removals).toBe(3);
+  expect(fs.existsSync(tree)).toBe(false);
+});
