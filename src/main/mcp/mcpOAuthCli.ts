@@ -2,9 +2,10 @@ import { type ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-import { McpOAuthErrorCode, McpOAuthState } from '../../shared/mcp/auth';
+import { McpAuthMode, McpOAuthErrorCode, McpOAuthState } from '../../shared/mcp/auth';
 import { McpUrlProtocol } from '../../shared/mcp/url';
 import { resolveOpenClawCliPath } from '../libs/openclawPluginInstallMigration';
+import type { McpServerFormData, McpServerRecord } from './mcpStore';
 
 /**
  * Drives OpenClaw's MCP OAuth CLI (`openclaw mcp login|logout|status`) for remote
@@ -70,6 +71,9 @@ export function buildMcpOAuthCliInvocation(context: McpOAuthCliContext, mcpArgs:
         OPENCLAW_CONFIG_PATH: context.configPath,
         OPENCLAW_NO_RESPAWN: '1',
         ELECTRON_RUN_AS_NODE: '1',
+        // Output is parsed and shown in the UI, never in a terminal.
+        NO_COLOR: '1',
+        FORCE_COLOR: '0',
       } as NodeJS.ProcessEnv,
     },
   };
@@ -141,12 +145,31 @@ export function isMcpServerInOpenClawConfig(configPath: string, serverKey: strin
 }
 
 const SERVER_NOT_LOADED_MESSAGE =
-  'OpenClaw has not loaded this MCP server yet. Configure a model first, then sign in again.';
+  'OpenClaw has not loaded this MCP server: it is disabled, or no model is configured yet.';
+
+const ANSI_ESCAPE_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, 'g');
+const CONFIG_WARNING_LINE_RE = /^\[config\]/i;
+
+/**
+ * CLI output fit for an error message: no color codes, and none of the
+ * `[config] warnings: …` lines the config loader prints about unrelated parts of
+ * openclaw.json (missing plugins, unset env vars) before the actual error.
+ */
+export function cleanMcpCliOutput(text: string): string {
+  return text
+    .replace(ANSI_ESCAPE_RE, '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !CONFIG_WARNING_LINE_RE.test(line))
+    .join('\n');
+}
 
 function tail(text: string): string {
-  const trimmed = text.trim();
-  return trimmed.length > OUTPUT_TAIL_LIMIT ? trimmed.slice(-OUTPUT_TAIL_LIMIT) : trimmed;
+  const cleaned = cleanMcpCliOutput(text);
+  return cleaned.length > OUTPUT_TAIL_LIMIT ? cleaned.slice(-OUTPUT_TAIL_LIMIT) : cleaned;
 }
+
+const NO_MCP_SERVER_RE = /no mcp server named/i;
 
 function runCli(
   context: McpOAuthCliContext,
@@ -155,8 +178,10 @@ function runCli(
     timeoutMs: number;
     spawnImpl?: McpOAuthSpawn;
     onStdoutLine?: (line: string) => void;
+    /** Aborting kills the CLI (which also frees the loopback port) and resolves with `cancelled`. */
+    signal?: AbortSignal;
   },
-): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
+): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; cancelled: boolean }> {
   const invocation = buildMcpOAuthCliInvocation(context, mcpArgs);
   const child = (options.spawnImpl ?? defaultSpawn)(invocation.command, invocation.args, invocation.options);
   return new Promise((resolve, reject) => {
@@ -164,10 +189,21 @@ function runCli(
     let stderr = '';
     let pending = '';
     let timedOut = false;
+    let cancelled = false;
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill('SIGTERM');
     }, options.timeoutMs);
+    const onAbort = () => {
+      cancelled = true;
+      child.kill('SIGTERM');
+    };
+    if (options.signal?.aborted) onAbort();
+    else options.signal?.addEventListener('abort', onAbort, { once: true });
+    const cleanup = () => {
+      clearTimeout(timer);
+      options.signal?.removeEventListener('abort', onAbort);
+    };
     child.stdout?.setEncoding('utf8');
     child.stderr?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
@@ -182,13 +218,13 @@ function runCli(
       stderr += chunk;
     });
     child.once('error', (error: Error) => {
-      clearTimeout(timer);
+      cleanup();
       reject(error);
     });
     child.once('close', (code: number | null) => {
-      clearTimeout(timer);
+      cleanup();
       if (pending && options.onStdoutLine) options.onStdoutLine(pending);
-      resolve({ code, stdout, stderr, timedOut });
+      resolve({ code, stdout, stderr, timedOut, cancelled });
     });
   });
 }
@@ -197,6 +233,10 @@ const activeLogins = new Set<string>();
 
 export function createServerNotLoadedError(): McpOAuthCliError {
   return new McpOAuthCliError(McpOAuthErrorCode.ServerNotLoaded, SERVER_NOT_LOADED_MESSAGE);
+}
+
+export function createCancelledError(): McpOAuthCliError {
+  return new McpOAuthCliError(McpOAuthErrorCode.Cancelled, 'Sign-in was cancelled.');
 }
 
 /**
@@ -210,10 +250,12 @@ export async function runMcpOAuthLogin(params: {
   openExternal: (url: string) => Promise<void>;
   spawnImpl?: McpOAuthSpawn;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<void> {
   if (activeLogins.has(params.serverKey)) {
     throw new McpOAuthCliError(McpOAuthErrorCode.AlreadyInProgress, 'Sign-in is already in progress for this server.');
   }
+  if (params.signal?.aborted) throw createCancelledError();
   activeLogins.add(params.serverKey);
   let openedUrl = false;
   let callbackUnavailable = false;
@@ -221,11 +263,12 @@ export async function runMcpOAuthLogin(params: {
     const result = await runCli(params.context, ['login', params.serverKey], {
       timeoutMs: params.timeoutMs ?? MCP_OAUTH_LOGIN_TIMEOUT_MS,
       spawnImpl: params.spawnImpl,
+      signal: params.signal,
       onStdoutLine: line => {
         // Printed before the URL when the loopback port (8989) is taken. The CLI then
         // exits 0 without a token, so opening the browser would only lead to a dead redirect.
         if (/could not start the local oauth callback/i.test(line)) callbackUnavailable = true;
-        if (openedUrl || callbackUnavailable) return;
+        if (openedUrl || callbackUnavailable || params.signal?.aborted) return;
         const url = extractMcpAuthorizationUrl(line);
         if (!url) return;
         openedUrl = true;
@@ -234,6 +277,7 @@ export async function runMcpOAuthLogin(params: {
         );
       },
     });
+    if (result.cancelled) throw createCancelledError();
     if (result.timedOut) {
       throw new McpOAuthCliError(McpOAuthErrorCode.Timeout, 'Timed out waiting for the browser authorization.');
     }
@@ -244,9 +288,7 @@ export async function runMcpOAuthLogin(params: {
       );
     }
     if (result.code !== 0) {
-      if (/no mcp server named/i.test(`${result.stderr}\n${result.stdout}`)) {
-        throw new McpOAuthCliError(McpOAuthErrorCode.ServerNotLoaded, SERVER_NOT_LOADED_MESSAGE);
-      }
+      if (NO_MCP_SERVER_RE.test(`${result.stderr}\n${result.stdout}`)) throw createServerNotLoadedError();
       throw new McpOAuthCliError(
         McpOAuthErrorCode.Failed,
         tail(result.stderr) || tail(result.stdout) || `openclaw mcp login exited with code ${result.code}`,
@@ -272,10 +314,46 @@ export async function runMcpOAuthLogout(params: {
     spawnImpl: params.spawnImpl,
   });
   if (result.code !== 0) {
+    if (NO_MCP_SERVER_RE.test(`${result.stderr}\n${result.stdout}`)) throw createServerNotLoadedError();
     throw new McpOAuthCliError(
       McpOAuthErrorCode.Failed,
       tail(result.stderr) || tail(result.stdout) || `openclaw mcp logout exited with code ${result.code}`,
     );
+  }
+}
+
+/**
+ * Whether an update drops the identity OpenClaw keys stored tokens by (server
+ * name + URL), or stops using OAuth. The old tokens can no longer be used or
+ * signed out of afterwards, so they should be cleared before the update.
+ */
+export function isMcpOAuthIdentityRemoved(
+  existing: Pick<McpServerRecord, 'name' | 'url'>,
+  update: Partial<Pick<McpServerFormData, 'name' | 'url' | 'transportType' | 'auth'>>,
+): boolean {
+  if (update.transportType === 'stdio') return true;
+  if (update.auth !== undefined && update.auth !== McpAuthMode.OAuth) return true;
+  if (update.name !== undefined && update.name !== existing.name) return true;
+  return update.url !== undefined && update.url !== existing.url;
+}
+
+/**
+ * `openclaw mcp logout` before a server is deleted or loses its OAuth identity.
+ * Never throws. Skipped when the server is not in openclaw.json (disabled, or no
+ * model configured yet), because the CLI only resolves configured servers.
+ */
+export async function clearMcpOAuthCredentialsBestEffort(params: {
+  context: McpOAuthCliContext;
+  serverKey: string;
+  spawnImpl?: McpOAuthSpawn;
+}): Promise<boolean> {
+  if (!isMcpServerInOpenClawConfig(params.context.configPath, params.serverKey)) return false;
+  try {
+    await runMcpOAuthLogout(params);
+    return true;
+  } catch (error) {
+    console.warn('[MCP] failed to clear OAuth credentials:', error instanceof Error ? error.message : error);
+    return false;
   }
 }
 

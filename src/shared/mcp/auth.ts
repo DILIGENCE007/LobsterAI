@@ -35,6 +35,8 @@ export const McpOAuthErrorCode = {
   AlreadyInProgress: 'already_in_progress',
   CallbackUnavailable: 'callback_unavailable',
   Timeout: 'timeout',
+  /** The user cancelled the sign-in, or the server was removed / the app quit while it was waiting. */
+  Cancelled: 'cancelled',
   Failed: 'failed',
 } as const;
 export type McpOAuthErrorCode = typeof McpOAuthErrorCode[keyof typeof McpOAuthErrorCode];

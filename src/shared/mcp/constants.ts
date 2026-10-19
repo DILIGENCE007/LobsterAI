@@ -11,6 +11,7 @@ export const McpIpcChannel = {
   FetchMarketplace: 'mcp:fetchMarketplace',
   ConnectQichacha: 'mcp:qichachaConnect',
   OAuthLogin: 'mcp:oauthLogin',
+  OAuthCancel: 'mcp:oauthCancel',
   OAuthLogout: 'mcp:oauthLogout',
   OAuthStatus: 'mcp:oauthStatus',
   Changed: 'mcp:changed',

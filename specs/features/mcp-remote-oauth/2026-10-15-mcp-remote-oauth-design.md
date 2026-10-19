@@ -35,31 +35,31 @@ OpenClaw（v2026.8.1）已经内置了完整的 MCP OAuth 支持：
 
 **Given** 用户在「自定义」里添加一个 Streamable HTTP 服务
 **When** 认证方式选择「OAuth 登录」并保存
-**Then** 卡片出现「需要登录」标签和「登录」按钮；表单里的工具预览提示需要先登录。
+**Then** 卡片右下角出现「登录授权」；表单里提示 OAuth 服务不支持预览工具。
 
 ### 场景 2: 登录
 
-**Given** 一个启用中的 OAuth 服务处于「需要登录」
-**When** 用户点击「登录」
-**Then** 按钮变为「等待浏览器授权…」，系统浏览器打开服务商授权页；用户授权后卡片变为「已登录」，网关在下一次请求时带上令牌。
+**Given** 一个启用中的 OAuth 服务处于未授权状态
+**When** 用户点击「登录授权」
+**Then** 按钮变为「取消」，标签显示「授权中…」，系统浏览器打开服务商授权页；用户授权后标签变为「已授权」，网关在下一次请求时带上令牌。
 
 ### 场景 3: 本机回调端口被占用
 
 **Given** 127.0.0.1:8989 已被其他程序占用
-**When** 用户点击「登录」
+**When** 用户点击「登录授权」
 **Then** 不打开浏览器（否则授权完成后会跳到一个无人监听的地址），直接提示端口被占用。
 
 ### 场景 4: 用户没有完成授权
 
 **Given** 浏览器授权页已打开
 **When** 用户关闭页面，超过 OpenClaw 的 5 分钟等待时间
-**Then** 提示授权超时，卡片仍为「需要登录」，可以再次点击登录。
+**Then** 提示授权超时，卡片仍显示「登录授权」，可以再次点击。用户也可以随时点卡片上的「取消」立即结束等待，并释放 8989 端口。
 
 ### 场景 5: 退出登录
 
-**Given** 服务处于「已登录」
+**Given** 服务处于「已授权」
 **When** 用户在卡片菜单中选择「退出登录」
-**Then** OpenClaw 清除令牌，卡片回到「需要登录」。
+**Then** OpenClaw 清除令牌，卡片回到显示「登录授权」。
 
 ## 3. 功能需求
 
@@ -80,18 +80,25 @@ OpenClaw（v2026.8.1）已经内置了完整的 MCP OAuth 支持：
 - 与网关相同的方式启动 CLI：Electron 可执行文件 + `ELECTRON_RUN_AS_NODE=1`，指向同一个 `OPENCLAW_STATE_DIR` / `OPENCLAW_CONFIG_PATH`，并注入 `openclaw.json` 中 `${VAR}` 引用的密钥环境变量；
 - `login`：逐行读取 stdout，只接受整行为 http(s) 链接的输出作为授权链接，交给 `shell.openExternal` 打开一次；看到 “Could not start the local OAuth callback” 时不打开浏览器并返回 `callback_unavailable`（CLI 此时会以 0 退出但没有令牌）；成功以 stdout 中的 “credentials saved” 为准；同一服务同时只允许一个登录；
 - `status`：解析 `mcp status --json`（容忍前后日志），只保留 `auth: "oauth"` 的服务，未知状态归为 `unknown`；
-- `logout`：调用 `mcp logout`。
+- `logout`：调用 `mcp logout`；
+- 登录可通过 `AbortSignal` 取消：结束 CLI 进程（同时释放 8989 端口），返回 `cancelled`；应用退出时取消所有进行中的登录；
+- `clearMcpOAuthCredentialsBestEffort`：服务在 `openclaw.json` 中时执行 `mcp logout`，失败只记录告警，不影响调用方。
 
 服务键与 `openclaw.json` 一致，由 `safeServerKey(server.name)` 生成。
 
 ### FR-4: IPC
 
-新增 `mcp:oauthLogin`、`mcp:oauthLogout`、`mcp:oauthStatus`。登录前先同步一次 `openclaw.json`，保证 CLI 读到的是刚保存的配置。状态接口按服务 id 返回。
+新增 `mcp:oauthLogin`、`mcp:oauthCancel`、`mcp:oauthLogout`、`mcp:oauthStatus`。登录前先同步一次 `openclaw.json`，保证 CLI 读到的是刚保存的配置。状态接口按服务 id 返回。
+
+删除服务，或者修改会让令牌失效的字段（名称、URL、关闭 OAuth、改为 stdio）时，先清除该服务在 OpenClaw 中的令牌，避免残留，也避免以后用同名同 URL 重新添加时悄悄沿用旧令牌。
 
 ### FR-5: 界面
 
 - 表单：远程服务新增「认证方式」两段选择（无 / 请求头、OAuth 登录）；选择 OAuth 时不发起工具预览；
-- 卡片：OAuth 服务显示「已登录 / 需要登录」标签，未登录且已启用时显示「登录」按钮；已登录时菜单里有「退出登录」；
+- 卡片：复用市场里企查查的「登录授权」胶囊样式和文案。「已安装」卡片的标题栏右侧放的是开关，所以胶囊放在卡片右下角（底部标签行的末尾）；授权中，这个位置换成「取消」。左侧标签只表示状态：「⟳ 授权中…」或「已授权」；显示「登录授权」时不再重复显示「未授权」。退出登录在卡片菜单和详情里。状态为 `unknown`（服务已停用或尚未配置模型）时不显示标签；首次读取状态完成后（即使读取失败），已启用但未授权的服务都会显示「登录授权」；
+- 详情弹窗：显示授权状态和认证方式，标题栏提供「登录授权 / 取消」按钮（同企查查详情），底部提供「退出登录」；
+- 表单里 OAuth 服务不支持预览工具（LobsterAI 自己的工具探测拿不到 OpenClaw 的令牌），提示用户在「高级设置」里按工具名筛选；
+- JSON 导入识别远程服务上的 `auth: "oauth"`；
 - 只有存在 OAuth 服务时才调用 `mcp status`，避免无谓地启动 CLI。
 
 ## 4. 实现方案
@@ -113,6 +120,9 @@ OpenClaw（v2026.8.1）已经内置了完整的 MCP OAuth 支持：
 - 登录完成前网关已经尝试过连接并失败：OpenClaw 约 5 秒后会重试拉取工具目录，所以登录后马上发起的第一轮对话可能还没有该服务的工具，稍等即可。
 - 服务名包含非 ASCII 字符：`safeServerKey` 会转成 `mcp-<hash>`，CLI 与 `openclaw.json` 使用同一个键，令牌按服务名 + URL 识别，改名或改 URL 后需要重新登录。
 - 授权链接只接受 http/https，防止恶意服务让应用打开 `file:` 或自定义协议链接。
+- 已停用的服务不在 `openclaw.json` 中，CLI 无法对它执行 logout，所以删除已停用的 OAuth 服务时不会清除令牌。
+- 停用后 `openclaw.json` 是异步重写的，紧接着读到的状态可能还是旧的。因此是否已停用以 LobsterAI 自己的数据为准：已停用的服务一律按未加载处理，不显示授权状态，也不提供「退出登录」。退出登录前先同步一次配置；服务仍不在配置里时，返回 `server_not_loaded` 和明确的提示。
+- CLI 读取配置时会在 stderr 打印与 MCP 无关的 `[config] warnings`（缺插件、未设置的环境变量等）。调用 CLI 时关闭颜色输出，错误信息里去掉这些行，只保留真正的错误。
 - 还没有配置模型时，LobsterAI 只写入不含 MCP 服务的最简 `openclaw.json`，CLI 会报 “No MCP server named …”。登录前先检查服务是否已在 `mcp.servers` 中，不在则返回 `server_not_loaded`，提示用户先配置模型；CLI 返回同样的报错时也归到这个错误码。
 
 ## 6. 验收标准

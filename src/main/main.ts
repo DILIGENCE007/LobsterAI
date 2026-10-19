@@ -288,7 +288,7 @@ import { ensureDshEngineReady, registerDshHandlers } from './ipcHandlers/dsh/han
 import { registerEnterpriseAccountHandlers } from './ipcHandlers/enterpriseAccount';
 import { registerKitHandlers } from './ipcHandlers/kits';
 import { hasUnsafeMarkdownEdits, registerMarkdownEditingHandlers } from './ipcHandlers/markdownEditing';
-import { registerMcpHandlers } from './ipcHandlers/mcp';
+import { cancelAllMcpOAuthLogins, registerMcpHandlers } from './ipcHandlers/mcp';
 import { registerNimQrLoginHandlers } from './ipcHandlers/nimQrLogin';
 import { registerOpenClawUserConfigHandlers } from './ipcHandlers/openclawUserConfig/handlers';
 import { registerPermissionIpcHandlers } from './ipcHandlers/permissions/handlers';
@@ -15347,6 +15347,7 @@ if (!gotTheLock) {
     desktopCompanionManager?.dispose();
     desktopCompanionManager = null;
     skillManager?.stopWatching();
+    cancelAllMcpOAuthLogins();
     stopMediaPollTimer();
     pendingMediaTasks.clear();
     mediaTaskOwnerById.clear();

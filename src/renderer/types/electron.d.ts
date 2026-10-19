@@ -799,6 +799,7 @@ interface IElectronAPI {
       error?: string;
     }>;
     oauthLogin: (id: string) => Promise<McpOAuthActionResult>;
+    oauthCancel: (id: string) => Promise<boolean>;
     oauthLogout: (id: string) => Promise<McpOAuthActionResult>;
     oauthStatus: () => Promise<McpOAuthStatusResult>;
     onChanged: (callback: () => void) => () => void;

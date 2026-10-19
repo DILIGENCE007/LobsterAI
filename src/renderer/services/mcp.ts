@@ -251,6 +251,16 @@ class McpService {
     }
   }
 
+  /** Stops a sign-in that is waiting for the browser; its `oauthLogin` call then resolves as cancelled. */
+  async oauthCancel(id: string): Promise<boolean> {
+    try {
+      return await window.electron.mcp.oauthCancel(id);
+    } catch (error) {
+      console.error('Failed to cancel MCP sign-in:', error);
+      return false;
+    }
+  }
+
   async oauthLogout(id: string): Promise<McpOAuthActionResult> {
     try {
       return await window.electron.mcp.oauthLogout(id);
