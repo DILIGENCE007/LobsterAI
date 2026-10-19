@@ -32,7 +32,6 @@ import ImagePreviewModal, { type ImagePreviewSource } from './ImagePreviewModal'
 import {
   COWORK_DETAIL_CONTENT_CLASS,
   COWORK_DETAIL_GUTTER_CLASS,
-  getMessageModelLabel,
   messageMetaClassName,
 } from './messageDisplayUtils';
 import SelectedTextSnippetBadge from './SelectedTextSnippetBadge';
@@ -198,7 +197,6 @@ const UserMessageItem: React.FC<{
 }> = React.memo(({ message, skills, marketplaceKits = [], sessionId, onReEdit, onLocateSelectedText, onOpenAnnotation }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ImagePreviewSource | null>(null);
-  const modelLabel = getMessageModelLabel(message.metadata);
   const handleBlur = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
     const nextTarget = event.relatedTarget;
     if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
@@ -377,7 +375,6 @@ const UserMessageItem: React.FC<{
               <div className="flex w-full items-center justify-end gap-2">
                 <div className={messageMetaClassName(isHovered, 'right')} aria-hidden={!isHovered}>
                   <span>{formatMessageDateTime(message.timestamp)}</span>
-                  {modelLabel && <span>{modelLabel}</span>}
                   <CopyButton
                     content={message.content}
                     onCopy={(result) => reportConversationMessageAction({
