@@ -1,8 +1,9 @@
 import { XCircleIcon as XCircleIconSolid } from '@heroicons/react/20/solid';
-import { CheckIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ArrowRightStartOnRectangleIcon, CheckIcon } from '@heroicons/react/24/outline';
 import React, { useCallback,useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import { McpAuthMode, McpOAuthErrorCode, McpOAuthState } from '../../../shared/mcp/auth';
 import { mcpCategories,mcpRegistry } from '../../data/mcpRegistry';
 import { i18nService } from '../../services/i18n';
 import { mcpService } from '../../services/mcp';
@@ -16,7 +17,12 @@ import {
 import { RootState } from '../../store';
 import { setMcpServers } from '../../store/slices/mcpSlice';
 import { McpMarketplaceCategoryInfo,McpRegistryEntry, McpServerConfig, McpServerFormData } from '../../types/mcp';
-import { CARD_ACTION_PILL_CLASS, DETAIL_ACTION_PILL_CLASS } from '../common/actionPillStyles';
+import {
+  CARD_ACTION_PILL_CLASS,
+  CARD_SECONDARY_PILL_CLASS,
+  DETAIL_ACTION_PILL_CLASS,
+  DETAIL_SECONDARY_PILL_CLASS,
+} from '../common/actionPillStyles';
 import CardOverflowMenu, { type CardOverflowMenuItem } from '../common/CardOverflowMenu';
 import CardToggle from '../common/CardToggle';
 import { MANAGEMENT_BODY_TEXT, MANAGEMENT_META_TEXT, MANAGEMENT_TITLE_TEXT } from '../common/managementTypography';
@@ -54,6 +60,35 @@ const LAUNCH_STATUS_COLORS: Record<string, string> = {
 
 const isQichachaRegistryEntry = (entry: McpRegistryEntry): boolean =>
   entry.oauthProvider === 'qichacha';
+
+const isOAuthRemoteServer = (server: McpServerConfig): boolean =>
+  server.transportType !== 'stdio' && server.auth === McpAuthMode.OAuth;
+
+/** How a remote OAuth server's sign-in reads on its card and in its detail. */
+const OAuthPhase = {
+  SigningIn: 'signing-in',
+  SignedIn: 'signed-in',
+  SignedOut: 'signed-out',
+  // Not loaded by OpenClaw (disabled, or no model configured yet), or the status read failed.
+  Unknown: 'unknown',
+} as const;
+type OAuthPhase = typeof OAuthPhase[keyof typeof OAuthPhase];
+
+const OAUTH_BADGE_BASE_CLASS = 'inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 font-medium';
+
+const OAUTH_PHASE_BADGES: Record<Exclude<OAuthPhase, typeof OAuthPhase.Unknown>, { labelKey: string; className: string }> = {
+  [OAuthPhase.SigningIn]: { labelKey: 'mcpOAuthSigningIn', className: 'bg-gray-500/10 text-gray-600 dark:text-gray-300' },
+  [OAuthPhase.SignedIn]: { labelKey: 'mcpOAuthSignedIn', className: 'bg-green-500/10 text-green-600 dark:text-green-400' },
+  [OAuthPhase.SignedOut]: { labelKey: 'mcpOAuthNotSignedIn', className: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' },
+};
+
+const OAUTH_ERROR_MESSAGE_KEYS: Partial<Record<McpOAuthErrorCode, string>> = {
+  [McpOAuthErrorCode.AlreadyInProgress]: 'mcpOAuthSignInInProgress',
+  [McpOAuthErrorCode.CallbackUnavailable]: 'mcpOAuthCallbackUnavailable',
+  [McpOAuthErrorCode.Timeout]: 'mcpOAuthSignInTimeout',
+  [McpOAuthErrorCode.RuntimeUnavailable]: 'mcpOAuthRuntimeUnavailable',
+  [McpOAuthErrorCode.ServerNotLoaded]: 'mcpOAuthServerNotLoaded',
+};
 
 type RegistryGroupItem = Extract<McpInstalledItem, { kind: 'registryGroup' }>;
 
@@ -106,6 +141,11 @@ const McpManager: React.FC = () => {
   const [editingServer, setEditingServer] = useState<McpServerConfig | null>(null);
   const [installingRegistry, setInstallingRegistry] = useState<McpRegistryEntry | null>(null);
   const [connectingRegistryId, setConnectingRegistryId] = useState<string | null>(null);
+  const [oauthStates, setOAuthStates] = useState<Record<string, McpOAuthState>>({});
+  const [signingInServerId, setSigningInServerId] = useState<string | null>(null);
+  // Set once the first `mcp status` read finishes. If that read fails, the sign-in
+  // button still appears, since it is then the only way to get a token.
+  const [oauthStatusReady, setOAuthStatusReady] = useState(false);
   const [activeCategory, setActiveCategory] = useState('all');
   const [detailTarget, setDetailTarget] = useState<DetailTarget | null>(null);
   // First frame renders the cached copy of the last fetch, so entries and
@@ -153,6 +193,36 @@ const McpManager: React.FC = () => {
     fetchMarketplace();
     return () => { isActive = false; };
   }, []);
+
+  // Re-read OAuth state whenever the set of OAuth servers (or their identity) changes.
+  // `mcp status` spawns the OpenClaw CLI, so skip it when no server uses OAuth.
+  const oauthServerSignature = useMemo(
+    () => servers
+      .filter(isOAuthRemoteServer)
+      .map(server => `${server.id}:${server.name}:${server.url ?? ''}:${server.enabled}`)
+      .join('|'),
+    [servers],
+  );
+
+  const refreshOAuthStates = useCallback(async () => {
+    const states = await mcpService.oauthStatus();
+    setOAuthStates(states);
+    setOAuthStatusReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!oauthServerSignature) {
+      setOAuthStates({});
+      return;
+    }
+    let isActive = true;
+    mcpService.oauthStatus().then(states => {
+      if (!isActive) return;
+      setOAuthStates(states);
+      setOAuthStatusReady(true);
+    });
+    return () => { isActive = false; };
+  }, [oauthServerSignature]);
 
   const installedRegistryIds = useMemo(() => {
     const ids = new Set<string>();
@@ -582,6 +652,14 @@ const McpManager: React.FC = () => {
       icon: <EditIcon className="h-3.5 w-3.5" />,
       onSelect: () => handleOpenEditForm(server),
     },
+    ...(getOAuthPhase(server) === OAuthPhase.SignedIn
+      ? [{
+        key: 'oauth-sign-out',
+        label: i18nService.t('mcpOAuthSignOut'),
+        icon: <ArrowRightStartOnRectangleIcon className="h-3.5 w-3.5" />,
+        onSelect: () => { void handleOAuthSignOut(server); },
+      }]
+      : []),
     {
       key: 'delete',
       label: i18nService.t('delete'),
@@ -590,6 +668,43 @@ const McpManager: React.FC = () => {
       onSelect: () => handleRequestDelete(server),
     },
   ];
+
+  /**
+   * OpenClaw runs the OAuth flow (browser + loopback callback) and stores the
+   * token; the gateway picks it up on the next request without a restart.
+   */
+  const handleOAuthSignIn = async (server: McpServerConfig) => {
+    if (signingInServerId) return;
+    setActionError('');
+    setSigningInServerId(server.id);
+    try {
+      const result = await mcpService.oauthLogin(server.id);
+      if (!result.success && result.code !== McpOAuthErrorCode.Cancelled) {
+        const messageKey = OAUTH_ERROR_MESSAGE_KEYS[result.code];
+        setActionError(messageKey
+          ? i18nService.t(messageKey)
+          : `${i18nService.t('mcpOAuthSignInFailed')}${result.error ? `: ${result.error}` : ''}`);
+      }
+    } finally {
+      setSigningInServerId(null);
+      await refreshOAuthStates();
+    }
+  };
+
+  const handleOAuthCancel = (server: McpServerConfig) => {
+    void mcpService.oauthCancel(server.id);
+  };
+
+  const handleOAuthSignOut = async (server: McpServerConfig) => {
+    setActionError('');
+    const result = await mcpService.oauthLogout(server.id);
+    if (!result.success) {
+      setActionError(result.code === McpOAuthErrorCode.ServerNotLoaded
+        ? i18nService.t('mcpOAuthSignOutServerNotLoaded')
+        : `${i18nService.t('mcpOAuthSignOutFailed')}${result.error ? `: ${result.error}` : ''}`);
+    }
+    await refreshOAuthStates();
+  };
 
   const handleInstallFromRegistry = (entry: McpRegistryEntry) => {
     reportMcpAction('marketplace_install_open', {
@@ -812,6 +927,79 @@ const McpManager: React.FC = () => {
 
   const closeDetail = () => setDetailTarget(null);
 
+  const getOAuthPhase = (server: McpServerConfig): OAuthPhase | null => {
+    if (!isOAuthRemoteServer(server)) return null;
+    if (signingInServerId === server.id) return OAuthPhase.SigningIn;
+    // Disabled servers drop out of openclaw.json, so their sign-in cannot be read or
+    // changed; don't wait for the next status read to stop offering Sign out.
+    if (!server.enabled) return OAuthPhase.Unknown;
+    const state = oauthStates[server.id];
+    if (state === McpOAuthState.Authorized) return OAuthPhase.SignedIn;
+    if (state === undefined || state === McpOAuthState.Unknown) return OAuthPhase.Unknown;
+    return OAuthPhase.SignedOut;
+  };
+
+  // Offered once the first status read is back, even if it failed: it is then the only way in.
+  const canOAuthSignIn = (server: McpServerConfig, phase: OAuthPhase | null): boolean =>
+    server.enabled
+    && oauthStatusReady
+    && (phase === OAuthPhase.SignedOut || phase === OAuthPhase.Unknown);
+
+  /**
+   * Sign-in state in the card's facts strip. "Not authorized" is left out while
+   * the Sign in capsule beside it already says so.
+   */
+  const renderOAuthBadge = (server: McpServerConfig, phase: OAuthPhase | null) => {
+    if (!phase || phase === OAuthPhase.Unknown) return null;
+    if (phase === OAuthPhase.SignedOut && canOAuthSignIn(server, phase)) return null;
+    const badge = OAUTH_PHASE_BADGES[phase];
+    return (
+      <span className={`${OAUTH_BADGE_BASE_CLASS} ${badge.className}`}>
+        {phase === OAuthPhase.SigningIn && <ArrowPathIcon className="h-3 w-3 animate-spin" />}
+        {i18nService.t(badge.labelKey)}
+      </span>
+    );
+  };
+
+  /**
+   * Sign in with the marketplace Qichacha entry's capsule and wording, so one
+   * authorization pattern covers the page. Installed cards keep their header for
+   * the toggle, so there it sits at the end of the facts strip; the detail dialog
+   * puts it in its header action slot. While the browser step is pending it turns
+   * into Cancel (the CLI can wait for minutes) without shifting the layout.
+   */
+  const renderOAuthAction = (server: McpServerConfig, phase: OAuthPhase | null, size: 'card' | 'detail') => {
+    // In the facts strip the 26px capsule must not make the card taller than its
+    // neighbours (badges are 23px), or the badge rows of a grid row stop lining up.
+    const placement = size === 'card' ? 'ml-auto -my-0.5 ' : '';
+    // Distinct keys: swapping one element's classes would cross-fade the primary
+    // fill into the grey Cancel capsule.
+    if (phase === OAuthPhase.SigningIn) {
+      return (
+        <button
+          key="oauth-cancel"
+          type="button"
+          onClick={(event) => { event.stopPropagation(); handleOAuthCancel(server); }}
+          className={placement + (size === 'card' ? CARD_SECONDARY_PILL_CLASS : DETAIL_SECONDARY_PILL_CLASS)}
+        >
+          {i18nService.t('cancel')}
+        </button>
+      );
+    }
+    if (!canOAuthSignIn(server, phase)) return null;
+    return (
+      <button
+        key="oauth-sign-in"
+        type="button"
+        disabled={signingInServerId !== null}
+        onClick={(event) => { event.stopPropagation(); void handleOAuthSignIn(server); }}
+        className={placement + (size === 'card' ? CARD_ACTION_PILL_CLASS : DETAIL_ACTION_PILL_CLASS)}
+      >
+        {i18nService.t('mcpOAuthSignIn')}
+      </button>
+    );
+  };
+
   /**
    * One installed/custom server card. Both tabs show the same object, so they
    * share a renderer instead of drifting apart.
@@ -820,6 +1008,7 @@ const McpManager: React.FC = () => {
     const registryEntry = getRegistryEntryForServer(server);
     const launchStatusLabel = getLaunchStatusLabel(server);
     const requiredEnvKeyCount = registryEntry?.requiredEnvKeys?.length ?? 0;
+    const oauthPhase = getOAuthPhase(server);
     return (
       <McpCard
         key={server.id}
@@ -852,6 +1041,7 @@ const McpManager: React.FC = () => {
             <span className={`shrink-0 rounded px-1.5 py-0.5 font-medium ${TRANSPORT_BADGE_COLORS[server.transportType] || ''}`}>
               {server.transportType}
             </span>
+            {renderOAuthBadge(server, oauthPhase)}
             {launchStatusLabel && (
               <span
                 className={`shrink-0 rounded px-1.5 py-0.5 font-medium ${getLaunchStatusClass(server)}`}
@@ -869,18 +1059,6 @@ const McpManager: React.FC = () => {
                 {i18nService.t('mcpLaunchRetry')}
               </button>
             )}
-            {server.transportType === 'stdio' && server.command && (
-              <>
-                <span className="shrink-0 text-secondary/50">·</span>
-                <span className="min-w-0 truncate">{getStdioCommandSummary(server.command, server.args)}</span>
-              </>
-            )}
-            {(server.transportType === 'sse' || server.transportType === 'http') && server.url && (
-              <>
-                <span className="shrink-0 text-secondary/50">·</span>
-                <span className="min-w-0 truncate">{server.url}</span>
-              </>
-            )}
             {requiredEnvKeyCount > 0 && (
               <>
                 <span className="shrink-0 text-secondary/50">·</span>
@@ -889,6 +1067,7 @@ const McpManager: React.FC = () => {
                 </span>
               </>
             )}
+            {renderOAuthAction(server, oauthPhase, 'card')}
           </>
         )}
       />
@@ -929,6 +1108,7 @@ const McpManager: React.FC = () => {
     const registryEntry = getRegistryEntryForServer(server);
     const displayName = getServerDisplayName(server);
     const launchStatusLabel = getLaunchStatusLabel(server);
+    const oauthPhase = getOAuthPhase(server);
     const stats: McpDetailStat[] = [
       {
         label: i18nService.t('mcpDetailStatus'),
@@ -939,6 +1119,9 @@ const McpManager: React.FC = () => {
         label: i18nService.t('mcpDetailSource'),
         value: i18nService.t(server.isBuiltIn || server.registryId ? 'mcpSourceMarketplace' : 'mcpCustom'),
       },
+      ...(oauthPhase && oauthPhase !== OAuthPhase.Unknown
+        ? [{ label: i18nService.t('mcpDetailSignIn'), value: i18nService.t(OAUTH_PHASE_BADGES[oauthPhase].labelKey) }]
+        : []),
     ];
     const info: McpDetailInfoRow[] = [];
     if (server.transportType === 'stdio' && server.command) {
@@ -960,6 +1143,7 @@ const McpManager: React.FC = () => {
     if (envKeys) info.push({ label: i18nService.t('mcpDetailEnvKeys'), value: envKeys, mono: true });
     const headerKeys = getKeyListValue(server.headers);
     if (headerKeys) info.push({ label: i18nService.t('mcpDetailHeaders'), value: headerKeys, mono: true });
+    if (oauthPhase) info.push({ label: i18nService.t('mcpAuthMode'), value: i18nService.t('mcpAuthOAuth') });
     if (server.toolFilter) {
       info.push({ label: i18nService.t('mcpDetailTools'), value: describeMcpToolFilter(server.toolFilter) });
     }
@@ -982,10 +1166,21 @@ const McpManager: React.FC = () => {
         stats={stats}
         info={info}
         onClose={closeDetail}
+        action={renderOAuthAction(server, oauthPhase, 'detail')}
         footer={(
           <>
             {renderDetailToggle(server.enabled, () => handleToggleEnabled(server.id))}
             <div className="flex items-center gap-1">
+              {oauthPhase === OAuthPhase.SignedIn && (
+                <button
+                  type="button"
+                  onClick={() => { void handleOAuthSignOut(server); }}
+                  className={DETAIL_FOOTER_BUTTON_CLASS}
+                >
+                  <ArrowRightStartOnRectangleIcon className="h-4 w-4" />
+                  {i18nService.t('mcpOAuthSignOut')}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => { closeDetail(); handleOpenEditForm(server); }}
@@ -1358,7 +1553,6 @@ const McpManager: React.FC = () => {
                 const groupName = getRegistryGroupName(item);
                 const groupDescription = getRegistryGroupDescription(item);
                 const groupTransportType = getRegistryGroupTransportType(item);
-                const groupSummary = getRegistryGroupSummary(item);
                 const groupEnabled = item.servers.some(server => server.enabled);
                 return (
                   <McpCard
@@ -1405,12 +1599,6 @@ const McpManager: React.FC = () => {
                         <span className="shrink-0 rounded bg-surface-raised px-1.5 py-0.5 font-medium">
                           {i18nService.t('mcpServersCount').replace('{count}', String(item.servers.length))}
                         </span>
-                        {groupSummary && (
-                          <>
-                            <span className="shrink-0 text-secondary/50">·</span>
-                            <span className="min-w-0 truncate">{groupSummary}</span>
-                          </>
-                        )}
                       </>
                     )}
                   />

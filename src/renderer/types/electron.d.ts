@@ -136,6 +136,7 @@ import type {
   ListLocalWebServicesOptions,
   LocalWebService,
 } from '../../shared/localWebServices/constants';
+import type { McpAuthMode, McpOAuthActionResult, McpOAuthStatusResult } from '../../shared/mcp/auth';
 import type { McpToolDiscoveryRequest, McpToolDiscoveryResult } from '../../shared/mcp/toolDiscovery';
 import type {
   MediaPreference,
@@ -516,6 +517,7 @@ interface McpServerConfigIPC {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+  auth?: McpAuthMode;
   isBuiltIn: boolean;
   githubUrl?: string;
   registryId?: string;
@@ -796,6 +798,10 @@ interface IElectronAPI {
       servers?: McpServerConfigIPC[];
       error?: string;
     }>;
+    oauthLogin: (id: string) => Promise<McpOAuthActionResult>;
+    oauthCancel: (id: string) => Promise<boolean>;
+    oauthLogout: (id: string) => Promise<McpOAuthActionResult>;
+    oauthStatus: () => Promise<McpOAuthStatusResult>;
     onChanged: (callback: () => void) => () => void;
   };
   kits: {
