@@ -151,6 +151,10 @@ import type {
   OpenClawLoopbackRepairOutcome,
 } from '../../shared/openclawEngine/constants';
 import type { OpenClawRepairStage } from '../../shared/openclawEngine/repair';
+import type {
+  OpenClawUserConfigActionResult,
+  OpenClawUserConfigStatus,
+} from '../../shared/openclawUserConfig/constants';
 import type { ModelThinkingLevel } from '../../shared/providers/modelThinking';
 import type {
   PublishingQuota,
@@ -935,6 +939,13 @@ interface IElectronAPI {
       set: (
         config: OpenClawSessionPolicyConfig,
       ) => Promise<{ success: boolean; config?: OpenClawSessionPolicyConfig; error?: string }>;
+    };
+    userConfig: {
+      getStatus: () => Promise<OpenClawUserConfigStatus>;
+      setEnabled: (enabled: boolean) => Promise<OpenClawUserConfigActionResult>;
+      openFile: () => Promise<OpenClawUserConfigActionResult>;
+      revealFile: () => Promise<OpenClawUserConfigActionResult>;
+      apply: () => Promise<OpenClawUserConfigActionResult>;
     };
     session: {
       patch: (options: {
