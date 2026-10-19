@@ -372,7 +372,7 @@ import {
   ensureCoworkTempGitignore,
   findCoworkTempRoot,
 } from './libs/coworkTempJanitor';
-import { CoworkTurnUsageService } from './libs/coworkTurnUsage';
+import { CoworkTurnUsageService, type NativeTurnRuns } from './libs/coworkTurnUsage';
 import {
   ensureElectronNodeShim,
   getElectronNodeRuntimePath,
@@ -466,6 +466,7 @@ import { MediaTaskStore, type MediaTaskTracker as PersistedMediaTaskTracker } fr
 import { MediaUsageAnalytics } from './libs/mediaUsageAnalytics';
 import { MediaUsageStore } from './libs/mediaUsageStore';
 import { createModelPresetClient, registerModelPresetIpc } from './libs/modelPresets';
+import { claimNativeRunTurnUsage, recordNativeRunMediaTask } from './libs/nativeRunTurnUsage';
 import {
   migrateAgentModelRefs,
   parsePrimaryModelRef,
@@ -2558,8 +2559,9 @@ let waitForPendingTokenRefresh: () => Promise<void> = async () => {};
 // Created with the auth session manager; settles each finished turn's LLM usage from the server ledger.
 let coworkTurnUsageService: CoworkTurnUsageService | null = null;
 
-const settleCoworkTurnUsage = (sessionId: string): void => {
-  void coworkTurnUsageService?.settleLatestTurn(sessionId).catch((error) => {
+// The turn's OpenClaw runs bind IM and cron turns to the traces those runs reported.
+const settleCoworkTurnUsage = (sessionId: string, nativeRuns?: NativeTurnRuns): void => {
+  void coworkTurnUsageService?.settleLatestTurn(sessionId, nativeRuns).catch((error) => {
     console.warn(`[TurnUsage] settlement failed for session ${sessionId}.`, error);
   });
 };
@@ -4035,7 +4037,7 @@ const bindCoworkRuntimeForwarder = (): void => {
     skinRuntimeController?.handleRuntimeComplete(sessionId);
     mediaReferencesBySession.delete(sessionId);
     getDesktopNotificationManager().handleComplete(sessionId);
-    settleCoworkTurnUsage(sessionId);
+    settleCoworkTurnUsage(sessionId, { runIds: runtime.getTurnRunIds(sessionId) });
     const windows = BrowserWindow.getAllWindows();
     windows.forEach(win => {
       if (win.isDestroyed()) return;
@@ -4061,7 +4063,7 @@ const bindCoworkRuntimeForwarder = (): void => {
     skinRuntimeController?.handleRuntimeError(sessionId);
     mediaReferencesBySession.delete(sessionId);
     // A failed turn may still have consumed credits before it stopped.
-    settleCoworkTurnUsage(sessionId);
+    settleCoworkTurnUsage(sessionId, { runIds: runtime.getTurnRunIds(sessionId) });
     // Mark session as error in store so the .catch() fallback can detect duplicates.
     try {
       getCoworkStore().updateSession(sessionId, { status: 'error' });
@@ -4124,6 +4126,9 @@ const getCoworkEngineRouter = () => {
               ...event,
             });
           },
+          onChannelRunEnded: (sessionId, runId, startedAt) => (
+            settleCoworkTurnUsage(sessionId, { runIds: [runId], startedAt })
+          ),
           onGatewayClientReady: () => {
             getCronJobService().notifyGatewayReady();
             handleGatewaySelfRestartSettled();
@@ -6012,6 +6017,7 @@ if (!gotTheLock) {
     hasAuthTokens: () => Boolean(getAuthTokens()?.accessToken),
     buildServerUrl: pathWithQuery => appendKeyfromQuery(`${getServerApiBaseUrl()}${pathWithQuery}`),
     getTraceStats: getOpenClawTokenProxyTraceStats,
+    claimNativeRunTurnUsage,
     emitTurnUsage: (event) => {
       for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed()) {
@@ -7155,6 +7161,8 @@ if (!gotTheLock) {
         : happyHorse11Selection?.reason;
       if (sessionId && turnUserMessageId && isRequestAccountCurrent()) {
         coworkTurnUsageService?.recordMediaTask(sessionId, turnUserMessageId, task.taskId);
+      } else if (nativeRun && isRequestAccountCurrent()) {
+        recordNativeRunMediaTask(request.context.runId, task.taskId);
       }
       console.log('[MediaGeneration] server accepted generate request:', serializeForLog({
         mediaType,

@@ -946,6 +946,26 @@ export const getMessageModelLabel = (metadata?: CoworkMessageMetadata | null): s
   return presetId ? `${modelPresetName(presetId)}（${label}）` : label;
 };
 
+/**
+ * Desktop turns stamp the selected preset on every message. IM and cron runs
+ * resolve the preset inside OpenClaw, so only their user message records it.
+ */
+export const withTurnModelPreset = (
+  assistant: CoworkMessageMetadata | undefined,
+  user: CoworkMessageMetadata | null | undefined,
+): CoworkMessageMetadata | undefined => {
+  const modelPresetId = parseModelPresetId(user?.modelPresetId);
+  if (!assistant || !modelPresetId || parseModelPresetId(assistant.modelPresetId)) return assistant;
+  const hasActualModel = [assistant.model, assistant.resolvedModelId].some(value => (
+    typeof value === 'string' && value.trim() && !parseModelPresetModelId(value)
+  ));
+  return {
+    ...assistant,
+    modelPresetId,
+    ...(hasActualModel ? {} : { resolvedModelId: user?.resolvedModelId }),
+  };
+};
+
 export const messageMetaClassName = (visible: boolean, align: 'left' | 'right' = 'left'): string => [
   'flex items-center gap-2 mt-1 text-[11px] text-zinc-400 dark:text-zinc-500 select-none transition-opacity duration-200',
   align === 'right' ? 'justify-end' : '',

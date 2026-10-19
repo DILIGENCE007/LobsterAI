@@ -2946,6 +2946,51 @@ test('sessions.changed drives IM loading status without creating a local active 
   ]);
 });
 
+test('sessions.changed end settles an IM run without a local turn after syncing its history', async () => {
+  const sessionKey = 'agent:main:openclaw-weixin:bot-1:direct:user-1';
+  const { session, store } = createReconcileStore([], {
+    sessionId: 'session-1',
+  });
+  const calls: string[] = [];
+  const onChannelRunEnded = vi.fn((sessionId: string, runId: string, startedAt?: number) => {
+    calls.push(`ended:${sessionId}:${runId}:${startedAt}`);
+  });
+  const adapter = new OpenClawRuntimeAdapter(store, {}, { onChannelRunEnded });
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async (method: string) => {
+      calls.push(method);
+      return { messages: [] };
+    },
+  };
+  adapter.channelSessionSync = {
+    isCurrentBindingKey: () => true,
+    resolveOrCreateSession: () => session.id,
+  };
+
+  adapter.handleGatewayEvent({
+    event: 'sessions.changed',
+    payload: { sessionKey, runId: 'im-run-1', phase: 'start', status: 'running', ts: 1_000 },
+  });
+  adapter.handleGatewayEvent({
+    event: 'sessions.changed',
+    payload: { sessionKey, runId: 'im-run-1', phase: 'end', status: 'done', ts: 2_000 },
+  });
+
+  await vi.waitFor(() => expect(onChannelRunEnded).toHaveBeenCalledOnce());
+  expect(calls).toEqual(['chat.history', `ended:${session.id}:im-run-1:1000`]);
+
+  // A run followed by a local turn settles through `complete` instead.
+  adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'im-run-2'));
+  adapter.handleGatewayEvent({
+    event: 'sessions.changed',
+    payload: { sessionKey, runId: 'im-run-2', phase: 'end', status: 'done' },
+  });
+  await Promise.resolve();
+  expect(onChannelRunEnded).toHaveBeenCalledOnce();
+});
+
 test('sessions.changed start reports an IM prompt once across lifecycle and ActiveTurn paths', () => {
   const sessionKey = 'agent:main:openclaw-weixin:bot-1:direct:user-1';
   const { session, store } = createReconcileStore([], {

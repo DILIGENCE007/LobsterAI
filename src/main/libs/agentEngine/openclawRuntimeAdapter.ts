@@ -168,6 +168,7 @@ import { buildMediaGenerationTurnInstruction } from './mediaGenerationTurnInstru
 import { OpenClawApprovalController } from './openclawApprovalController';
 import {
   applyLocalTimestampsToEntries,
+  applyLocalTurnUsageToEntries,
   buildGatewayMediaMetadata,
   findTailAlignment,
   getLocalMediaAttachmentsKey,
@@ -505,6 +506,8 @@ type GatewayClientCtor = new (options: Record<string, unknown>) => GatewayClient
 type ChannelSessionLifecycleRun = {
   runId: string;
   observedAtMs: number;
+  /** OpenClaw's time for the run start; runs of a session do not overlap. */
+  startedAt?: number;
 };
 
 type OpenClawRuntimeAdapterOptions = {
@@ -515,6 +518,8 @@ type OpenClawRuntimeAdapterOptions = {
     isMainAgent: boolean;
     platform: string;
   }, sessionId: string) => void;
+  /** An IM run that no local turn followed has ended and its messages are synced. */
+  onChannelRunEnded?: (sessionId: string, runId: string, runStartedAt?: number) => void;
   onGatewayClientReady?: () => void;
   onBrowserToolEvent?: (event: AgentBrowserToolEvent) => void;
 };
@@ -5473,6 +5478,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return this.activeTurns.has(sessionId) || this.yieldedSessions.has(sessionId);
   }
 
+  getTurnRunIds(sessionId: string): string[] {
+    return [...(this.activeTurns.get(sessionId)?.knownRunIds ?? [])];
+  }
+
   hasActiveSessions(): boolean {
     return this.activeTurns.size > 0 || this.yieldedSessions.size > 0;
   }
@@ -7764,6 +7773,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
+  /**
+   * IM runs are often followed only through lifecycle events, without a local
+   * turn or `complete`. Sync the run's messages first so its user message exists.
+   */
+  private notifyChannelRunEnded(sessionId: string, sessionKey: string, runId: string, runStartedAt?: number): void {
+    const onChannelRunEnded = this.options.onChannelRunEnded;
+    if (!onChannelRunEnded) return;
+    void this.syncSessionHistoryFromGateway(sessionId, sessionKey)
+      .then(() => onChannelRunEnded(sessionId, runId, runStartedAt))
+      .catch((error) => {
+        console.warn('[ChannelSync] failed to sync IM history after a run ended:', error);
+      });
+  }
+
   private handleChannelSessionLifecycleEvent(payload: unknown): void {
     if (!this.channelSessionSync || !isRecord(payload)) return;
 
@@ -7824,6 +7847,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.channelLifecycleRunBySessionKey.set(sessionKey, {
         runId,
         observedAtMs: Date.now(),
+        ...(typeof payload.ts === 'number' && Number.isFinite(payload.ts) ? { startedAt: payload.ts } : {}),
       });
       if (activeTurn && runId) {
         activeTurn.knownRunIds.add(runId);
@@ -7870,6 +7894,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     if (isNewlyKnownSession) {
       this.notifySessionsChanged(sessionId);
+    }
+    if (phase !== AgentLifecyclePhase.Start && runId && !activeTurn) {
+      this.notifyChannelRunEnded(
+        sessionId,
+        sessionKey,
+        runId,
+        trackedRun?.runId === runId ? trackedRun.startedAt : undefined,
+      );
     }
     if (phase === AgentLifecyclePhase.Start && runId) {
       this.reportChannelPromptSubmit(sessionId, sessionKey, runId, activeTurn);
@@ -11350,7 +11382,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (shouldReplaceLocalConversationWithCronHistory(localEntries, authoritativeEntries, runHistoryKey)) {
         this.store.replaceConversationMessages(
           sessionId,
-          applyLocalTimestampsToEntries(authoritativeEntries, localEntries),
+          applyLocalTurnUsageToEntries(applyLocalTimestampsToEntries(authoritativeEntries, localEntries), localEntries),
         );
         this.channelSyncCursor.set(sessionId, authoritativeEntries.length);
         this.notifySessionsChanged(sessionId);
@@ -11635,7 +11667,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         );
       }
 
-      this.store.replaceConversationMessages(sessionId, applyLocalTimestampsToEntries(entriesToStore, localEntries));
+      this.store.replaceConversationMessages(
+        sessionId,
+        applyLocalTurnUsageToEntries(applyLocalTimestampsToEntries(entriesToStore, localEntries), localEntries),
+      );
       this.channelSyncCursor.set(sessionId, authoritativeEntries.length);
 
       // Notify renderer to refresh
