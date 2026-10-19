@@ -46,6 +46,11 @@ export function registerLlmUsageContext(
   reportUsageSessionTitle(sessionId);
 }
 
+/** Whether the client registered this trace for a turn it started. */
+export function hasLlmUsageContext(traceId: string): boolean {
+  return contexts.has(traceId);
+}
+
 /** A proxy-generated request trace has no registered user turn and stays ungrouped. */
 export function getLlmUsageHeaders(traceparent?: string, requestModel?: unknown): Record<string, string> {
   const trace = traceparent ? parseLlmTraceparent(traceparent) : null;
