@@ -201,7 +201,10 @@ test('retained runs lose regenerable caches but keep state and site data, and th
   const { base, runs } = backupRuns([
     { name: runName('2026-10-06T04:42:33.345Z', '4W3ZYj') }, { name: runName('2026-10-04T06:43:26.330Z', 'vRNFCI') },
   ]);
+  // Writing the manifest bumps the run's mtime to the real clock, which reads as in progress at NOW; restore it.
+  const { mtime } = fs.statSync(runs[0]);
   fs.writeFileSync(path.join(runs[0], OPENCLAW_REPAIR_SNAPSHOT_MANIFEST), JSON.stringify({ version: 1, generatedPluginSkillLinks: [] }));
+  fs.utimesSync(runs[0], mtime, mtime);
 
   const result = await pruneOpenClawRepairBackups(base, { now: NOW });
 
