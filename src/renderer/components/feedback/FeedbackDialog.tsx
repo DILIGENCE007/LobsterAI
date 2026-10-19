@@ -5,6 +5,7 @@ import { FEEDBACK_IMAGE_TYPES, FEEDBACK_LIMITS, FEEDBACK_PRIVACY_URL, FeedbackCa
 import { i18nService } from '../../services/i18n';
 import Modal from '../common/Modal';
 import ImagePreviewModal from '../cowork/ImagePreviewModal';
+import { getFeedbackImagePreviewUrl } from './feedbackImagePreview';
 
 type SelectedImage = { id: string; file: File; url: string };
 const categoryLabels = {
@@ -38,6 +39,7 @@ export default function FeedbackDialog({ onClose }: { onClose: () => void }) {
   const dialog = useRef<HTMLElement>(null);
   const imageRef = useRef(images);
   imageRef.current = images;
+  const previewUrl = previewImage ? getFeedbackImagePreviewUrl(previewImage.url) : undefined;
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -148,7 +150,7 @@ export default function FeedbackDialog({ onClose }: { onClose: () => void }) {
                   <button type="button" disabled={submitting} aria-label={`${t('feedbackPreviewImage')} ${image.file.name}`} title={t('feedbackPreviewImage')}
                     onClick={() => setPreviewImage(image)}
                     className="h-full w-full cursor-zoom-in overflow-hidden rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default">
-                    <img src={image.url} alt={image.file.name} className="h-full w-full object-cover" />
+                    <img src={getFeedbackImagePreviewUrl(image.url)} alt={image.file.name} className="h-full w-full object-cover" />
                   </button>
                   <button type="button" disabled={submitting} aria-label={`${t('feedbackRemoveImage')} ${image.file.name}`}
                     onClick={() => { changed(); URL.revokeObjectURL(image.url); setImages(current => current.filter(item => item.id !== image.id)); }}
@@ -192,7 +194,7 @@ export default function FeedbackDialog({ onClose }: { onClose: () => void }) {
           </>
         )}
       </section>
-      <ImagePreviewModal image={previewImage ? { src: previewImage.url, name: previewImage.file.name } : null} onClose={() => setPreviewImage(null)} />
+      <ImagePreviewModal image={previewImage && previewUrl ? { src: previewUrl, name: previewImage.file.name } : null} onClose={() => setPreviewImage(null)} />
     </Modal>
   );
 }
