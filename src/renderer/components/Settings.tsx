@@ -108,6 +108,7 @@ import {
   shouldUseOpenAIResponsesForProvider,
 } from './settings/modelProviderUtils';
 import ModelSettingsSection, { DeleteProviderConfirmDialog, ModelEditorDialog } from './settings/ModelSettingsSection';
+import OpenClawUserConfigRow from './settings/OpenClawUserConfigRow';
 import ProviderTransferDialog from './settings/ProviderTransferDialog';
 import { resolveSettingsEscapeAction, SettingsEscapeAction } from './settings/settingsEscape';
 import { useProviderTransfer } from './settings/useProviderTransfer';
@@ -5120,6 +5121,8 @@ const Settings: React.FC<SettingsProps> = ({
                           : i18nService.t('openClawRepairConfirmAction')}
                       </button>
                     </div>
+
+                    <OpenClawUserConfigRow />
 
                     {openClawDataBackupResult && (
                       <div className="flex flex-col gap-3 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
