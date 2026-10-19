@@ -2597,6 +2597,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkGatewaySessionSyncTimeout: 'OpenClaw 引擎响应缓慢，消息尚未发送。请等待 1~2 分钟后重新发送；若频繁出现，请检查系统内存与磁盘占用，并将 LobsterAI 加入杀毒软件白名单。',
     coworkErrorTranscriptOversized: '该任务的历史记录过大。为保护 AI 引擎，本次消息未发送；请新建任务继续，原任务记录仍会保留。',
     coworkErrorGatewayHeapOutOfMemory: '本地 AI 引擎内存不足并已自动重启。当前任务可能过大，请等待恢复后在新任务中继续。',
+    coworkErrorWorkspaceAliasRepointed: 'AI 引擎无法确认工作区目录：它被移动过，或被替换成了指向其他位置的链接，本次消息未发送。请恢复原来的目录或链接后重试；如果问题持续，请联系客服并附上日志。',
     coworkErrorGatewayDisconnected: 'AI 引擎连接中断，请重试。如果问题持续，请尝试重启应用。',
     coworkErrorServiceRestart: 'AI 引擎正在重启，请稍后重试。',
     coworkErrorGatewayDraining: 'AI 引擎正在重启中，请稍等片刻后重试。',
@@ -7286,6 +7287,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'This task history is too large. The message was not sent to protect the AI engine. Continue in a new task; the original task will be preserved.',
     coworkErrorGatewayHeapOutOfMemory:
       'The local AI engine ran out of memory and is restarting automatically. This task may be too large; wait for recovery and continue in a new task.',
+    coworkErrorWorkspaceAliasRepointed:
+      'The AI engine could not verify the workspace folder because it was moved or replaced with a link to another location. The message was not sent. Restore the original folder or link and retry; if the problem continues, contact support with your logs.',
     coworkErrorGatewayDisconnected:
       'AI engine connection lost. Please retry. If the issue persists, try restarting the app.',
     coworkErrorServiceRestart: 'AI engine is restarting. Please try again later.',
