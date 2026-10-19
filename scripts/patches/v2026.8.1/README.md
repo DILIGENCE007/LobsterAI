@@ -762,3 +762,43 @@ Upstream does not emit the `checkpoint` event, so after the upgrade the
 adapter's checkpoint handling is dormant. Recheck the short-answer case: a model
 can still follow a finished answer with more text. If the overwrite returns,
 carry the event emission as its own small patch.
+
+## Relinked managed workspaces
+
+`openclaw-managed-workspace-alias-follow.patch` lets a LobsterAI-managed
+workspace follow its current target after it is replaced by a link. OpenClaw
+records each configured workspace path and the real directory it resolved to in
+`workspace_path_aliases`. When the path later resolves somewhere else, v2026.8.1
+fails every message with `workspace path alias points to a different current
+target`. Users hit this by linking `workspace-main` to a synced folder (for
+example OneDrive) after the app had already initialized it. A data-migration
+restore does not copy links, so restoring brings back the empty template and the
+user or agent links it again.
+
+LobsterAI sets `LOBSTERAI_MANAGED_WORKSPACE_ROOT` to its OpenClaw state
+directory for the Gateway. For a workspace path strictly below that root that
+still exists, alias rows pointing at an older target are ignored, the current
+target's own records are used, and the next state write repoints the rows with a
+`workspace` warning that names both paths. The previous target's records are not
+moved or deleted: a link usually points at a different workspace, and copying
+its file attestation would make OpenClaw report the new folder as vanished. A
+missing path keeps its stored owner, so vanished-workspace protection still
+applies. Paths outside the root, and runs without the variable, keep upstream's
+fail-closed behavior.
+
+Run the upstream store tests and the end-to-end relink test:
+
+```sh
+node_modules/.bin/vitest run src/agents/workspace-state-store.test.ts src/agents/workspace.managed-relink.test.ts
+```
+
+Then rebuild the runtime. In the desktop app, initialize the main agent, quit,
+replace `openclaw/state/workspace-main` with a link to a folder that already
+holds agent files, and restart. Messages must succeed, `BOOTSTRAP.md` must not be
+created in the linked folder, and the Gateway log must show the alias warning
+once.
+
+Removal: upstream #133198 (v2026.9.4) only improves the error and adds a
+confirmed `openclaw doctor --fix` rebind that moves records. It does not follow
+the new target on its own, so keep an equivalent of this patch after upgrading,
+adapted to the renamed store helpers.
