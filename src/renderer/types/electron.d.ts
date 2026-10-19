@@ -91,6 +91,7 @@ import type {
   EnterpriseAccountIdentitiesResult,
   EnterpriseQuotaRequestResult,
 } from '../../shared/enterpriseAccount/types';
+import type { FeedbackBridge } from '../../shared/feedback/constants';
 import type {
   HtmlShareAccessMode,
   HtmlShareAnalyticsInput,
@@ -2064,6 +2065,7 @@ interface IElectronAPI {
       error?: string;
     }>;
   };
+  feedback: FeedbackBridge;
   subscriptionTrial: SubscriptionTrialBridge;
   activity: {
     getSlot: (

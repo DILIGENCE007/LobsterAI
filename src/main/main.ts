@@ -181,6 +181,7 @@ import {
   type LocalWebService,
   LocalWebServicesIpc,
 } from '../shared/localWebServices/constants';
+import { LogIpc } from '../shared/logExport/constants';
 import { MEDIA_V2_TASKS_PATH, MediaDeliveryStatus, MediaProtocol, MediaTaskPhase, MediaTaskStatus, TERMINAL_MEDIA_TASK_STATUSES } from '../shared/media/constants';
 import { type MediaPreference, MediaType } from '../shared/media/defaultPolicy';
 import { canonicalizeMediaModelId, HAPPYHORSE_1_1_MODEL_ID, mediaModelDisplayName } from '../shared/mediaModelAliases';
@@ -232,7 +233,6 @@ import { authQuotaGateStateFromQuota, AuthSubscriptionStatus, createDefaultAuthQ
 import { type AutoLaunchStatus, getAutoLaunchStatus, isAutoLaunched, setAutoLaunchEnabled } from './autoLaunchManager';
 import { BrowserCredentialApprovalService } from './browserCredentials/browserCredentialApprovalService';
 import { BrowserCredentialService } from './browserCredentials/browserCredentialService';
-import { getRecentComputerUseLogEntries } from './computerUse/computerUseLogs';
 import { readEnvironmentSnapshot } from './conversation/environmentSnapshot';
 import { WorkspaceReviewSourceStore } from './conversation/reviewSource';
 import { isScopedReview, ScopedReviewStore } from './conversation/scopedReview';
@@ -258,6 +258,7 @@ import {
   readEnterpriseApiErrorCode,
   resolveEnterpriseMembershipRevocationSource,
 } from './enterpriseAccount/membershipRevocation';
+import { registerFeedbackIpc } from './feedback/feedbackIpc';
 import { setLanguage, t } from './i18n';
 import { IMGatewayConfig, IMGatewayManager } from './im';
 import {
@@ -363,7 +364,6 @@ import {
   setCopilotTokenState,
 } from './libs/copilotTokenManager';
 import { saveCoworkApiConfig } from './libs/coworkConfigStore';
-import { getCoworkLogPath } from './libs/coworkLogger';
 import {
   getCoworkOpenAICompatProxyPort,
   registerProxyTokenRefresher,
@@ -458,6 +458,7 @@ import {
   resolveLobsterBrowserMcpStdioLaunch,
 } from './libs/lobsterBrowserMcpServer';
 import { exportLogsZip } from './libs/logExport';
+import { getLogExportEntries } from './libs/logExportEntries';
 import { MainLogReporter } from './libs/mainLogReporter';
 import {
   createDevelopmentMainWindowLoadRecovery,
@@ -523,7 +524,6 @@ import {
   rebaseOpenClawConfigTarget,
   sameOpenClawConfigContent,
 } from './libs/openclawConfigTarget';
-import { getRecentOpenClawDailyLogEntries } from './libs/openclawDailyLogs';
 import { OpenClawEngineManager, type OpenClawEngineStatus } from './libs/openclawEngineManager';
 import {
   backupOpenClawConfig,
@@ -606,7 +606,7 @@ import {
 import { TaskUsageAnalytics } from './libs/usageAnalytics';
 import { type UsageTitleOutbox, UsageTitleSync } from './libs/usageTitleSync';
 import { type LoopbackFirewallRepairResult, repairWindowsLoopbackFirewall } from './libs/windowsLoopbackFirewall';
-import { getLogFilePath, getRecentMainLogEntries, initLogger } from './logger';
+import { getLogFilePath, initLogger } from './logger';
 import { type AskUserResponse, McpRuntime } from './mcp/mcpRuntime';
 import {
   type AccountBoundValue,
@@ -5503,7 +5503,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('log:exportZip', async event => {
+  ipcMain.handle(LogIpc.ExportZip, async event => {
     try {
       const ownerWindow = BrowserWindow.fromWebContents(event.sender);
       if (!ownerWindow || ownerWindow.isDestroyed()) {
@@ -5523,24 +5523,9 @@ if (!gotTheLock) {
       }
 
       const outputPath = ensureZipFileName(saveResult.filePath);
-      const manager = getOpenClawEngineManager();
       const archiveResult = await exportLogsZip({
         outputPath,
-        entries: [
-          ...getRecentMainLogEntries(),
-          { archiveName: 'cowork.log', filePath: getCoworkLogPath() },
-          ...getRecentComputerUseLogEntries(),
-          ...manager.getRecentGatewayLogEntries(),
-          ...getRecentOpenClawDailyLogEntries(manager.getOpenClawDailyLogDirs()),
-          ...(process.platform === 'win32'
-            ? [
-                {
-                  archiveName: 'install-timing.log',
-                  filePath: path.join(app.getPath('appData'), 'LobsterAI', 'install-timing.log'),
-                },
-              ]
-            : []),
-        ],
+        entries: getLogExportEntries(getOpenClawEngineManager()),
       });
 
       return {
@@ -8017,6 +8002,16 @@ if (!gotTheLock) {
         };
       }
     }
+  });
+
+  registerFeedbackIpc({
+    ipcMain,
+    getMainWindow: () => mainWindow,
+    hasAuthTokens: () => getAuthTokens() !== null,
+    getServerBaseUrl: getServerApiBaseUrl,
+    getClientVersion: () => app.getVersion(),
+    fetchWithAuth,
+    getLogEntries: () => getLogExportEntries(getOpenClawEngineManager()),
   });
 
   registerActivityIpcHandlers({

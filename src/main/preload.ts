@@ -81,6 +81,7 @@ import {
   EnterpriseAccountIpcChannel,
   type EnterpriseQuotaRequestType,
 } from '../shared/enterpriseAccount/constants';
+import { type FeedbackInput,FeedbackIpc } from '../shared/feedback/constants';
 import {
   type HtmlShareAccessMode,
   type HtmlShareAnalyticsInput,
@@ -111,6 +112,7 @@ import {
   type LocalWebService,
   LocalWebServicesIpc,
 } from '../shared/localWebServices/constants';
+import { LogIpc } from '../shared/logExport/constants';
 import { McpIpcChannel } from '../shared/mcp/constants';
 import type { McpToolDiscoveryRequest } from '../shared/mcp/toolDiscovery';
 import type {
@@ -1222,6 +1224,9 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener(AppIpcChannel.OpenWithPathsAvailable, handler);
     },
   },
+  feedback: {
+    submit: (input: FeedbackInput) => ipcRenderer.invoke(FeedbackIpc.Submit, input),
+  },
   subscriptionTrial: {
     status: () => ipcRenderer.invoke(SubscriptionTrialIpc.Status),
   },
@@ -1279,7 +1284,7 @@ contextBridge.exposeInMainWorld('electron', {
   log: {
     getPath: () => ipcRenderer.invoke('log:getPath'),
     openFolder: () => ipcRenderer.invoke('log:openFolder'),
-    exportZip: () => ipcRenderer.invoke('log:exportZip'),
+    exportZip: () => ipcRenderer.invoke(LogIpc.ExportZip),
     fromRenderer: (level: string, tag: string, message: string) =>
       ipcRenderer.send('log:fromRenderer', level, tag, message),
   },

@@ -1,4 +1,4 @@
-import { ArrowPathIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ChatBubbleLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import React, {
   useCallback,
   useEffect,
@@ -8,6 +8,7 @@ import React, {
 } from 'react';
 import { useSelector } from 'react-redux';
 
+import { FeedbackUiEvent } from '../../shared/feedback/constants';
 import inviteCreditsIconUrl from '../assets/icons/invite-credits.svg';
 import logoutIconUrl from '../assets/icons/logout.svg';
 import promoSubscriptionIconUrl from '../assets/icons/promo-subscription.svg';
@@ -634,7 +635,19 @@ const UserMenu: React.FC<UserMenuProps> = ({
         />
       </div>
 
-      {/* Session action */}
+      {/* Feedback */}
+      <div className="border-b border-border py-1">
+        <AccountMenuAction
+          icon={<ChatBubbleLeftIcon className="h-5 w-5" />}
+          label={i18nService.t('feedbackTitle')}
+          onClick={() => {
+            onClose();
+            window.dispatchEvent(new Event(FeedbackUiEvent.OpenSettings));
+          }}
+        />
+      </div>
+
+      {/* Session actions */}
       <div className="py-1">
         <AccountMenuAction
           icon={<PortalMenuIcon src={logoutIconUrl} darkInvert />}
