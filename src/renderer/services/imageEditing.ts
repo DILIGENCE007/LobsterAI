@@ -5,6 +5,7 @@ import { type DraftAttachment, setDraftAttachments } from '../store/slices/cowor
 import { requestImageEditorFocus, setImageRegions } from '../store/slices/imageEditorSlice';
 import { ArtifactTypeValue } from '../types/artifact';
 import { i18nService } from './i18n';
+import { mergeImageEditDraft } from './imageEditDrafts';
 
 export const imageEditTitle = (operation: ImageEditOperation): string => i18nService.t({
   [ImageEditOperation.Original]: 'imageEditOriginal', [ImageEditOperation.Markup]: 'imageEditMarkup',
@@ -17,13 +18,13 @@ export function imageEditAttachment(request: ImageEditRequest): DraftAttachment 
 }
 
 /** One source per draft. Ordinary attachments and the user's text remain untouched. */
-export function setImageEditDraft(request: ImageEditRequest): void {
+export function setImageEditDraft(request: ImageEditRequest, replaceIds: string[] = []): boolean {
   const draftKey = request.source.sessionId;
   const attachments = store.getState().cowork.draftAttachments[draftKey] ?? [];
-  if (attachments.some(a => a.imageEdit && a.imageEdit.source.id !== request.source.id)) throw new Error(i18nService.t('imageEditOneSource'));
-  store.dispatch(setDraftAttachments({ draftKey, attachments: [
-    ...attachments.filter(a => a.path !== request.source.filePath && !a.imageEdit), imageEditAttachment(request),
-  ] }));
+  const merged = mergeImageEditDraft(attachments, request, replaceIds);
+  if (!merged) return false;
+  store.dispatch(setDraftAttachments({ draftKey, attachments: merged }));
+  return true;
 }
 
 export interface ImageEditSubmitEvent {
@@ -40,7 +41,7 @@ export function submitImageEdit(request: ImageEditRequest): Promise<void> {
     if (!event.defaultPrevented) reject(new Error(i18nService.t('imageEditBusy')));
   });
 }
-export function focusImageEdit(source: ImageVersion, regionId?: string, regions?: ImageRegion[]): void {
+export function focusImageEdit(source: ImageVersion, regionId?: string, regions?: ImageRegion[], operation?: ImageEditOperation): void {
   if (regions) store.dispatch(setImageRegions({ key: `${source.sessionId}:${source.id}`, regions }));
   const artifacts = store.getState().artifact.artifactsBySession[source.sessionId] ?? [];
   const existing = artifacts.find(artifact => artifact.filePath === source.filePath || artifact.filePath === source.originalPath);
@@ -50,5 +51,5 @@ export function focusImageEdit(source: ImageVersion, regionId?: string, regions?
     title: source.title, content: '', filePath: source.filePath, createdAt: source.createdAt,
   } }));
   store.dispatch(openArtifactPreviewTab({ sessionId: source.sessionId, artifactId }));
-  store.dispatch(requestImageEditorFocus({ id: crypto.randomUUID(), source, regionId }));
+  store.dispatch(requestImageEditorFocus({ id: crypto.randomUUID(), source, regionId, operation }));
 }

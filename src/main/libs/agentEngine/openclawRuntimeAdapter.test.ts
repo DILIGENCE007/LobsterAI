@@ -4120,6 +4120,30 @@ test('a comment turn persists its regions and sends their coordinates to the con
   expect(userMessage?.content).toBe('@图片1 按选区修改');
 });
 
+test('an erase turn explains the prepared mask and preserves long source paths for the conversation model', async () => {
+  const { adapter, requests, session } = createRunTurnAdapter();
+  const directory = `D:/profile/image-editing/${'a'.repeat(64)}/${'long-directory/'.repeat(10)}`;
+  const imageEdit: ImageEditRequest = {
+    id: 'erase-1', sourceVersionNumber: 15, operation: ImageEditOperation.Erase, createdAt: 2,
+    source: { id: 'v15', rootId: 'v1', sessionId: 'session-1', filePath: `${directory}erase-1-source.png`,
+      title: 'cup.png', width: 2048, height: 1024, createdAt: 1, operation: ImageEditOperation.Comment },
+    guidePath: `${directory}erase-1-guide.png`, regions: [],
+  };
+  await adapter.continueSession('session-1', '@图片1 消除涂抹区域', {
+    mediaReferences: [{ token: '@图片1', mediaType: 'image', index: 1, fileName: 'cup.png', mimeType: 'image/png',
+      localPath: imageEdit.source.filePath, imageEdit }],
+  });
+  const chatSend = requests.find(request => request.method === 'chat.send');
+  expect(chatSend?.params.message).toContain(`localPath "${imageEdit.source.filePath}"`);
+  expect(chatSend?.params.message).toContain(imageEdit.guidePath);
+  expect(chatSend?.params.message).toContain('2048 x 1024 removal mask');
+  expect(chatSend?.params.message).toContain('WHITE marks the removal area; BLACK marks the area to preserve');
+  expect(chatSend?.params.message).toContain('source FIRST and this mask SECOND');
+  expect(session.messages.find(message => message.type === 'user')?.metadata).toMatchObject({
+    imageEdits: [{ requestId: 'erase-1', sourceVersionNumber: 15, operation: ImageEditOperation.Erase }],
+  });
+});
+
 test('runs for a user message stored before the turn share the trace on that message', async () => {
   const { adapter, requests, session } = createRunTurnAdapter();
   session.messages.push({

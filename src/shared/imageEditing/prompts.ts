@@ -8,6 +8,15 @@ export function imageEditRegionPrompt(request: Pick<ImageEditRequest, 'source' |
     + request.regions.map((region, index) => `${index + 1}. [${imageRegionCoordinates(region, request.source).percent.join(', ')}]: ${region.text}`).join('\n');
 }
 
+export function imageEditMaskContext(request: ImageEditRequest): string {
+  if (request.operation !== ImageEditOperation.Erase || !request.guidePath) return '';
+  return 'This is a prepared ERASE request. The attached source image is unmarked. '
+    + `Its immutable ${request.source.width} x ${request.source.height} removal mask is already saved at ${JSON.stringify(request.guidePath)}. `
+    + 'WHITE marks the removal area; BLACK marks the area to preserve. LobsterAI automatically sends the source FIRST and this mask SECOND to the image model. '
+    + 'Use the prepared mask as supplied; do not search for painted pixels in the source, recreate the mask, or calculate a replacement selection. '
+    + 'Call lobsterai_image_generate with the mapped source path to apply the prepared edit.';
+}
+
 export function imageEditPrompt(request: ImageEditRequest): string {
   const base = 'Edit the FIRST input image. Keep the subject, composition and all unrequested details unchanged. Return one edited image, not a description. ';
   switch (request.operation) {

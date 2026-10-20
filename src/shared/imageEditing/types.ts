@@ -24,11 +24,13 @@ export interface ImagePoint { x: number; y: number }
 export interface ImageRegion { id: string; x: number; y: number; width: number; height: number; text: string }
 export interface ImageMark {
   id: string;
-  tool: typeof ImageEditorTool.Pen | typeof ImageEditorTool.Arrow | typeof ImageEditorTool.Rectangle | typeof ImageEditorTool.Text;
+  tool: typeof ImageEditorTool.Pen | typeof ImageEditorTool.Arrow | typeof ImageEditorTool.Rectangle | typeof ImageEditorTool.Text | typeof ImageEditorTool.Eraser;
   points: ImagePoint[];
   color: string;
   width: number;
   text?: string;
+  /** Font size relative to the longest image side. Two points bound a text box. */
+  fontSize?: number;
 }
 export interface ImageVersion {
   id: string;
@@ -66,6 +68,14 @@ export interface ImageEditMessageSnapshot {
   regions: ImageRegion[];
   instruction?: string;
 }
+/** Images read from the immutable request, never from the current editor draft. */
+export interface ImageEditSnapshotImages {
+  dataUrl: string;
+  /** Black preserves the source; white is the submitted removal area. */
+  maskDataUrl?: string;
+  /** The original composited with the submitted drawing, including text and eraser results. */
+  markupDataUrl?: string;
+}
 export interface ImageEditStageInput {
   sessionId: string;
   sourceId: string;
@@ -83,6 +93,6 @@ export interface ImageEditingBridge {
   save(input: { sessionId: string; sourceId: string; dataUrl: string; operation: ImageEditOperation }): Promise<ImageEditingResult<ImageVersion>>;
   stage(input: ImageEditStageInput): Promise<ImageEditingResult<ImageEditRequest>>;
   history(input: { sessionId: string; messageId: string }): Promise<ImageEditingResult<ImageEditMessageSnapshot[]>>;
-  readSnapshot(input: { sessionId: string; requestId: string; preview?: boolean }): Promise<ImageEditingResult<{ dataUrl: string }>>;
+  readSnapshot(input: { sessionId: string; requestId: string; preview?: boolean }): Promise<ImageEditingResult<ImageEditSnapshotImages>>;
   onChanged(callback: (version: ImageVersion) => void): () => void;
 }

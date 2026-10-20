@@ -8,9 +8,16 @@ import { imageEditMessageMetadata } from '../../shared/imageEditing/messageSnaps
 import { type ImageEditMessageSnapshot,ImageEditOperation } from '../../shared/imageEditing/types';
 import { ImageEditingService } from './imageEditing';
 
-vi.mock('electron', () => ({ nativeImage: { createFromBuffer: (bytes: Buffer) => ({
-  getSize: () => ({ width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }), isEmpty: () => false, toPNG: () => bytes,
-}) } }));
+vi.mock('electron', () => {
+  const createFromBuffer = (bytes: Buffer) => ({
+    getSize: () => ({ width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }), isEmpty: () => false, toPNG: () => bytes,
+    resize: ({ width, height }: { width: number; height: number }) => {
+      const resized = Buffer.from(bytes); resized.writeUInt32BE(width, 16); resized.writeUInt32BE(height, 20);
+      return createFromBuffer(resized);
+    },
+  });
+  return { nativeImage: { createFromBuffer } };
+});
 
 function fixture(width = 640, height = 480) {
   const data = Buffer.alloc(33); Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(data);
@@ -122,5 +129,75 @@ describe('immutable image versions and edit staging', () => {
       expect(service().history({ sessionId: 'session', messageId })).toEqual([]);
     }
     expect((messages.get('old')?.metadata.imageEdits as ImageEditMessageSnapshot[])[0].source.id).toBe(version.id);
+  });
+  test('erase generation and sent previews share the exact frozen mask despite later edits', async () => {
+    const edit = service();
+    const { version } = await edit.open({ sessionId: 'session', title: 'original.png', filePath: original });
+    const mask = Buffer.concat([fixture(), Buffer.from([1])]);
+    const maskDataUrl = `data:image/png;base64,${mask.toString('base64')}`;
+    const request = await edit.stage({ sessionId: 'session', sourceId: version.id, operation: ImageEditOperation.Erase, guideDataUrl: maskDataUrl });
+    const generation = edit.generation(request, { capabilities: 'image editing', parameterSpec: { images: { maxItems: 2 } } });
+    expect(generation.params.images).toEqual([request.source.filePath, request.guidePath]);
+    expect(generation.prompt).toContain('WHITE marks the objects/area to remove; BLACK must be preserved');
+    expect(() => edit.generation(request, { capabilities: 'image editing', parameterSpec: { images: { maxItems: 1 } } })).toThrow();
+    messages.set('erase', { type: 'user', metadata: imageEditMessageMetadata([{ imageEdit: request }]) });
+    await edit.stage({ sessionId: 'session', sourceId: version.id, operation: ImageEditOperation.Erase,
+      guideDataUrl: `data:image/png;base64,${fixture().toString('base64')}` });
+    const snapshot = service().history({ sessionId: 'session', messageId: 'erase' })[0];
+    expect(snapshot.requestId).toBe(request.id);
+    const full = await service().readSnapshot({ sessionId: 'session', requestId: snapshot.requestId });
+    expect(full.maskDataUrl).toBe(maskDataUrl);
+    expect(full.dataUrl).toBe(`data:image/png;base64,${fixture().toString('base64')}`);
+    const preview = await service().readSnapshot({ sessionId: 'session', requestId: snapshot.requestId, preview: true });
+    for (const value of [preview.dataUrl, preview.maskDataUrl!]) {
+      const bytes = Buffer.from(value.split(',')[1], 'base64');
+      expect([bytes.readUInt32BE(16), bytes.readUInt32BE(20)]).toEqual([512, 384]);
+    }
+    await expect(edit.readSnapshot({ sessionId: 'other', requestId: request.id })).rejects.toThrow();
+    await expect(edit.stage({ sessionId: 'session', sourceId: version.id, operation: ImageEditOperation.Erase,
+      guideDataUrl: `data:image/png;base64,${fixture(400, 400).toString('base64')}` })).rejects.toThrow();
+  });
+  test('markup previews recover the submitted drawing and instruction independently of later edits', async () => {
+    const edit = service();
+    const { version } = await edit.open({ sessionId: 'session', title: 'original.png', filePath: original });
+    const guide = Buffer.concat([fixture(), Buffer.from([2])]);
+    const guideDataUrl = `data:image/png;base64,${guide.toString('base64')}`;
+    const request = await edit.stage({ sessionId: 'session', sourceId: version.id, operation: ImageEditOperation.Markup,
+      guideDataUrl, instruction: 'Add a Christmas tree here' });
+    const generation = edit.generation(request, { capabilities: 'image editing', parameterSpec: { images: { maxItems: 2 } } });
+    expect(generation.params.images).toEqual([request.source.filePath, request.guidePath]);
+    expect(generation.prompt).toContain('The SECOND image is an annotated guide.');
+    expect(generation.prompt).toContain('Add a Christmas tree here');
+    // Recover a historical message using the exact original attachment, without a newer drawing.
+    messages.set('markup', { type: 'user', metadata: { imageAttachmentPreviews: [{ localPath: request.source.filePath }] } });
+    await edit.stage({ sessionId: 'session', sourceId: version.id, operation: ImageEditOperation.Markup,
+      guideDataUrl: `data:image/png;base64,${fixture().toString('base64')}`, instruction: 'Later edit' });
+    const snapshot = service().history({ sessionId: 'session', messageId: 'markup' })[0];
+    expect(snapshot).toMatchObject({ requestId: request.id, operation: ImageEditOperation.Markup, instruction: 'Add a Christmas tree here' });
+    const full = await service().readSnapshot({ sessionId: 'session', requestId: snapshot.requestId });
+    expect(full).toEqual({ dataUrl: `data:image/png;base64,${fixture().toString('base64')}`, markupDataUrl: guideDataUrl });
+    const preview = await service().readSnapshot({ sessionId: 'session', requestId: snapshot.requestId, preview: true });
+    const bytes = Buffer.from(preview.markupDataUrl!.split(',')[1], 'base64');
+    expect([bytes.readUInt32BE(16), bytes.readUInt32BE(20)]).toEqual([512, 384]);
+    expect(bytes[bytes.length - 1]).toBe(2);
+    expect(preview.maskDataUrl).toBeUndefined();
+  });
+  test.each([ImageEditOperation.Erase, ImageEditOperation.Markup])('missing or mismatched historical %s guides explicitly fall back to the original', async operation => {
+    const edit = service();
+    const { version } = await edit.open({ sessionId: 'session', title: 'original.png', filePath: original });
+    const request = await edit.stage({ sessionId: 'session', sourceId: version.id, operation,
+      guideDataUrl: `data:image/png;base64,${fixture().toString('base64')}` });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await fs.writeFile(request.guidePath!, fixture(400, 400));
+      expect(await edit.readSnapshot({ sessionId: 'session', requestId: request.id })).toEqual({
+        dataUrl: `data:image/png;base64,${fixture().toString('base64')}`,
+      });
+      await fs.unlink(request.guidePath!);
+      expect(await edit.readSnapshot({ sessionId: 'session', requestId: request.id })).toEqual({
+        dataUrl: `data:image/png;base64,${fixture().toString('base64')}`,
+      });
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally { warn.mockRestore(); }
   });
 });

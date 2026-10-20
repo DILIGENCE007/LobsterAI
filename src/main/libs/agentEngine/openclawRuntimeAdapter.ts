@@ -84,7 +84,7 @@ import {
 import { resolveEnterpriseQuotaError } from '../../../shared/enterpriseAccount/quotaError';
 import type { EnterpriseQuotaErrorDetails } from '../../../shared/enterpriseAccount/types';
 import { imageEditMessageMetadata } from '../../../shared/imageEditing/messageSnapshot';
-import { imageEditRegionPrompt } from '../../../shared/imageEditing/prompts';
+import { imageEditMaskContext, imageEditRegionPrompt } from '../../../shared/imageEditing/prompts';
 import type {
   KitReference,
   ResolvedKitCapabilities,
@@ -2444,8 +2444,8 @@ const MediaReferenceTypeLabel = {
   Audio: 'audio',
 } as const;
 
-const sanitizeMediaReferenceText = (value: string): string => (
-  value.replace(/[\r\n]+/g, ' ').trim().slice(0, 200)
+const sanitizeMediaReferenceText = (value: string, maxLength = 200): string => (
+  value.replace(/[\r\n]+/g, ' ').trim().slice(0, maxLength)
 );
 
 const buildMediaReferencePromptSection = (mediaReferences?: CoworkMediaAttachmentRef[]): string => {
@@ -2460,7 +2460,11 @@ const buildMediaReferencePromptSection = (mediaReferences?: CoworkMediaAttachmen
   ];
 
   for (const ref of refs) {
-    if (ref.imageEdit) lines.push('This image has a user-prepared image editing request. Call lobsterai_image_generate once with action=generate. LobsterAI will supply the immutable original, selected regions and any guide/mask, and will save a new version. Do not edit it with scripts or other image tools. Include any additional user instructions in the prompt.');
+    if (ref.imageEdit) {
+      lines.push('This image has a user-prepared image editing request. Call lobsterai_image_generate once with action=generate. LobsterAI will supply the immutable original, selected regions and any guide/mask, and will save a new version. Do not edit it with scripts or other image tools. Include any additional user instructions in the prompt.');
+      const maskContext = imageEditMaskContext(ref.imageEdit);
+      if (maskContext) lines.push(maskContext);
+    }
     if (ref.imageEdit?.regions.length) lines.push(`${ref.token}: ${imageEditRegionPrompt(ref.imageEdit)}`);
     const mediaType = ref.mediaType === MediaReferenceTypeLabel.Image
       ? MediaReferenceTypeLabel.Image
@@ -2468,8 +2472,8 @@ const buildMediaReferencePromptSection = (mediaReferences?: CoworkMediaAttachmen
         ? MediaReferenceTypeLabel.Video
         : MediaReferenceTypeLabel.Audio;
     const locations = [
-      ref.localPath ? `localPath "${sanitizeMediaReferenceText(ref.localPath)}"` : '',
-      ref.remoteUrl ? `remoteUrl "${sanitizeMediaReferenceText(ref.remoteUrl)}"` : '',
+      ref.localPath ? `localPath "${sanitizeMediaReferenceText(ref.localPath, 32768)}"` : '',
+      ref.remoteUrl ? `remoteUrl "${sanitizeMediaReferenceText(ref.remoteUrl, 32768)}"` : '',
       !ref.localPath && !ref.remoteUrl && ref.dataUrl ? 'dataUrl fallback available through LobsterAI host' : '',
     ].filter(Boolean);
     const locationText = locations.length > 0 ? `, ${locations.join(', ')}` : '';

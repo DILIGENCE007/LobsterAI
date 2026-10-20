@@ -1,11 +1,11 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
-import type { ImageMark, ImageRegion, ImageVersion } from '../../../shared/imageEditing/types';
+import type { ImageEditOperation, ImageMark, ImageRegion, ImageVersion } from '../../../shared/imageEditing/types';
 
 export interface ImageEditorDrawing { marks: ImageMark[]; mask: ImageMark[] }
 export interface ImageEditorDocument extends ImageEditorDrawing { past: ImageEditorDrawing[]; future: ImageEditorDrawing[]; regions: ImageRegion[] }
 export const EMPTY_IMAGE_DOCUMENT: ImageEditorDocument = { marks: [], mask: [], past: [], future: [], regions: [] };
-interface ImageEditorFocus { id: string; source: ImageVersion; regionId?: string }
+interface ImageEditorFocus { id: string; source: ImageVersion; regionId?: string; operation?: ImageEditOperation }
 const initialState: { documents: Record<string, ImageEditorDocument>; focus?: ImageEditorFocus } = { documents: {} };
 const imageEditorSlice = createSlice({ name: 'imageEditor', initialState, reducers: {
   requestImageEditorFocus(state, action: PayloadAction<ImageEditorFocus>) { state.focus = action.payload; },

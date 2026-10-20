@@ -15,6 +15,7 @@ import {
   type ImageEditMessageSnapshot,
   ImageEditOperation,
   type ImageEditRequest,
+  type ImageEditSnapshotImages,
   type ImageEditStageInput,
   type ImageVersion,
 } from '../../shared/imageEditing/types';
@@ -188,12 +189,25 @@ export class ImageEditingService {
     return snapshots;
   }
 
-  async readSnapshot(input: { sessionId: string; requestId: string; preview?: boolean }): Promise<{ dataUrl: string }> {
+  async readSnapshot(input: { sessionId: string; requestId: string; preview?: boolean }): Promise<ImageEditSnapshotImages> {
     const request = this.resolve(input.sessionId, input.requestId);
     const info = inspect(await fs.readFile(request.source.filePath));
     const scale = input.preview ? Math.min(1, 512 / Math.max(info.width, info.height)) : 1;
-    const image = scale < 1 ? info.image.resize({ width: Math.max(1, Math.round(info.width * scale)), height: Math.max(1, Math.round(info.height * scale)) }) : info.image;
-    return { dataUrl: `data:image/png;base64,${image.toPNG().toString('base64')}` };
+    const size = { width: Math.max(1, Math.round(info.width * scale)), height: Math.max(1, Math.round(info.height * scale)) };
+    const dataUrl = (image: Electron.NativeImage) => `data:image/png;base64,${(scale < 1 ? image.resize(size) : image).toPNG().toString('base64')}`;
+    const images: ImageEditSnapshotImages = { dataUrl: dataUrl(info.image) };
+    if ((request.operation === ImageEditOperation.Erase || request.operation === ImageEditOperation.Markup) && request.guidePath) {
+      try {
+        const guide = inspect(await fs.readFile(request.guidePath));
+        if (guide.width !== info.width || guide.height !== info.height) throw new Error('Snapshot guide dimensions do not match its source');
+        if (request.operation === ImageEditOperation.Erase) images.maskDataUrl = dataUrl(guide.image);
+        else images.markupDataUrl = dataUrl(guide.image);
+      } catch (error) {
+        // Keep the source viewable, with an explicit UI indication that the submitted guide is missing.
+        console.warn('[ImageEditing] Snapshot guide unavailable', error);
+      }
+    }
+    return images;
   }
 
   async downloadDirectory(request: ImageEditRequest): Promise<string> {

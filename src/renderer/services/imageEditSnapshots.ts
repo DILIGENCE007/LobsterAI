@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import type { ImageEditMessageSnapshot } from '../../shared/imageEditing/types';
+import type { ImageEditMessageSnapshot, ImageEditSnapshotImages } from '../../shared/imageEditing/types';
 import type { CoworkMessage } from '../types/cowork';
 
 /** Backfill only from the exact staged attachment; ordinary images remain ordinary attachments. */
@@ -22,20 +22,22 @@ export function useImageEditSnapshots(message: CoworkMessage, sessionId?: string
 
 export function useImageEditSnapshotImage(snapshot: ImageEditMessageSnapshot, fallback: string | undefined, preview: boolean) {
   const key = `${snapshot.source.sessionId}:${snapshot.requestId}:${preview}`;
-  const [loaded, setLoaded] = useState<{ key: string; dataUrl?: string; failed: boolean }>();
+  const [loaded, setLoaded] = useState<{ key: string; images?: ImageEditSnapshotImages; failed: boolean }>();
   useEffect(() => {
     let cancelled = false;
     void window.electron.artifact.imageEditing.readSnapshot({
       sessionId: snapshot.source.sessionId, requestId: snapshot.requestId, preview,
     }).then(result => {
-      if (!cancelled) setLoaded({ key, dataUrl: result.success ? result.data.dataUrl : undefined, failed: !result.success });
+      if (!cancelled) setLoaded({ key, images: result.success ? result.data : undefined, failed: !result.success });
     }).catch(() => {
       if (!cancelled) setLoaded({ key, failed: true });
     });
     return () => { cancelled = true; };
   }, [key, snapshot.source.sessionId, snapshot.requestId, preview]);
   return {
-    src: loaded?.key === key ? loaded.dataUrl ?? fallback : fallback,
+    src: loaded?.key === key ? loaded.images?.dataUrl ?? fallback : fallback,
+    maskSrc: loaded?.key === key ? loaded.images?.maskDataUrl : undefined,
+    markupSrc: loaded?.key === key ? loaded.images?.markupDataUrl : undefined,
     loading: loaded?.key !== key,
     failed: loaded?.key === key && loaded.failed,
   };

@@ -1,24 +1,29 @@
 import {
-  ArrowDownTrayIcon, ArrowRightIcon, ArrowsPointingOutIcon,
-  ArrowUturnLeftIcon, ArrowUturnRightIcon, BackspaceIcon, ChatBubbleBottomCenterTextIcon, CursorArrowRaysIcon, PencilIcon, ScissorsIcon,
+  ArrowDownTrayIcon, ArrowUpRightIcon,
+  ArrowUturnLeftIcon, ArrowUturnRightIcon, BackspaceIcon, CursorArrowRaysIcon, PencilIcon,
   SparklesIcon, Square2StackIcon, Square3Stack3DIcon, StopIcon,
 } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
-import { imagePoint, imageRectangle, validImageSize } from '../../../../shared/imageEditing/geometry';
+import { imagePoint, imageRectangle } from '../../../../shared/imageEditing/geometry';
 import {
   IMAGE_EDIT_MAX_REGIONS, IMAGE_EDIT_RATIOS, ImageEditOperation, ImageEditorTool,
-  type ImageMark, type ImagePoint, type ImageRegion, type ImageVersion,
+  type ImageEditRequest, type ImageMark, type ImagePoint, type ImageRegion, type ImageVersion,
 } from '../../../../shared/imageEditing/types';
 import { i18nService } from '../../../services/i18n';
+import { imageEditDraftConflicts } from '../../../services/imageEditDrafts';
 import { imageEditTitle, setImageEditDraft, submitImageEdit } from '../../../services/imageEditing';
 import { type RootState, store } from '../../../store';
 import { setDraftAttachments } from '../../../store/slices/coworkSlice';
 import { commitImageDrawing, consumeImageEditorFocus, EMPTY_IMAGE_DOCUMENT, redoImageDrawing, setImageRegions, undoImageDrawing } from '../../../store/slices/imageEditorSlice';
 import type { Artifact } from '../../../types/artifact';
+import Modal from '../../common/Modal';
 import ImageRenderer from '../renderers/ImageRenderer';
-import { drawImageMark, exportImageDrawing, imageMarkHit, loadEditorImage } from './imageDrawing';
+import { drawImageMark, drawImageMarks, exportImageDrawing, loadEditorImage } from './imageDrawing';
+import { DrawIcon, EraserIcon, ReframeIcon, RegionEditIcon, RemoveBackgroundIcon, TextIcon } from './ImageEditingIcons';
+import { imageTextBox } from './imageText';
+import ImageTextBox from './ImageTextBox';
 
 const t = (key: string) => i18nService.t(key);
 const Mode = { View: 'view', Markup: 'markup', Comment: 'comment', Erase: 'erase', Resize: 'resize' } as const;
@@ -47,13 +52,16 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
   const [color, setColor] = useState('#f05252');
   const [brush, setBrush] = useState(4);
   const [maskBrush, setMaskBrush] = useState(30);
+  const [eraserBrush, setEraserBrush] = useState(30);
+  const [fontSize, setFontSize] = useState(64);
   const [brushPoint, setBrushPoint] = useState<ImagePoint>();
   const [activeMark, setActiveMark] = useState<ImageMark>();
   const activeMarkRef = useRef<ImageMark>();
   const [selection, setSelection] = useState<ImageRegion>();
   const [regionText, setRegionText] = useState('');
-  const [textPoint, setTextPoint] = useState<ImagePoint>();
-  const [textValue, setTextValue] = useState('');
+  const [textDraft, setTextDraft] = useState<ImageMark>();
+  const textDraftRef = useRef(textDraft); textDraftRef.current = textDraft;
+  const [replacement, setReplacement] = useState<{ request: ImageEditRequest; ids: string[]; applied: () => void }>();
   const [instruction, setInstruction] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -64,9 +72,6 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
   const [space, setSpace] = useState(false);
   const [compare, setCompare] = useState(false);
   const [original, setOriginal] = useState<HTMLImageElement>();
-  const [width, setWidth] = useState('');
-  const [height, setHeight] = useState('');
-  const [locked, setLocked] = useState(true);
   const [ratio, setRatio] = useState<string>('16:9');
   const root = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
@@ -87,8 +92,8 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
     if (!result.success) throw new Error(result.error);
     const image = await loadEditorImage(result.data.dataUrl);
     if (generation !== loadGeneration.current) return;
-    setLoaded({ ...result.data, image }); setWidth(String(version.width)); setHeight(String(version.height));
-    setZoom(1); setSelection(undefined); setTextPoint(undefined); setCompare(false); setNotice('');
+    setLoaded({ ...result.data, image });
+    setZoom(1); setSelection(undefined); setTextDraft(undefined); setCompare(false); setNotice('');
   }, [artifact.sessionId, bridge]);
 
   useEffect(() => {
@@ -110,7 +115,6 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
       const list = await bridge.list({ sessionId: artifact.sessionId, rootId: result.data.version.rootId });
       if (!alive || generation !== loadGeneration.current) return;
       setLoaded({ ...result.data, image }); setVersions(list.success ? list.data : [result.data.version]);
-      setWidth(String(result.data.version.width)); setHeight(String(result.data.version.height));
     }).catch(error => { if (alive) { setError(error.message); setInitialFailed(true); } });
     return () => { alive = false; invalidateLoads(); };
   }, [artifact.id, artifact.content, artifact.filePath, artifact.sessionId, artifact.title, bridge, invalidateLoads]);
@@ -131,7 +135,7 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
   useEffect(() => {
     if (!focusRequest || focusRequest.source.sessionId !== artifact.sessionId || focusRequest.source.rootId !== loaded?.version.rootId) return;
     dispatch(consumeImageEditorFocus(focusRequest.id));
-    setMode(Mode.Comment);
+    setMode(!focusRequest.operation || focusRequest.operation === ImageEditOperation.Comment ? Mode.Comment : Mode.View);
     void loadVersion(focusRequest.source).then(() => {
       const region = store.getState().imageEditor.documents[`${artifact.sessionId}:${focusRequest.source.id}`]?.regions.find(r => r.id === focusRequest.regionId);
       if (region) { setSelection(region); setRegionText(region.text); }
@@ -161,13 +165,13 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
       return;
     }
     context.drawImage(loaded.image, 0, 0, loaded.version.width, loaded.version.height);
-    if (mode === Mode.Markup) drawing.marks.forEach(mark => drawImageMark(context, mark, loaded.version.width, loaded.version.height));
+    if (mode === Mode.Markup) drawImageMarks(context, [...drawing.marks, ...(activeMark ? [activeMark] : [])], loaded.version.width, loaded.version.height);
     if (mode === Mode.Erase) {
       context.save(); context.globalAlpha = 0.55;
       drawing.mask.forEach(mark => drawImageMark(context, { ...mark, color: '#f43f5e' }, loaded.version.width, loaded.version.height));
       context.restore();
     }
-    if (activeMark) {
+    if (activeMark && mode !== Mode.Markup) {
       context.save(); if (mode === Mode.Erase) context.globalAlpha = 0.55;
       drawImageMark(context, mode === Mode.Erase ? { ...activeMark, color: '#f43f5e' } : activeMark, loaded.version.width, loaded.version.height); context.restore();
     }
@@ -180,7 +184,7 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
         event.preventDefault(); dispatch(event.shiftKey ? redoImageDrawing(key) : undoImageDrawing(key));
       }
-      if (event.key === 'Escape') { setSelection(undefined); setTextPoint(undefined); setMode(Mode.View); }
+      if (event.key === 'Escape') { setSelection(undefined); setTextDraft(undefined); setMode(Mode.View); }
     };
     const up = () => setSpace(false);
     window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', up);
@@ -194,41 +198,54 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
     finally { setBusy(false); }
   };
   const commit = (marks = drawingRef.current.marks, mask = drawingRef.current.mask) => dispatch(commitImageDrawing({ key, drawing: { marks, mask } }));
+  const finishText = () => {
+    const mark = textDraftRef.current;
+    if (mark?.text?.trim()) commit([...drawingRef.current.marks, mark]);
+    textDraftRef.current = undefined; setTextDraft(undefined);
+  };
+  const stageDraft = (request: ImageEditRequest, applied: () => void = () => {}) => {
+    if (setImageEditDraft(request)) { applied(); setNotice(t('imageEditDraftAdded')); return; }
+    const attachments = store.getState().cowork.draftAttachments[artifact.sessionId] ?? [];
+    setReplacement({ request, ids: imageEditDraftConflicts(attachments, request).map(conflict => conflict.id), applied });
+  };
   const syncRegions = async (regions: ImageRegion[]) => {
     if (!loaded) return;
+    const applied = () => { dispatch(setImageRegions({ key, regions })); setSelection(undefined); setRegionText(''); };
     if (regions.length) {
       const result = await bridge.stage({ sessionId: artifact.sessionId, sourceId: loaded.version.id, operation: ImageEditOperation.Comment, regions });
       if (!result.success) throw new Error(result.error);
-      setImageEditDraft(result.data);
+      stageDraft(result.data, applied);
     } else {
       const attachments = store.getState().cowork.draftAttachments[artifact.sessionId] ?? [];
-      dispatch(setDraftAttachments({ draftKey: artifact.sessionId, attachments: attachments.filter(a => a.imageEdit?.source.id !== loaded.version.id) }));
+      dispatch(setDraftAttachments({ draftKey: artifact.sessionId, attachments: attachments.filter(a =>
+        a.imageEdit?.source.id !== loaded.version.id || a.imageEdit.operation !== ImageEditOperation.Comment) }));
+      applied();
     }
-    dispatch(setImageRegions({ key, regions })); setSelection(undefined); setRegionText('');
   };
   const generate = (operation: ImageEditOperation) => run(async () => {
     if (!loaded) return;
-    const guideDataUrl = operation === ImageEditOperation.Markup ? exportImageDrawing(loaded.image, drawing.marks)
+    finishText();
+    const marks = store.getState().imageEditor.documents[key]?.marks ?? [];
+    const guideDataUrl = operation === ImageEditOperation.Markup ? exportImageDrawing(loaded.image, marks)
       : operation === ImageEditOperation.Erase ? exportImageDrawing(loaded.image, drawing.mask, loaded.version.width, loaded.version.height, true) : undefined;
     const result = await bridge.stage({ sessionId: artifact.sessionId, sourceId: loaded.version.id, operation, guideDataUrl,
-      instruction, aspectRatio: operation === ImageEditOperation.Reframe ? ratio : undefined });
+      instruction: operation === ImageEditOperation.Markup ? instruction : undefined, aspectRatio: operation === ImageEditOperation.Reframe ? ratio : undefined });
     if (!result.success) throw new Error(result.error);
+    if (operation === ImageEditOperation.RemoveBackground) { stageDraft(result.data); return; }
     pending.current.add(result.data.id);
     try { await submitImageEdit(result.data); } catch (error) { pending.current.delete(result.data.id); throw error; }
     setNotice(t('imageEditPending'));
   });
-  const save = (operation: ImageEditOperation) => run(async () => {
+  const save = () => run(async () => {
     if (!loaded) return;
-    const w = operation === ImageEditOperation.Resize ? Number(width) : loaded.version.width;
-    const h = operation === ImageEditOperation.Resize ? Number(height) : loaded.version.height;
-    if (!validImageSize(w, h)) throw new Error(t('imageEditInvalidSize'));
-    const dataUrl = exportImageDrawing(loaded.image, operation === ImageEditOperation.Markup ? drawing.marks : [], w, h);
-    const result = await bridge.save({ sessionId: artifact.sessionId, sourceId: loaded.version.id, operation, dataUrl });
+    finishText();
+    const dataUrl = exportImageDrawing(loaded.image, store.getState().imageEditor.documents[key]?.marks ?? []);
+    const result = await bridge.save({ sessionId: artifact.sessionId, sourceId: loaded.version.id, operation: ImageEditOperation.Markup, dataUrl });
     if (!result.success) throw new Error(result.error);
     await loadVersion(result.data); setNotice(t('imageEditSaved')); setMode(Mode.View);
   });
   const previewBrush = (event: React.PointerEvent) => {
-    if (mode !== Mode.Erase || !stage.current || busy || compare || space) { setBrushPoint(undefined); return; }
+    if (!(mode === Mode.Erase || (mode === Mode.Markup && tool === ImageEditorTool.Eraser)) || !stage.current || busy || compare || space) { setBrushPoint(undefined); return; }
     const rect = stage.current.getBoundingClientRect();
     setBrushPoint(event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom
       ? imagePoint(event.clientX, event.clientY, rect) : undefined);
@@ -245,13 +262,9 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
     if (mode === Mode.Comment) {
       setSelection({ id: crypto.randomUUID(), ...imageRectangle(point, point), text: '' }); setRegionText(''); return;
     }
-    if (mode === Mode.Markup && tool === ImageEditorTool.Text) { setTextPoint(point); setTextValue(''); return; }
-    if (mode === Mode.Markup && tool === ImageEditorTool.Eraser) {
-      const marks = drawingRef.current.marks.filter(mark => !imageMarkHit(mark, point, loaded.version.width, loaded.version.height));
-      if (marks.length !== drawingRef.current.marks.length) commit(marks); return;
-    }
     const mark: ImageMark = { id: crypto.randomUUID(), tool: mode === Mode.Erase ? ImageEditorTool.Pen : tool as ImageMark['tool'],
-      points: [point], color, width: (mode === Mode.Erase ? maskBrush : brush) / 1000 };
+      points: [point], color, width: (mode === Mode.Erase ? maskBrush : tool === ImageEditorTool.Eraser ? eraserBrush : brush) / 1000,
+      ...(tool === ImageEditorTool.Text ? { fontSize: fontSize / Math.max(loaded.version.width, loaded.version.height), text: '' } : {}) };
     activeMarkRef.current = mark; setActiveMark(mark);
   };
   const pointerMove = (event: React.PointerEvent) => {
@@ -265,13 +278,17 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
     if (mode === Mode.Comment) { setSelection(current => current && ({ ...current, ...imageRectangle(drag.current!.start, point) })); return; }
     if (activeMarkRef.current) {
       const current = activeMarkRef.current;
-      const points = current.tool === ImageEditorTool.Pen ? [...current.points, point].slice(-10000) : [current.points[0], point];
+      const points = current.tool === ImageEditorTool.Pen || current.tool === ImageEditorTool.Eraser ? [...current.points, point].slice(-10000) : [current.points[0], point];
       activeMarkRef.current = { ...current, points }; setActiveMark(activeMarkRef.current);
     }
   };
   const pointerUp = (event: React.PointerEvent) => {
     if (activeMarkRef.current && event.type !== 'pointercancel') {
-      if (mode === Mode.Erase) commit(undefined, [...drawingRef.current.mask, activeMarkRef.current]);
+      if (mode === Mode.Markup && activeMarkRef.current.tool === ImageEditorTool.Text && stage.current) {
+        const mark = activeMarkRef.current, rect = stage.current.getBoundingClientRect();
+        const box = imageTextBox(mark.points[0], mark.points[mark.points.length - 1], rect.width, rect.height);
+        setTextDraft({ ...mark, points: [{ x: box.x, y: box.y }, { x: box.x + box.width, y: box.y + box.height }] });
+      } else if (mode === Mode.Erase) commit(undefined, [...drawingRef.current.mask, activeMarkRef.current]);
       else commit([...drawingRef.current.marks, activeMarkRef.current]);
     }
     activeMarkRef.current = undefined; setActiveMark(undefined); drag.current = undefined;
@@ -284,19 +301,25 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
   const fit = Math.min((viewportSize.width - 32) / size.width, (viewportSize.height - 32) / size.height, 1);
   const displayWidth = Math.max(1, size.width * Math.max(0.01, fit) * zoom);
   const displayHeight = Math.max(1, size.height * Math.max(0.01, fit) * zoom);
-  const eraseCursor = mode === Mode.Erase && !space && !compare && !busy;
-  const brushDiameter = maskBrush / 1000 * Math.max(displayWidth, displayHeight);
+  const isEraser = mode === Mode.Markup && tool === ImageEditorTool.Eraser;
+  const isText = mode === Mode.Markup && tool === ImageEditorTool.Text;
+  const eraseCursor = (mode === Mode.Erase || isEraser) && !space && !compare && !busy;
+  const brushValue = mode === Mode.Erase ? maskBrush : isEraser ? eraserBrush : brush;
+  const brushDiameter = brushValue / 1000 * Math.max(displayWidth, displayHeight);
+  const brushLabel = mode === Mode.Erase ? 'imageEditEraseBrush' : isEraser ? 'imageEditEraserSize' : isText ? 'imageEditFontSize' : 'imageEditStrokeWidth';
+  const markupHint = { [ImageEditorTool.Pen]: 'imageEditPenHint', [ImageEditorTool.Arrow]: 'imageEditArrowHint',
+    [ImageEditorTool.Rectangle]: 'imageEditRectangleHint', [ImageEditorTool.Text]: 'imageEditTextHint', [ImageEditorTool.Eraser]: 'imageEditEraserHint' };
   const visibleRegions = drawing.regions.map(region => selection && region.id === selection.id ? selection : region);
   if (selection && !drawing.regions.some(region => region.id === selection.id)) visibleRegions.push(selection);
   const tools = [
-    [Mode.Markup, PencilIcon, 'imageEditMarkup'], [Mode.Comment, ChatBubbleBottomCenterTextIcon, 'imageEditComment'],
-    [Mode.Erase, BackspaceIcon, 'imageEditErase'], [Mode.Resize, ArrowsPointingOutIcon, 'imageEditResize'],
+    [Mode.Markup, DrawIcon, 'imageEditMarkup'], [Mode.Comment, RegionEditIcon, 'imageEditComment'],
+    [Mode.Erase, EraserIcon, 'imageEditErase'], [Mode.Resize, ReframeIcon, 'imageEditReframe'],
   ] as const;
   return <div ref={root} className="flex h-full min-h-0 flex-col text-primary" aria-label={t('imageEditTitle')}>
     <div className="flex items-center gap-2 border-b border-light-border px-3 py-2 dark:border-dark-border">
       <Square3Stack3DIcon className="h-4 w-4 text-muted" />
       <select aria-label={t('imageEditVersion')} className={`${inputClass} flex-1 border-0 bg-transparent`} value={size.id}
-        onChange={event => { const version = versions.find(v => v.id === event.target.value); if (version) void run(() => loadVersion(version)); }}>
+        onChange={event => { finishText(); const version = versions.find(v => v.id === event.target.value); if (version) void run(() => loadVersion(version)); }}>
         {versions.map((version, i) => <option key={version.id} value={version.id}>{i === 0 ? t('imageEditOriginal') : `v${i + 1} · ${imageEditTitle(version.operation)}`} · {version.width} × {version.height}</option>)}
       </select>
       <ToolButton label={t('imageEditCompare')} icon={Square2StackIcon} active={compare} disabled={size.id === size.rootId || busy}
@@ -310,33 +333,43 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
     </div>
     <div className="flex flex-wrap items-center justify-center gap-0.5 border-b border-light-border px-2 py-2 dark:border-dark-border">
       {tools.slice(0, 2).map(([value, icon, label]) => <ToolButton key={value} label={t(label)} icon={icon} active={mode === value}
-        disabled={busy} onClick={() => { setMode(mode === value ? Mode.View : value); setCompare(false); }}>{t(label)}</ToolButton>)}
-      <ToolButton label={t('imageEditRemoveBackground')} icon={ScissorsIcon} disabled={busy} onClick={() => void generate(ImageEditOperation.RemoveBackground)}>{t('imageEditRemoveBackground')}</ToolButton>
+        disabled={busy} onClick={() => { finishText(); setMode(mode === value ? Mode.View : value); setCompare(false); }}>{t(label)}</ToolButton>)}
+      <ToolButton label={t('imageEditRemoveBackground')} icon={RemoveBackgroundIcon} disabled={busy} onClick={() => void generate(ImageEditOperation.RemoveBackground)}>{t('imageEditRemoveBackground')}</ToolButton>
       {tools.slice(2).map(([value, icon, label]) => <ToolButton key={value} label={t(label)} icon={icon} active={mode === value}
-        disabled={busy} onClick={() => { setMode(mode === value ? Mode.View : value); setCompare(false); }}>{t(label)}</ToolButton>)}
+        disabled={busy} onClick={() => { finishText(); setMode(mode === value ? Mode.View : value); setCompare(false); }}>{t(label)}</ToolButton>)}
     </div>
     {(mode === Mode.Markup || mode === Mode.Erase) && <div className="flex flex-wrap items-center gap-1 border-b border-light-border px-2 py-2 dark:border-dark-border">
-      {mode === Mode.Markup && <>
-        {[[ImageEditorTool.Pen, PencilIcon, 'imageEditPen'], [ImageEditorTool.Arrow, ArrowRightIcon, 'imageEditArrow'],
-          [ImageEditorTool.Rectangle, StopIcon, 'imageEditRectangle'], [ImageEditorTool.Text, ChatBubbleBottomCenterTextIcon, 'imageEditText'],
-          [ImageEditorTool.Eraser, BackspaceIcon, 'imageEditEraser']].map(([value, icon, label]) => <ToolButton key={String(value)} label={t(String(label))} icon={icon as React.ElementType}
-            active={tool === value} onClick={() => setTool(value as ImageEditorTool)} />)}
-        <input type="color" value={color} aria-label={t('imageEditColor')} onChange={event => setColor(event.target.value)} className="h-6 w-6 cursor-pointer rounded border-0 bg-transparent" />
-      </>}
-      {mode === Mode.Erase && <span className="mr-1 flex items-center gap-1.5 text-xs text-secondary">
-        <span className="flex h-6 w-6 items-center justify-center" aria-hidden="true">
-          <span className="rounded-full border border-rose-400 bg-rose-400/20" style={{ width: 4 + maskBrush / 10, height: 4 + maskBrush / 10 }} />
-        </span>{t('imageEditEraseBrush')}
-      </span>}
-      <input type="range" min={mode === Mode.Erase ? 8 : 1} max={mode === Mode.Erase ? 150 : 16}
-        aria-label={t('imageEditBrushSize')} value={mode === Mode.Erase ? maskBrush : brush} className="min-w-12 max-w-24 flex-1 accent-accent"
-        onChange={event => (mode === Mode.Erase ? setMaskBrush : setBrush)(Number(event.target.value))} />
-      {mode === Mode.Erase && <output className="ml-1 text-[11px] tabular-nums text-muted">
-        {t('imageEditBrushDiameter').replace('{size}', String(Math.round(maskBrush / 1000 * Math.max(size.width, size.height))))}
-      </output>}
-      <span className="flex-1" />
-      <ToolButton label={t('imageEditUndo')} icon={ArrowUturnLeftIcon} disabled={!drawing.past.length} onClick={() => dispatch(undoImageDrawing(key))} />
-      <ToolButton label={t('imageEditRedo')} icon={ArrowUturnRightIcon} disabled={!drawing.future.length} onClick={() => dispatch(redoImageDrawing(key))} />
+      {mode === Mode.Markup && <div className="flex flex-wrap items-center gap-0.5">
+        {[[ImageEditorTool.Pen, PencilIcon, 'imageEditPen'], [ImageEditorTool.Arrow, ArrowUpRightIcon, 'imageEditArrow'],
+          [ImageEditorTool.Rectangle, StopIcon, 'imageEditRectangle'], [ImageEditorTool.Text, TextIcon, 'imageEditText'],
+          [ImageEditorTool.Eraser, EraserIcon, 'imageEditEraser']].map(([value, icon, label]) => <ToolButton key={String(value)} label={t(String(label))} icon={icon as React.ElementType}
+            active={tool === value} onClick={() => { finishText(); setTool(value as ImageEditorTool); setBrushPoint(undefined); }}>{t(String(label))}</ToolButton>)}
+      </div>}
+      <div data-image-text-controls className={`flex min-w-0 flex-wrap items-center gap-3 ${mode === Mode.Markup ? 'mt-1 w-full border-t border-light-border pt-2 dark:border-dark-border' : 'flex-1'}`}>
+        {mode === Mode.Markup && !isEraser && <label className="flex items-center gap-1.5 border-r border-light-border pr-3 text-xs text-secondary dark:border-dark-border">
+          {t('imageEditColor')}<input type="color" value={color} aria-label={t('imageEditColor')}
+            onChange={event => { setColor(event.target.value); setTextDraft(mark => mark && ({ ...mark, color: event.target.value })); }}
+            className="h-6 w-6 cursor-pointer rounded border-0 bg-transparent" />
+        </label>}
+        <label className="flex min-w-0 flex-1 items-center gap-2 text-xs text-secondary">
+          {(mode === Mode.Erase || isEraser) && <span className="flex h-6 w-6 shrink-0 items-center justify-center" aria-hidden="true">
+            <span className="rounded-full border border-current bg-current/10" style={{ width: 4 + brushValue / 10, height: 4 + brushValue / 10 }} />
+          </span>}
+          <span className="shrink-0">{t(brushLabel)}</span>
+          <input type="range" min={isText ? 16 : mode === Mode.Erase || isEraser ? 8 : 1} max={isText ? 240 : mode === Mode.Erase || isEraser ? 150 : 16}
+            aria-label={t(brushLabel)} value={isText ? fontSize : brushValue} className="min-w-10 max-w-28 flex-1 accent-accent"
+            onChange={event => {
+              const value = Number(event.target.value);
+              if (isText) { setFontSize(value); setTextDraft(mark => mark && ({ ...mark, fontSize: value / Math.max(size.width, size.height) })); }
+              else (mode === Mode.Erase ? setMaskBrush : isEraser ? setEraserBrush : setBrush)(value);
+            }} />
+          <output className="shrink-0 text-[11px] tabular-nums text-muted">{isText ? fontSize : Math.round(brushValue / 1000 * Math.max(size.width, size.height))} px</output>
+        </label>
+        <div className="ml-auto flex border-l border-light-border pl-2 dark:border-dark-border">
+          <ToolButton label={t('imageEditUndo')} icon={ArrowUturnLeftIcon} disabled={!drawing.past.length || !!textDraft} onClick={() => dispatch(undoImageDrawing(key))} />
+          <ToolButton label={t('imageEditRedo')} icon={ArrowUturnRightIcon} disabled={!drawing.future.length || !!textDraft} onClick={() => dispatch(redoImageDrawing(key))} />
+        </div>
+      </div>
     </div>}
     <div ref={viewport} onScroll={() => setBrushPoint(undefined)} className="relative min-h-32 flex-1 overflow-auto bg-black/[0.025] dark:bg-white/[0.025]">
       <div className="flex min-h-full min-w-full p-4" style={{ width: Math.max(viewportSize.width, displayWidth + 32), height: Math.max(viewportSize.height, displayHeight + 32) }}>
@@ -347,8 +380,13 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
           style={{ width: displayWidth, height: displayHeight, cursor: space || mode === Mode.View ? 'grab' : eraseCursor ? 'none' : 'crosshair',
             backgroundColor: '#fff', backgroundImage: 'conic-gradient(#e5e7eb 25%, transparent 0 50%, #e5e7eb 0 75%, transparent 0)', backgroundSize: '16px 16px' }}>
           <canvas ref={canvas} width={size.width} height={size.height} className="h-full w-full" />
+          {mode === Mode.Markup && !compare && textDraft && <ImageTextBox mark={textDraft} width={displayWidth} height={displayHeight}
+            onChange={setTextDraft} onFinish={finishText} onCancel={() => setTextDraft(undefined)} />}
+          {activeMark?.tool === ImageEditorTool.Text && <div className="pointer-events-none absolute border border-dashed border-accent"
+            style={(() => { const box = imageRectangle(activeMark.points[0], activeMark.points[activeMark.points.length - 1]);
+              return { left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%` }; })()} />}
           {eraseCursor && brushPoint && <div data-image-erase-cursor aria-hidden="true"
-            className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-white bg-rose-400/20"
+            className={`pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-white ${isEraser ? 'bg-black/15' : 'bg-rose-400/20'}`}
             style={{ left: `${brushPoint.x * 100}%`, top: `${brushPoint.y * 100}%`, width: brushDiameter, height: brushDiameter, boxShadow: '0 0 0 1px rgba(0,0,0,.65)' }} />}
           {mode === Mode.Comment && !compare && <svg viewBox="0 0 1 1" preserveAspectRatio="none" className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
             {visibleRegions.map((region, i) => <g key={region.id}>
@@ -361,8 +399,8 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
         </div>
       </div>
     </div>
-    <div className={`flex items-center gap-2 border-t border-light-border px-3 dark:border-dark-border ${mode === Mode.Erase ? 'bg-accent/5 py-3 text-sm font-medium text-secondary' : 'py-1.5 text-[11px] text-muted'}`}>
-      <CursorArrowRaysIcon className="h-4 w-4 shrink-0" /><span className={`flex-1 ${mode === Mode.Erase ? '' : 'truncate'}`}>{t(mode === Mode.View ? 'imageEditViewHint' : mode === Mode.Comment ? 'imageEditCommentHint' : mode === Mode.Erase ? 'imageEditEraseHint' : mode === Mode.Resize ? 'imageEditResizeHint' : 'imageEditMarkupHint')}</span>
+    <div className={`flex items-center gap-2 border-t border-light-border px-3 dark:border-dark-border ${mode === Mode.Erase ? 'bg-accent/5 py-3 text-sm font-medium text-secondary' : 'py-2 text-xs text-muted'}`}>
+      <CursorArrowRaysIcon className="h-4 w-4 shrink-0" /><span className="flex-1">{t(mode === Mode.View ? 'imageEditViewHint' : mode === Mode.Comment ? 'imageEditCommentHint' : mode === Mode.Erase ? 'imageEditEraseHint' : mode === Mode.Resize ? 'imageEditResizeHint' : markupHint[tool as keyof typeof markupHint])}</span>
       <button type="button" title={t('imageEditResetZoom')} onClick={() => { setZoom(1); setBrushPoint(undefined); }} className="shrink-0 rounded px-1.5 py-1 text-[11px] font-normal text-muted hover:bg-black/5 dark:hover:bg-white/10">{Math.round(Math.max(0.01, fit) * zoom * 100)}%</button>
     </div>
     <div className="max-h-[45%] shrink-0 overflow-y-auto">
@@ -384,30 +422,47 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
           <ToolButton label={t('imageEditDelete')} icon={BackspaceIcon} disabled={busy} onClick={() => void run(() => syncRegions(drawing.regions.filter(r => r.id !== region.id)))} />
         </div>)}
       </div>}
-      {textPoint && mode === Mode.Markup && <div className="flex gap-2 px-3 pb-3"><input autoFocus value={textValue} maxLength={1000} onChange={event => setTextValue(event.target.value)}
-        placeholder={t('imageEditTextPlaceholder')} className={`${inputClass} flex-1`} onKeyDown={event => { if (event.key === 'Escape') setTextPoint(undefined); }} />
-        <button type="button" className={`${buttonClass} bg-accent text-white`} disabled={!textValue.trim()} onClick={() => {
-          commit([...drawing.marks, { id: crypto.randomUUID(), tool: ImageEditorTool.Text, points: [textPoint], color, width: brush / 1000, text: textValue }]); setTextPoint(undefined);
-        }}>{t('imageEditText')}</button></div>}
       {(mode === Mode.Markup || mode === Mode.Erase) && <div className="flex flex-wrap items-center gap-2 border-t border-light-border p-3 dark:border-dark-border">
         {mode === Mode.Markup && <input className={`${inputClass} basis-full`} placeholder={t('imageEditInstruction')} value={instruction} maxLength={4000} onChange={event => setInstruction(event.target.value)} />}
-        {mode === Mode.Markup && <button type="button" className={`${buttonClass} border border-light-border dark:border-dark-border`} disabled={busy || !drawing.marks.length} onClick={() => void save(ImageEditOperation.Markup)}>{t('imageEditSave')}</button>}
-        <button type="button" className={`${buttonClass} ml-auto bg-accent text-white`} disabled={busy || !(mode === Mode.Erase ? drawing.mask.length : drawing.marks.length)}
+        {mode === Mode.Markup && <button type="button" className={`${buttonClass} border border-light-border dark:border-dark-border`} disabled={busy || !(drawing.marks.length || textDraft?.text?.trim())} onClick={() => void save()}>{t('imageEditSave')}</button>}
+        <button type="button" className={`${buttonClass} ml-auto bg-accent text-white`} disabled={busy || !(mode === Mode.Erase ? drawing.mask.length : drawing.marks.length || textDraft?.text?.trim())}
           onClick={() => void generate(mode === Mode.Erase ? ImageEditOperation.Erase : ImageEditOperation.Markup)}><SparklesIcon className="h-4 w-4" />{t(mode === Mode.Erase ? 'imageEditGenerate' : 'imageEditToAI')}</button>
       </div>}
       {mode === Mode.Resize && <div className="space-y-3 border-t border-light-border p-3 text-xs dark:border-dark-border">
-        <div className="font-medium">{t('imageEditPixels')}</div><div className="flex flex-wrap items-end gap-2">
-          <label className="min-w-16 flex-1">{t('imageEditWidth')}<input className={`${inputClass} mt-1 w-full`} type="number" min="2" max="16384" value={width} onChange={event => { setWidth(event.target.value); if (locked) setHeight(String(Math.round(Number(event.target.value) * size.height / size.width))); }} /></label>
-          <label className="min-w-16 flex-1">{t('imageEditHeight')}<input className={`${inputClass} mt-1 w-full`} type="number" min="2" max="16384" value={height} onChange={event => { setHeight(event.target.value); if (locked) setWidth(String(Math.round(Number(event.target.value) * size.width / size.height))); }} /></label>
-          <button type="button" className={`${buttonClass} border border-light-border dark:border-dark-border`} disabled={busy || !validImageSize(Number(width), Number(height))} onClick={() => void save(ImageEditOperation.Resize)}>{t('imageEditSave')}</button>
-        </div><label className="flex items-center gap-2 text-secondary"><input type="checkbox" checked={locked} onChange={event => setLocked(event.target.checked)} className="accent-accent" />{t('imageEditLockRatio')}</label>
-        <div className="flex flex-wrap items-center gap-2 border-t border-light-border pt-3 dark:border-dark-border"><span className="flex-1 font-medium">{t('imageEditAIReframe')}</span>
-          <select className={inputClass} aria-label={t('imageEditRatio')} value={ratio} onChange={event => setRatio(event.target.value)}>{IMAGE_EDIT_RATIOS.map(value => <option key={value}>{value}</option>)}</select>
-          <button type="button" className={`${buttonClass} bg-accent text-white`} disabled={busy} onClick={() => void generate(ImageEditOperation.Reframe)}><SparklesIcon className="h-4 w-4" />{t('imageEditGenerate')}</button></div>
+        <div className="flex flex-wrap gap-2" role="group" aria-label={t('imageEditRatio')}>
+          {IMAGE_EDIT_RATIOS.map(value => <button key={value} type="button" aria-pressed={ratio === value} onClick={() => setRatio(value)}
+            className={`flex min-w-12 flex-1 flex-col items-center gap-2 rounded-xl border px-2 py-2.5 ${ratio === value ? 'border-accent bg-accent/5 text-accent' : 'border-light-border text-secondary dark:border-dark-border'}`}>
+            <span className="flex h-7 items-center justify-center" aria-hidden="true"><span className="rounded-sm border border-current"
+              style={{ width: 24 * Math.min(1, Number(value.split(':')[0]) / Number(value.split(':')[1])), height: 24 * Math.min(1, Number(value.split(':')[1]) / Number(value.split(':')[0])) }} /></span>{value}
+          </button>)}
+        </div>
+        <div className="flex justify-end"><button type="button" className={`${buttonClass} bg-accent text-white`} disabled={busy}
+          onClick={() => void generate(ImageEditOperation.Reframe)}><SparklesIcon className="h-4 w-4" />{t('imageEditGenerate')}</button></div>
       </div>}
     </div>
     {(busy || error || notice) && <div role={error ? 'alert' : 'status'} className={`border-t border-light-border px-3 py-2 text-xs dark:border-dark-border ${error ? 'text-red-500' : 'text-muted'}`}>
       {error || (busy ? t('imageEditSaving') : notice)}
     </div>}
+    {replacement && <Modal onClose={() => setReplacement(undefined)} onEscape={() => setReplacement(undefined)}
+      className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5 text-foreground shadow-xl">
+      <div role="dialog" aria-modal="true" aria-label={t('imageEditReplaceTitle')} onKeyDown={event => {
+        if (event.key !== 'Tab') return;
+        const buttons = event.currentTarget.querySelectorAll('button');
+        const first = buttons[0], last = buttons[buttons.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }}>
+        <h2 className="text-base font-medium">{t('imageEditReplaceTitle')}</h2>
+        <p className="mt-2 text-sm leading-6 text-secondary">{t('imageEditReplaceHint').replace('{operation}', imageEditTitle(replacement.request.operation))}</p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" autoFocus className={buttonClass} onClick={() => setReplacement(undefined)}>{t('imageEditCancel')}</button>
+          <button type="button" className={`${buttonClass} bg-accent text-white`} onClick={() => {
+            if (setImageEditDraft(replacement.request, replacement.ids)) {
+              replacement.applied(); setReplacement(undefined); setNotice(t('imageEditDraftAdded'));
+            } else stageDraft(replacement.request, replacement.applied);
+          }}>{t('imageEditReplaceConfirm')}</button>
+        </div>
+      </div>
+    </Modal>}
   </div>;
 }
