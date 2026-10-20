@@ -1,4 +1,4 @@
-import { IMAGE_EDIT_MAX_PIXELS, type ImagePoint } from './types';
+import { IMAGE_EDIT_MAX_PIXELS, type ImagePoint, type ImageRegion } from './types';
 
 export const clampImageCoordinate = (value: number): number => Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
 export function imagePoint(clientX: number, clientY: number, rect: { left: number; top: number; width: number; height: number }): ImagePoint {
@@ -6,6 +6,13 @@ export function imagePoint(clientX: number, clientY: number, rect: { left: numbe
 }
 export function imageRectangle(start: ImagePoint, end: ImagePoint) {
   return { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y) };
+}
+/** Left, top, width, height in the source image, never the displayed thumbnail. */
+export function imageRegionCoordinates(region: ImageRegion, source: { width: number; height: number }) {
+  return {
+    percent: [region.x, region.y, region.width, region.height].map(value => (value * 100).toFixed(1)),
+    pixels: [region.x * source.width, region.y * source.height, region.width * source.width, region.height * source.height].map(Math.round),
+  };
 }
 export function validImageSize(width: number, height: number): boolean {
   return Number.isInteger(width) && Number.isInteger(height) && width >= 2 && height >= 2

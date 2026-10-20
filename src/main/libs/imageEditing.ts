@@ -6,10 +6,17 @@ import { pathToFileURL } from 'node:url';
 import { nativeImage } from 'electron';
 
 import { imageGenerationSize, validImageSize } from '../../shared/imageEditing/geometry';
+import { imageEditMessageSnapshot } from '../../shared/imageEditing/messageSnapshot';
 import { imageEditPrompt } from '../../shared/imageEditing/prompts';
 import {
-  IMAGE_EDIT_MAX_BYTES, IMAGE_EDIT_MAX_REGIONS, IMAGE_EDIT_RATIOS, ImageEditOperation,
-  type ImageEditRequest, type ImageEditStageInput, type ImageVersion,
+  IMAGE_EDIT_MAX_BYTES,
+  IMAGE_EDIT_MAX_REGIONS,
+  IMAGE_EDIT_RATIOS,
+  type ImageEditMessageSnapshot,
+  ImageEditOperation,
+  type ImageEditRequest,
+  type ImageEditStageInput,
+  type ImageVersion,
 } from '../../shared/imageEditing/types';
 import { t } from '../i18n';
 import { imageEditingHeader } from './imageEditingHeader';
@@ -23,6 +30,8 @@ interface ImageEditingDependencies {
   set: (key: string, value: unknown) => void;
   changed: (version: ImageVersion) => void;
   publish: (version: ImageVersion) => void;
+  getMessage?: (sessionId: string, messageId: string) => { type: string; metadata?: Record<string, unknown> } | null;
+  saveMessageMetadata?: (sessionId: string, messageId: string, metadata: Record<string, unknown>) => void;
 }
 const STORE_PREFIX = 'image-editing:';
 export class ImageEditResultError extends Error {}
@@ -145,6 +154,7 @@ export class ImageEditingService {
       guidePath = await this.privateFile(input.sessionId, `${id}-guide.png`, info.image.toPNG());
     }
     const request: ImageEditRequest = { id, source: { ...source, filePath: sourceSnapshot, originalPath: source.originalPath ?? source.filePath }, operation: input.operation, regions, guidePath,
+      sourceVersionNumber: this.list({ sessionId: input.sessionId, rootId: source.rootId }).findIndex(v => v.id === source.id) + 1,
       aspectRatio: input.aspectRatio, instruction: input.instruction?.slice(0, 4000), createdAt: Date.now() };
     imageEditPrompt(request); // Reject local-only/unknown operations before recording a request.
     const state = this.session(input.sessionId);
@@ -157,6 +167,33 @@ export class ImageEditingService {
     const request = this.session(sessionId).requests.find(r => r.id === requestId);
     if (!request) throw new Error(t('imageEditFailed'));
     return request;
+  }
+
+  history(input: { sessionId: string; messageId: string }): ImageEditMessageSnapshot[] {
+    const state = this.session(input.sessionId);
+    const message = this.deps.getMessage?.(input.sessionId, input.messageId);
+    if (!message || message.type !== 'user') return [];
+    if (Array.isArray(message.metadata?.imageEdits)) return message.metadata.imageEdits as ImageEditMessageSnapshot[];
+    // Historical messages have an exact immutable attachment path. Never guess by title or time.
+    const previews = message.metadata?.imageAttachmentPreviews;
+    if (!Array.isArray(previews)) return [];
+    const paths = new Set(previews.map(value => value?.localPath).filter(value => typeof value === 'string'));
+    const snapshots = state.requests.filter(request => paths.has(request.source.filePath)).map(request => {
+      const versions = state.versions.filter(version => version.rootId === request.source.rootId);
+      return imageEditMessageSnapshot({ ...request,
+        sourceVersionNumber: request.sourceVersionNumber ?? versions.findIndex(version => version.id === request.source.id) + 1,
+      });
+    });
+    if (snapshots.length) this.deps.saveMessageMetadata?.(input.sessionId, input.messageId, { ...message.metadata, imageEdits: snapshots });
+    return snapshots;
+  }
+
+  async readSnapshot(input: { sessionId: string; requestId: string; preview?: boolean }): Promise<{ dataUrl: string }> {
+    const request = this.resolve(input.sessionId, input.requestId);
+    const info = inspect(await fs.readFile(request.source.filePath));
+    const scale = input.preview ? Math.min(1, 512 / Math.max(info.width, info.height)) : 1;
+    const image = scale < 1 ? info.image.resize({ width: Math.max(1, Math.round(info.width * scale)), height: Math.max(1, Math.round(info.height * scale)) }) : info.image;
+    return { dataUrl: `data:image/png;base64,${image.toPNG().toString('base64')}` };
   }
 
   async downloadDirectory(request: ImageEditRequest): Promise<string> {

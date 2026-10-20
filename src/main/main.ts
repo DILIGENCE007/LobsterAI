@@ -160,6 +160,7 @@ import {
   HtmlShareStatus,
   type HtmlShareStatus as HtmlShareStatusValue,
 } from '../shared/htmlShare/constants';
+import { imageEditMessageMetadata } from '../shared/imageEditing/messageSnapshot';
 import { ImageEditingIpc, ImageEditOperation, type ImageEditRequest } from '../shared/imageEditing/types';
 import type {
   InstalledKitRecord,
@@ -7756,6 +7757,10 @@ if (!gotTheLock) {
   const mediaDownloads = new MediaDownloadCoordinator<PersistGeneratedImageAssetsResult | null>();
   const imageEditing = new ImageEditingService({
     directory: path.join(app.getPath('userData'), 'image-editing'),
+    getMessage: (sessionId, messageId) => getCoworkStore().getMessage(sessionId, messageId),
+    saveMessageMetadata: (sessionId, messageId, metadata) => {
+      getCoworkStore().updateMessage(sessionId, messageId, { metadata });
+    },
     getCwd: sessionId => getCoworkStore().getSession(sessionId)?.cwd,
     get: key => getStore().get(key), set: (key, value) => getStore().set(key, value),
     changed: version => {
@@ -10465,7 +10470,7 @@ if (!gotTheLock) {
         coworkStoreInstance.addMessage(session.id, {
           type: 'user',
           content: prompt,
-          metadata: messageMetadata,
+          metadata: { ...messageMetadata, ...imageEditMessageMetadata(options.mediaReferences) },
         }, ipcStartedAtMs);
 
         coworkStoreInstance.updateSession(session.id, { status: 'running' });

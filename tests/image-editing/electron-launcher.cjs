@@ -20,10 +20,13 @@ electron.dialog.showMessageBox = (...args) => {
 BrowserWindow.prototype.show = function () {};
 BrowserWindow.prototype.showInactive = function () {};
 BrowserWindow.prototype.focus = function () {};
+// Native maximize transitions can stall hidden Windows windows. Keep a deterministic test viewport.
+BrowserWindow.prototype.maximize = function () {};
+BrowserWindow.prototype.unmaximize = function () {};
 // Offscreen rendering keeps frames and hit testing current while every native window stays hidden.
 class TestWindow extends BrowserWindow {
   constructor(options) {
-    super({ ...options, show: false, webPreferences: { ...options?.webPreferences, offscreen: true, backgroundThrottling: false } });
+    super({ ...options, width: 1280, height: 900, show: false, webPreferences: { ...options?.webPreferences, offscreen: true, backgroundThrottling: false } });
   }
   // Electron's BrowserWindow list excludes subclass constructors. Preserve broadcasts.
   static getAllWindows() {

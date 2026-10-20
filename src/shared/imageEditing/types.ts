@@ -11,6 +11,7 @@ export type ImageEditorTool = typeof ImageEditorTool[keyof typeof ImageEditorToo
 export const ImageEditingIpc = {
   Open: 'image-editing:open', Read: 'image-editing:read', Save: 'image-editing:save',
   Stage: 'image-editing:stage', List: 'image-editing:list', Changed: 'image-editing:changed',
+  History: 'image-editing:history', ReadSnapshot: 'image-editing:read-snapshot',
 } as const;
 export const IMAGE_EDIT_MAX_BYTES = 20 * 1024 * 1024;
 export const IMAGE_EDIT_MAX_PIXELS = 20_000_000;
@@ -47,6 +48,7 @@ export interface ImageVersion {
 }
 export interface ImageEditRequest {
   id: string;
+  sourceVersionNumber?: number;
   source: ImageVersion;
   operation: ImageEditOperation;
   regions: ImageRegion[];
@@ -54,6 +56,15 @@ export interface ImageEditRequest {
   aspectRatio?: string;
   instruction?: string;
   createdAt: number;
+}
+/** A message owns its submitted selection, independently of later editor drafts. */
+export interface ImageEditMessageSnapshot {
+  requestId: string;
+  sourceVersionNumber?: number;
+  source: ImageVersion;
+  operation: ImageEditOperation;
+  regions: ImageRegion[];
+  instruction?: string;
 }
 export interface ImageEditStageInput {
   sessionId: string;
@@ -71,5 +82,7 @@ export interface ImageEditingBridge {
   list(input: { sessionId: string; rootId: string }): Promise<ImageEditingResult<ImageVersion[]>>;
   save(input: { sessionId: string; sourceId: string; dataUrl: string; operation: ImageEditOperation }): Promise<ImageEditingResult<ImageVersion>>;
   stage(input: ImageEditStageInput): Promise<ImageEditingResult<ImageEditRequest>>;
+  history(input: { sessionId: string; messageId: string }): Promise<ImageEditingResult<ImageEditMessageSnapshot[]>>;
+  readSnapshot(input: { sessionId: string; requestId: string; preview?: boolean }): Promise<ImageEditingResult<{ dataUrl: string }>>;
   onChanged(callback: (version: ImageVersion) => void): () => void;
 }

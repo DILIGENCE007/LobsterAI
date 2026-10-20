@@ -1,11 +1,18 @@
+import { imageRegionCoordinates } from './geometry';
 import { ImageEditOperation, type ImageEditRequest } from './types';
+
+/** Shared by the conversation model and image model so positions cannot diverge. */
+export function imageEditRegionPrompt(request: Pick<ImageEditRequest, 'source' | 'regions'>): string {
+  return `Source image: ${request.source.width} x ${request.source.height} pixels. `
+    + 'Region coordinates below are percentages of the source image (left, top, width, height), measured from its top-left corner. '
+    + request.regions.map((region, index) => `${index + 1}. [${imageRegionCoordinates(region, request.source).percent.join(', ')}]: ${region.text}`).join('\n');
+}
 
 export function imageEditPrompt(request: ImageEditRequest): string {
   const base = 'Edit the FIRST input image. Keep the subject, composition and all unrequested details unchanged. Return one edited image, not a description. ';
   switch (request.operation) {
     case ImageEditOperation.Comment:
-      return base + 'Region coordinates below are percentages of the original image (left, top, width, height). '
-        + request.regions.map((r, i) => `${i + 1}. [${[r.x, r.y, r.width, r.height].map(v => (v * 100).toFixed(1)).join(', ')}]: ${r.text}`).join('\n');
+      return base + imageEditRegionPrompt(request);
     case ImageEditOperation.Markup:
       return base + 'The SECOND image is an annotated guide. Follow its marks and text as editing instructions. Do not reproduce guide marks in the result. ' + (request.instruction || '');
     case ImageEditOperation.Erase:

@@ -40,6 +40,8 @@ import { CoworkErrorModelSource } from '../../../shared/cowork/errorDetail';
 import { OpenClawCronRunMetadataKey } from '../../../shared/cowork/openclawCronSessionKey';
 import { CoworkSelectedTextSource } from '../../../shared/cowork/selectedText';
 import { CoworkSteerRejectReason, CoworkSteerStatus } from '../../../shared/cowork/steer';
+import { imageEditRegionPrompt } from '../../../shared/imageEditing/prompts';
+import { ImageEditOperation, type ImageEditRequest } from '../../../shared/imageEditing/types';
 import { OpenClawTranscriptSafetyLimit } from '../../../shared/openclawTranscript/constants';
 import { ProviderName } from '../../../shared/providers/constants';
 import { setLanguage, t } from '../../i18n';
@@ -4093,6 +4095,29 @@ test('a turn stores one W3C trace on its user message and sends it with chat.sen
     timeoutMs: 90_000,
     traceparent: expect.stringMatching(new RegExp(`^00-${llmTrace?.traceId}-[0-9a-f]{16}-01$`)),
   });
+});
+
+test('a comment turn persists its regions and sends their coordinates to the conversation model', async () => {
+  const { adapter, requests, session } = createRunTurnAdapter();
+  const imageEdit: ImageEditRequest = {
+    id: 'edit-1', sourceVersionNumber: 10, operation: ImageEditOperation.Comment, createdAt: 2,
+    source: { id: 'v10', rootId: 'v1', sessionId: 'session-1', filePath: '/private/edit-1.png',
+      title: 'cup.png', width: 2048, height: 1024, createdAt: 1, operation: ImageEditOperation.Comment },
+    regions: [{ id: 'r1', x: 0.1, y: 0.2, width: 0.3, height: 0.4, text: 'Add a dog here' }],
+  };
+  await adapter.continueSession('session-1', '@图片1 按选区修改', {
+    mediaReferences: [{ token: '@图片1', mediaType: 'image', index: 1, fileName: 'cup.png', mimeType: 'image/png',
+      localPath: imageEdit.source.filePath, imageEdit }],
+  });
+  const userMessage = session.messages.find(message => message.type === 'user');
+  expect(userMessage?.metadata).toMatchObject({ imageEdits: [{
+    requestId: 'edit-1', sourceVersionNumber: 10, source: { width: 2048, height: 1024 },
+    regions: [{ id: 'r1', x: 0.1, y: 0.2, width: 0.3, height: 0.4, text: 'Add a dog here' }],
+  }] });
+  const chatSend = requests.find(request => request.method === 'chat.send');
+  expect(chatSend?.params.message).toContain(`@图片1: ${imageEditRegionPrompt(imageEdit)}`);
+  expect(chatSend?.params.message).toContain('1. [10.0, 20.0, 30.0, 40.0]: Add a dog here');
+  expect(userMessage?.content).toBe('@图片1 按选区修改');
 });
 
 test('runs for a user message stored before the turn share the trace on that message', async () => {

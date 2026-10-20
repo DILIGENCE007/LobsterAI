@@ -20,4 +20,5 @@ export function registerImageEditingHandlers(getWindow: () => BrowserWindow | nu
   };
   handle(ImageEditingIpc.Open, 'open'); handle(ImageEditingIpc.Read, 'read');
   handle(ImageEditingIpc.List, 'list'); handle(ImageEditingIpc.Save, 'save'); handle(ImageEditingIpc.Stage, 'stage');
+  handle(ImageEditingIpc.History, 'history'); handle(ImageEditingIpc.ReadSnapshot, 'readSnapshot');
 }

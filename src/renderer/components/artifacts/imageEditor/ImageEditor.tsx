@@ -47,6 +47,7 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
   const [color, setColor] = useState('#f05252');
   const [brush, setBrush] = useState(4);
   const [maskBrush, setMaskBrush] = useState(30);
+  const [brushPoint, setBrushPoint] = useState<ImagePoint>();
   const [activeMark, setActiveMark] = useState<ImageMark>();
   const activeMarkRef = useRef<ImageMark>();
   const [selection, setSelection] = useState<ImageRegion>();
@@ -143,6 +144,7 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
     const wheel = (event: WheelEvent) => {
       if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
+      setBrushPoint(undefined);
       setZoom(value => Math.min(8, Math.max(0.25, value * Math.exp(-event.deltaY * 0.002))));
     };
     observer.observe(element); element.addEventListener('wheel', wheel, { passive: false });
@@ -225,7 +227,14 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
     if (!result.success) throw new Error(result.error);
     await loadVersion(result.data); setNotice(t('imageEditSaved')); setMode(Mode.View);
   });
+  const previewBrush = (event: React.PointerEvent) => {
+    if (mode !== Mode.Erase || !stage.current || busy || compare || space) { setBrushPoint(undefined); return; }
+    const rect = stage.current.getBoundingClientRect();
+    setBrushPoint(event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom
+      ? imagePoint(event.clientX, event.clientY, rect) : undefined);
+  };
   const pointerDown = (event: React.PointerEvent) => {
+    previewBrush(event);
     if (!loaded || event.button !== 0 || busy || compare || !stage.current || !viewport.current) return;
     stage.current.focus(); stage.current.setPointerCapture(event.pointerId);
     const point = imagePoint(event.clientX, event.clientY, stage.current.getBoundingClientRect());
@@ -246,6 +255,7 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
     activeMarkRef.current = mark; setActiveMark(mark);
   };
   const pointerMove = (event: React.PointerEvent) => {
+    previewBrush(event);
     if (!drag.current || !loaded || !stage.current) return;
     if (drag.current.pan && viewport.current) {
       viewport.current.scrollLeft = drag.current.pan.left - event.clientX + drag.current.pan.x;
@@ -274,6 +284,8 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
   const fit = Math.min((viewportSize.width - 32) / size.width, (viewportSize.height - 32) / size.height, 1);
   const displayWidth = Math.max(1, size.width * Math.max(0.01, fit) * zoom);
   const displayHeight = Math.max(1, size.height * Math.max(0.01, fit) * zoom);
+  const eraseCursor = mode === Mode.Erase && !space && !compare && !busy;
+  const brushDiameter = maskBrush / 1000 * Math.max(displayWidth, displayHeight);
   const visibleRegions = drawing.regions.map(region => selection && region.id === selection.id ? selection : region);
   if (selection && !drawing.regions.some(region => region.id === selection.id)) visibleRegions.push(selection);
   const tools = [
@@ -311,21 +323,33 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
             active={tool === value} onClick={() => setTool(value as ImageEditorTool)} />)}
         <input type="color" value={color} aria-label={t('imageEditColor')} onChange={event => setColor(event.target.value)} className="h-6 w-6 cursor-pointer rounded border-0 bg-transparent" />
       </>}
+      {mode === Mode.Erase && <span className="mr-1 flex items-center gap-1.5 text-xs text-secondary">
+        <span className="flex h-6 w-6 items-center justify-center" aria-hidden="true">
+          <span className="rounded-full border border-rose-400 bg-rose-400/20" style={{ width: 4 + maskBrush / 10, height: 4 + maskBrush / 10 }} />
+        </span>{t('imageEditEraseBrush')}
+      </span>}
       <input type="range" min={mode === Mode.Erase ? 8 : 1} max={mode === Mode.Erase ? 150 : 16}
         aria-label={t('imageEditBrushSize')} value={mode === Mode.Erase ? maskBrush : brush} className="min-w-12 max-w-24 flex-1 accent-accent"
         onChange={event => (mode === Mode.Erase ? setMaskBrush : setBrush)(Number(event.target.value))} />
+      {mode === Mode.Erase && <output className="ml-1 text-[11px] tabular-nums text-muted">
+        {t('imageEditBrushDiameter').replace('{size}', String(Math.round(maskBrush / 1000 * Math.max(size.width, size.height))))}
+      </output>}
       <span className="flex-1" />
       <ToolButton label={t('imageEditUndo')} icon={ArrowUturnLeftIcon} disabled={!drawing.past.length} onClick={() => dispatch(undoImageDrawing(key))} />
       <ToolButton label={t('imageEditRedo')} icon={ArrowUturnRightIcon} disabled={!drawing.future.length} onClick={() => dispatch(redoImageDrawing(key))} />
     </div>}
-    <div ref={viewport} className="relative min-h-32 flex-1 overflow-auto bg-black/[0.025] dark:bg-white/[0.025]">
+    <div ref={viewport} onScroll={() => setBrushPoint(undefined)} className="relative min-h-32 flex-1 overflow-auto bg-black/[0.025] dark:bg-white/[0.025]">
       <div className="flex min-h-full min-w-full p-4" style={{ width: Math.max(viewportSize.width, displayWidth + 32), height: Math.max(viewportSize.height, displayHeight + 32) }}>
         <div ref={stage} tabIndex={0} role="img" aria-label={size.title} onPointerDown={pointerDown} onPointerMove={pointerMove}
           onPointerUp={pointerUp} onPointerCancel={pointerUp}
+          onPointerEnter={previewBrush} onPointerLeave={() => setBrushPoint(undefined)}
           className="relative m-auto shrink-0 touch-none select-none shadow-md outline-none focus-visible:ring-2 focus-visible:ring-accent"
-          style={{ width: displayWidth, height: displayHeight, cursor: space || mode === Mode.View ? 'grab' : 'crosshair',
+          style={{ width: displayWidth, height: displayHeight, cursor: space || mode === Mode.View ? 'grab' : eraseCursor ? 'none' : 'crosshair',
             backgroundColor: '#fff', backgroundImage: 'conic-gradient(#e5e7eb 25%, transparent 0 50%, #e5e7eb 0 75%, transparent 0)', backgroundSize: '16px 16px' }}>
           <canvas ref={canvas} width={size.width} height={size.height} className="h-full w-full" />
+          {eraseCursor && brushPoint && <div data-image-erase-cursor aria-hidden="true"
+            className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-white bg-rose-400/20"
+            style={{ left: `${brushPoint.x * 100}%`, top: `${brushPoint.y * 100}%`, width: brushDiameter, height: brushDiameter, boxShadow: '0 0 0 1px rgba(0,0,0,.65)' }} />}
           {mode === Mode.Comment && !compare && <svg viewBox="0 0 1 1" preserveAspectRatio="none" className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
             {visibleRegions.map((region, i) => <g key={region.id}>
               <rect x={region.x} y={region.y} width={region.width} height={region.height} fill="rgba(59,130,246,.12)" stroke="#3b82f6" strokeWidth={2 / displayWidth} strokeDasharray={`${5 / displayWidth} ${3 / displayWidth}`} />
@@ -337,9 +361,9 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
         </div>
       </div>
     </div>
-    <div className="flex items-center gap-2 border-t border-light-border px-3 py-1.5 text-[11px] text-muted dark:border-dark-border">
-      <CursorArrowRaysIcon className="h-3.5 w-3.5 shrink-0" /><span className="flex-1 truncate">{t(mode === Mode.View ? 'imageEditViewHint' : mode === Mode.Comment ? 'imageEditCommentHint' : mode === Mode.Erase ? 'imageEditEraseHint' : mode === Mode.Resize ? 'imageEditResizeHint' : 'imageEditMarkupHint')}</span>
-      <button type="button" title={t('imageEditResetZoom')} onClick={() => setZoom(1)} className="shrink-0 rounded px-1.5 py-1 hover:bg-black/5 dark:hover:bg-white/10">{Math.round(Math.max(0.01, fit) * zoom * 100)}%</button>
+    <div className={`flex items-center gap-2 border-t border-light-border px-3 dark:border-dark-border ${mode === Mode.Erase ? 'bg-accent/5 py-3 text-sm font-medium text-secondary' : 'py-1.5 text-[11px] text-muted'}`}>
+      <CursorArrowRaysIcon className="h-4 w-4 shrink-0" /><span className={`flex-1 ${mode === Mode.Erase ? '' : 'truncate'}`}>{t(mode === Mode.View ? 'imageEditViewHint' : mode === Mode.Comment ? 'imageEditCommentHint' : mode === Mode.Erase ? 'imageEditEraseHint' : mode === Mode.Resize ? 'imageEditResizeHint' : 'imageEditMarkupHint')}</span>
+      <button type="button" title={t('imageEditResetZoom')} onClick={() => { setZoom(1); setBrushPoint(undefined); }} className="shrink-0 rounded px-1.5 py-1 text-[11px] font-normal text-muted hover:bg-black/5 dark:hover:bg-white/10">{Math.round(Math.max(0.01, fit) * zoom * 100)}%</button>
     </div>
     <div className="max-h-[45%] shrink-0 overflow-y-auto">
       {mode === Mode.Comment && <div className="space-y-2 border-t border-light-border p-3 dark:border-dark-border">
