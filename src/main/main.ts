@@ -10103,7 +10103,8 @@ if (!gotTheLock) {
   registerMcpHandlers({
     getMcpRuntime,
     syncOpenClawConfig,
-    // `openclaw mcp login|logout|status` must see the same config, state dir and secrets as the gateway.
+    // `openclaw mcp login|logout|status` share the gateway's state dir, where tokens live, but run
+    // against a config of their own that references no secrets.
     getOAuthCliContext: () => {
       const manager = getOpenClawEngineManager();
       const runtimeRoot = manager.getRuntimeRoot();
@@ -10112,8 +10113,6 @@ if (!gotTheLock) {
         electronNodeRuntimePath: getElectronNodeRuntimePath(),
         runtimeRoot,
         stateDir: manager.getStateDir(),
-        configPath: manager.getConfigPath(),
-        secretEnv: { ...manager.getSecretEnvVars(), ...getOpenClawConfigSync().collectSecretEnvVars() },
       };
     },
   });

@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { McpAuthMode, McpOAuthErrorCode, McpOAuthState } from '../../shared/mcp/auth';
@@ -14,24 +15,91 @@ import type { McpServerFormData, McpServerRecord } from './mcpStore';
  * token storage and refresh); the app only needs to open the printed URL in the
  * user's browser and wait for the CLI to finish.
  *
- * The gateway reads the stored token from OpenClaw's state SQLite on every
- * request, so no gateway restart is needed after login. A server whose tool
- * catalog failed before login is retried by the gateway a few seconds later.
+ * OpenClaw keys stored tokens by server name + URL in its state SQLite, not by
+ * config file. So every CLI call runs against a temporary openclaw.json that
+ * lists only the servers it is about, next to the gateway's real state dir.
+ * That works whether or not the gateway's config already lists the server:
+ * disabled, no model configured yet, or a just-saved change still waiting for a
+ * busy gateway. The gateway reads the stored token on every request, so no
+ * restart is needed after login. A server whose tool catalog failed before
+ * login is retried by the gateway a few seconds later.
  */
 
 // The CLI waits up to 5 minutes for the browser callback; leave room for startup.
 export const MCP_OAUTH_LOGIN_TIMEOUT_MS = 5 * 60 * 1000 + 30_000;
 export const MCP_OAUTH_STATUS_TIMEOUT_MS = 30_000;
 const OUTPUT_TAIL_LIMIT = 2_000;
+const CLI_CONFIG_DIR_PREFIX = 'lobsterai-mcp-oauth-';
+const CLI_CONFIG_FILE_NAME = 'openclaw.json';
 
 export interface McpOAuthCliContext {
   /** Electron binary run with ELECTRON_RUN_AS_NODE=1. */
   electronNodeRuntimePath: string;
   runtimeRoot: string;
+  /** The gateway's state dir, where OpenClaw stores the tokens. */
   stateDir: string;
-  configPath: string;
-  /** Secrets referenced as ${VAR} in openclaw.json; the CLI loads the same config. */
-  secretEnv: Record<string, string>;
+}
+
+/**
+ * A server as openclaw.json lists it: its `mcp.servers` key and entry. Tokens
+ * are keyed by the entry's name and URL, so callers build it the way config
+ * sync does.
+ */
+export interface McpOAuthCliServer {
+  key: string;
+  entry: Record<string, unknown>;
+}
+
+/**
+ * The openclaw.json a CLI call runs against. It references no `${VAR}` secrets
+ * and no plugins, so the CLI needs none of the gateway's environment.
+ */
+export function buildMcpOAuthCliConfig(servers: McpOAuthCliServer[]): { mcp: { servers: Record<string, Record<string, unknown>> } } {
+  return { mcp: { servers: Object.fromEntries(servers.map(server => [server.key, server.entry])) } };
+}
+
+// No CLI call outlives the login timeout, so an older config dir was left behind by
+// an app that crashed or was killed mid-call.
+const STALE_CLI_CONFIG_AGE_MS = 2 * MCP_OAUTH_LOGIN_TIMEOUT_MS;
+let staleCliConfigSweep: Promise<void> | null = null;
+
+/** Removes config dirs left by a crashed app. Runs once per process; never throws. */
+export async function removeStaleMcpOAuthCliConfigs(tmpDir = os.tmpdir(), now = Date.now()): Promise<void> {
+  let names: string[];
+  try {
+    names = await fs.promises.readdir(tmpDir);
+  } catch {
+    return;
+  }
+  await Promise.all(names.filter(name => name.startsWith(CLI_CONFIG_DIR_PREFIX)).map(async name => {
+    const dir = path.join(tmpDir, name);
+    try {
+      if (now - (await fs.promises.stat(dir)).mtimeMs < STALE_CLI_CONFIG_AGE_MS) return;
+      await fs.promises.rm(dir, { recursive: true, force: true });
+    } catch {
+      // Another user's dir in a shared tmp, or already gone.
+    }
+  }));
+}
+
+/** Writes the config to a private temp dir for the duration of `run`. */
+async function withMcpOAuthCliConfig<T>(
+  servers: McpOAuthCliServer[],
+  run: (configPath: string) => Promise<T>,
+): Promise<T> {
+  staleCliConfigSweep ??= removeStaleMcpOAuthCliConfigs();
+  await staleCliConfigSweep;
+  // Entries may carry the server's other request headers, so keep the file private.
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), CLI_CONFIG_DIR_PREFIX));
+  try {
+    const configPath = path.join(dir, CLI_CONFIG_FILE_NAME);
+    await fs.promises.writeFile(configPath, JSON.stringify(buildMcpOAuthCliConfig(servers)), { mode: 0o600 });
+    return await run(configPath);
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true }).catch(error =>
+      console.warn('[MCP] failed to remove temporary OAuth CLI config:', error instanceof Error ? error.message : error),
+    );
+  }
 }
 
 export class McpOAuthCliError extends Error {
@@ -53,7 +121,7 @@ export type McpOAuthSpawn = (
 const defaultSpawn: McpOAuthSpawn = (command, args, options) =>
   spawn(command, args, { ...options, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 
-export function buildMcpOAuthCliInvocation(context: McpOAuthCliContext, mcpArgs: string[]) {
+export function buildMcpOAuthCliInvocation(context: McpOAuthCliContext, configPath: string, mcpArgs: string[]) {
   const cliPath = resolveOpenClawCliPath(context.runtimeRoot);
   if (!cliPath) {
     throw new McpOAuthCliError(McpOAuthErrorCode.RuntimeUnavailable, 'OpenClaw runtime is not installed.');
@@ -65,10 +133,9 @@ export function buildMcpOAuthCliInvocation(context: McpOAuthCliContext, mcpArgs:
       cwd: context.runtimeRoot,
       env: {
         ...process.env,
-        ...context.secretEnv,
         OPENCLAW_HOME: path.dirname(context.stateDir),
         OPENCLAW_STATE_DIR: context.stateDir,
-        OPENCLAW_CONFIG_PATH: context.configPath,
+        OPENCLAW_CONFIG_PATH: configPath,
         OPENCLAW_NO_RESPAWN: '1',
         ELECTRON_RUN_AS_NODE: '1',
         // Output is parsed and shown in the UI, never in a terminal.
@@ -127,26 +194,6 @@ export function parseMcpOAuthStatusOutput(stdout: string): Record<string, McpOAu
   return states;
 }
 
-/**
- * Whether openclaw.json lists `serverKey` under `mcp.servers`. LobsterAI writes a
- * minimal config without MCP servers until a model is configured, and the CLI
- * then fails with a bare "No MCP server named ..." error. An unreadable config
- * returns true so the CLI can report the real problem.
- */
-export function isMcpServerInOpenClawConfig(configPath: string, serverKey: string): boolean {
-  let config: unknown;
-  try {
-    config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  } catch {
-    return true;
-  }
-  const servers = (config as { mcp?: { servers?: unknown } } | null)?.mcp?.servers;
-  return Boolean(servers && typeof servers === 'object' && Object.prototype.hasOwnProperty.call(servers, serverKey));
-}
-
-const SERVER_NOT_LOADED_MESSAGE =
-  'OpenClaw has not loaded this MCP server: it is disabled, or no model is configured yet.';
-
 const ANSI_ESCAPE_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, 'g');
 const CONFIG_WARNING_LINE_RE = /^\[config\]/i;
 
@@ -169,10 +216,11 @@ function tail(text: string): string {
   return cleaned.length > OUTPUT_TAIL_LIMIT ? cleaned.slice(-OUTPUT_TAIL_LIMIT) : cleaned;
 }
 
-const NO_MCP_SERVER_RE = /no mcp server named/i;
+type CliResult = { code: number | null; stdout: string; stderr: string; timedOut: boolean; cancelled: boolean };
 
 function runCli(
   context: McpOAuthCliContext,
+  servers: McpOAuthCliServer[],
   mcpArgs: string[],
   options: {
     timeoutMs: number;
@@ -181,8 +229,17 @@ function runCli(
     /** Aborting kills the CLI (which also frees the loopback port) and resolves with `cancelled`. */
     signal?: AbortSignal;
   },
-): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; cancelled: boolean }> {
-  const invocation = buildMcpOAuthCliInvocation(context, mcpArgs);
+): Promise<CliResult> {
+  return withMcpOAuthCliConfig(servers, configPath => spawnCli(context, configPath, mcpArgs, options));
+}
+
+function spawnCli(
+  context: McpOAuthCliContext,
+  configPath: string,
+  mcpArgs: string[],
+  options: Parameters<typeof runCli>[3],
+): Promise<CliResult> {
+  const invocation = buildMcpOAuthCliInvocation(context, configPath, mcpArgs);
   const child = (options.spawnImpl ?? defaultSpawn)(invocation.command, invocation.args, invocation.options);
   return new Promise((resolve, reject) => {
     let stdout = '';
@@ -231,36 +288,33 @@ function runCli(
 
 const activeLogins = new Set<string>();
 
-export function createServerNotLoadedError(): McpOAuthCliError {
-  return new McpOAuthCliError(McpOAuthErrorCode.ServerNotLoaded, SERVER_NOT_LOADED_MESSAGE);
-}
-
 export function createCancelledError(): McpOAuthCliError {
   return new McpOAuthCliError(McpOAuthErrorCode.Cancelled, 'Sign-in was cancelled.');
 }
 
 /**
- * Runs `openclaw mcp login <serverKey>`, opening the authorization URL in the
+ * Runs `openclaw mcp login <key>`, opening the authorization URL in the
  * system browser as soon as the CLI prints it. Resolves once OpenClaw has
  * stored the credentials; rejects with a McpOAuthCliError otherwise.
  */
 export async function runMcpOAuthLogin(params: {
   context: McpOAuthCliContext;
-  serverKey: string;
+  server: McpOAuthCliServer;
   openExternal: (url: string) => Promise<void>;
   spawnImpl?: McpOAuthSpawn;
   timeoutMs?: number;
   signal?: AbortSignal;
 }): Promise<void> {
-  if (activeLogins.has(params.serverKey)) {
+  const serverKey = params.server.key;
+  if (activeLogins.has(serverKey)) {
     throw new McpOAuthCliError(McpOAuthErrorCode.AlreadyInProgress, 'Sign-in is already in progress for this server.');
   }
   if (params.signal?.aborted) throw createCancelledError();
-  activeLogins.add(params.serverKey);
+  activeLogins.add(serverKey);
   let openedUrl = false;
   let callbackUnavailable = false;
   try {
-    const result = await runCli(params.context, ['login', params.serverKey], {
+    const result = await runCli(params.context, [params.server], ['login', serverKey], {
       timeoutMs: params.timeoutMs ?? MCP_OAUTH_LOGIN_TIMEOUT_MS,
       spawnImpl: params.spawnImpl,
       signal: params.signal,
@@ -288,7 +342,6 @@ export async function runMcpOAuthLogin(params: {
       );
     }
     if (result.code !== 0) {
-      if (NO_MCP_SERVER_RE.test(`${result.stderr}\n${result.stdout}`)) throw createServerNotLoadedError();
       throw new McpOAuthCliError(
         McpOAuthErrorCode.Failed,
         tail(result.stderr) || tail(result.stdout) || `openclaw mcp login exited with code ${result.code}`,
@@ -300,21 +353,20 @@ export async function runMcpOAuthLogin(params: {
       throw new McpOAuthCliError(McpOAuthErrorCode.Failed, tail(result.stdout) || 'Authorization did not complete.');
     }
   } finally {
-    activeLogins.delete(params.serverKey);
+    activeLogins.delete(serverKey);
   }
 }
 
 export async function runMcpOAuthLogout(params: {
   context: McpOAuthCliContext;
-  serverKey: string;
+  server: McpOAuthCliServer;
   spawnImpl?: McpOAuthSpawn;
 }): Promise<void> {
-  const result = await runCli(params.context, ['logout', params.serverKey], {
+  const result = await runCli(params.context, [params.server], ['logout', params.server.key], {
     timeoutMs: MCP_OAUTH_STATUS_TIMEOUT_MS,
     spawnImpl: params.spawnImpl,
   });
   if (result.code !== 0) {
-    if (NO_MCP_SERVER_RE.test(`${result.stderr}\n${result.stdout}`)) throw createServerNotLoadedError();
     throw new McpOAuthCliError(
       McpOAuthErrorCode.Failed,
       tail(result.stderr) || tail(result.stdout) || `openclaw mcp logout exited with code ${result.code}`,
@@ -338,16 +390,15 @@ export function isMcpOAuthIdentityRemoved(
 }
 
 /**
- * `openclaw mcp logout` before a server is deleted or loses its OAuth identity.
- * Never throws. Skipped when the server is not in openclaw.json (disabled, or no
- * model configured yet), because the CLI only resolves configured servers.
+ * `openclaw mcp logout` before a server is deleted or loses its OAuth identity,
+ * including a disabled server that the gateway's openclaw.json does not list.
+ * Never throws.
  */
 export async function clearMcpOAuthCredentialsBestEffort(params: {
   context: McpOAuthCliContext;
-  serverKey: string;
+  server: McpOAuthCliServer;
   spawnImpl?: McpOAuthSpawn;
 }): Promise<boolean> {
-  if (!isMcpServerInOpenClawConfig(params.context.configPath, params.serverKey)) return false;
   try {
     await runMcpOAuthLogout(params);
     return true;
@@ -360,9 +411,10 @@ export async function clearMcpOAuthCredentialsBestEffort(params: {
 /** `openclaw mcp status --json` does not connect to servers, so it is cheap to call. */
 export async function readMcpOAuthStatuses(params: {
   context: McpOAuthCliContext;
+  servers: McpOAuthCliServer[];
   spawnImpl?: McpOAuthSpawn;
 }): Promise<Record<string, McpOAuthState>> {
-  const result = await runCli(params.context, ['status', '--json'], {
+  const result = await runCli(params.context, params.servers, ['status', '--json'], {
     timeoutMs: MCP_OAUTH_STATUS_TIMEOUT_MS,
     spawnImpl: params.spawnImpl,
   });

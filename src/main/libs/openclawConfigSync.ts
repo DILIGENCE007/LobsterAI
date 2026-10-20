@@ -1845,7 +1845,9 @@ export function safeServerKey(name: string): string {
 const cleanMcpToolNames = (list?: string[]): string[] =>
   (list ?? []).map(item => String(item).trim()).filter(Boolean);
 
-function buildOpenClawMcpServers(
+// Also builds the entries the MCP OAuth CLI runs against (see mcpOAuthCli.ts):
+// OpenClaw keys stored tokens by these entries' names and URLs.
+export function buildOpenClawMcpServers(
   servers: ResolvedMcpServer[],
 ): Record<string, Record<string, unknown>> {
   const result: Record<string, Record<string, unknown>> = {};

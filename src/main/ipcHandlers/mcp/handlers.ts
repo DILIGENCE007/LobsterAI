@@ -16,15 +16,13 @@ import {
 } from '../../../shared/mcp/toolDiscovery';
 import { normalizeMcpServerUrlInput } from '../../../shared/mcp/url';
 import { OpenClawConfigImpact } from '../../libs/openclawConfigImpact';
-import { safeServerKey } from '../../libs/openclawConfigSync';
+import { buildOpenClawMcpServers, safeServerKey } from '../../libs/openclawConfigSync';
 import {
   clearMcpOAuthCredentialsBestEffort,
-  createCancelledError,
-  createServerNotLoadedError,
   isMcpOAuthIdentityRemoved,
-  isMcpServerInOpenClawConfig,
   type McpOAuthCliContext,
   McpOAuthCliError,
+  type McpOAuthCliServer,
   readMcpOAuthStatuses,
   runMcpOAuthLogin,
   runMcpOAuthLogout,
@@ -46,7 +44,7 @@ export interface McpHandlerDeps {
     restartGatewayIfRunning?: boolean;
     expectedImpact?: OpenClawConfigImpact;
   }) => Promise<{ success: boolean; changed: boolean }>;
-  /** Paths and secrets for running `openclaw mcp …`; null when the runtime is not installed. */
+  /** Paths for running `openclaw mcp …`; null when the runtime is not installed. */
   getOAuthCliContext: () => McpOAuthCliContext | null;
 }
 
@@ -54,9 +52,31 @@ function isOAuthRemoteServer(server: McpServerRecord | null): server is McpServe
   return Boolean(server && server.transportType !== 'stdio' && server.auth === McpAuthMode.OAuth);
 }
 
+/**
+ * The server's openclaw.json entry, built the way config sync writes it, for the
+ * CLI's own config. Null when the stored URL is not valid (config sync skips it too).
+ */
+function toOAuthCliServer(server: McpServerRecord): McpOAuthCliServer | null {
+  const key = safeServerKey(server.name);
+  const entry = buildOpenClawMcpServers([{
+    name: server.name,
+    transportType: server.transportType,
+    url: server.url,
+    headers: server.headers,
+    auth: McpAuthMode.OAuth,
+  }])[key];
+  return entry ? { key, entry } : null;
+}
+
+const INVALID_URL_ERROR = 'MCP server URL must be an absolute HTTP or HTTPS URL.';
+
 // In-flight sign-ins by server id. Aborting one kills its `openclaw mcp login`,
 // which also frees the loopback callback port.
 const oauthLoginControllers = new Map<string, AbortController>();
+
+function cancelMcpOAuthLogin(id: string): void {
+  oauthLoginControllers.get(id)?.abort();
+}
 
 /** Called on app quit so no `openclaw mcp login` outlives the app holding 127.0.0.1:8989. */
 export function cancelAllMcpOAuthLogins(): void {
@@ -122,7 +142,7 @@ function normalizeMcpServerInput(data: Partial<McpServerFormData>): Partial<McpS
   ) {
     const normalized = normalizeMcpServerUrlInput(data.url);
     if (!normalized.ok) {
-      throw new Error('MCP server URL must be an absolute HTTP or HTTPS URL.');
+      throw new Error(INVALID_URL_ERROR);
     }
     return { ...data, url: normalized.url };
   }
@@ -190,14 +210,15 @@ export function registerMcpHandlers(deps: McpHandlerDeps): void {
 
   /**
    * Signs out before a server's OAuth identity goes away (delete, rename, URL or
-   * auth change) while it is still in openclaw.json, so its tokens neither linger
-   * in OpenClaw's state nor come back when the same server is added again.
+   * auth change), enabled or not, so its tokens neither linger in OpenClaw's
+   * state nor come back when the same server is added again.
    */
   const clearOAuthCredentials = async (server: McpServerRecord): Promise<void> => {
-    oauthLoginControllers.get(server.id)?.abort();
+    cancelMcpOAuthLogin(server.id);
     const context = getOAuthCliContext();
-    if (!context) return;
-    await clearMcpOAuthCredentialsBestEffort({ context, serverKey: safeServerKey(server.name) });
+    const cliServer = toOAuthCliServer(server);
+    if (!context || !cliServer) return;
+    await clearMcpOAuthCredentialsBestEffort({ context, server: cliServer });
   };
 
   ipcMain.handle(McpIpcChannel.List, () => {
@@ -340,6 +361,9 @@ export function registerMcpHandlers(deps: McpHandlerDeps): void {
       mcpRuntime.getStore().setEnabled(options.id, options.enabled);
       if (options.enabled) {
         mcpRuntime.ensureLaunchResolution(options.id, 'mcp-server-enabled');
+      } else {
+        // A disabled server shows no sign-in, so do not leave one waiting on the browser.
+        cancelMcpOAuthLogin(options.id);
       }
       const servers = mcpRuntime.getStore().listServers();
       syncMcpConfig(syncOpenClawConfig, 'mcp-server-toggled');
@@ -369,6 +393,8 @@ export function registerMcpHandlers(deps: McpHandlerDeps): void {
           store.setEnabled(server.id, options.enabled);
           if (options.enabled) {
             mcpRuntime.ensureLaunchResolution(server.id, 'mcp-registry-enabled');
+          } else {
+            cancelMcpOAuthLogin(server.id);
           }
         }
         const servers = store.listServers();
@@ -484,7 +510,8 @@ export function registerMcpHandlers(deps: McpHandlerDeps): void {
     if (!context) {
       return { success: false, code: McpOAuthErrorCode.RuntimeUnavailable, error: 'OpenClaw runtime is not ready.' };
     }
-    // Registered before the config sync so a cancel during the sync is not lost.
+    const cliServer = toOAuthCliServer(server);
+    if (!cliServer) return { success: false, code: McpOAuthErrorCode.Failed, error: INVALID_URL_ERROR };
     if (oauthLoginControllers.has(id)) {
       return {
         success: false,
@@ -495,14 +522,10 @@ export function registerMcpHandlers(deps: McpHandlerDeps): void {
     const controller = new AbortController();
     oauthLoginControllers.set(id, controller);
     try {
-      // The CLI reads openclaw.json, so make sure the latest `auth: "oauth"` entry is written first.
-      await syncOpenClawConfig({ reason: 'mcp-oauth-login', expectedImpact: OpenClawConfigImpact.Sync });
-      if (controller.signal.aborted) throw createCancelledError();
-      const serverKey = safeServerKey(server.name);
-      if (!isMcpServerInOpenClawConfig(context.configPath, serverKey)) {
-        throw createServerNotLoadedError();
-      }
-      await runMcpOAuthLogin({ context, serverKey, openExternal: openAuthorizationUrl, signal: controller.signal });
+      // The CLI runs against its own config, so this needs neither a configured
+      // model nor the gateway to have loaded the just-saved server yet. The token
+      // is keyed by name + URL, so the gateway uses it once its config lists the server.
+      await runMcpOAuthLogin({ context, server: cliServer, openExternal: openAuthorizationUrl, signal: controller.signal });
       return { success: true, state: McpOAuthState.Authorized };
     } catch (error) {
       if (!(error instanceof McpOAuthCliError && error.code === McpOAuthErrorCode.Cancelled)) {
@@ -530,18 +553,14 @@ export function registerMcpHandlers(deps: McpHandlerDeps): void {
     if (!context) {
       return { success: false, code: McpOAuthErrorCode.RuntimeUnavailable, error: 'OpenClaw runtime is not ready.' };
     }
-    // The CLI only resolves servers listed in openclaw.json, which holds enabled
-    // servers only, and is rewritten asynchronously after a toggle.
+    // Disabled servers show no OAuth state (see OAuthStatus), so there is nothing to sign out of.
     if (!server.enabled) {
       return { success: false, code: McpOAuthErrorCode.ServerNotLoaded, error: 'Enable the MCP server before signing out.' };
     }
+    const cliServer = toOAuthCliServer(server);
+    if (!cliServer) return { success: false, code: McpOAuthErrorCode.Failed, error: INVALID_URL_ERROR };
     try {
-      await syncOpenClawConfig({ reason: 'mcp-oauth-logout', expectedImpact: OpenClawConfigImpact.Sync });
-      const serverKey = safeServerKey(server.name);
-      if (!isMcpServerInOpenClawConfig(context.configPath, serverKey)) {
-        throw createServerNotLoadedError();
-      }
-      await runMcpOAuthLogout({ context, serverKey });
+      await runMcpOAuthLogout({ context, server: cliServer });
       return { success: true, state: McpOAuthState.RequiresAuthorization };
     } catch (error) {
       return toOAuthFailure(error, 'Failed to sign out of the MCP server');
@@ -551,22 +570,28 @@ export function registerMcpHandlers(deps: McpHandlerDeps): void {
   ipcMain.handle(McpIpcChannel.OAuthStatus, async (): Promise<McpOAuthStatusResult> => {
     const servers = getMcpRuntime().getStore().listServers().filter(isOAuthRemoteServer);
     if (servers.length === 0) return { success: true, states: {} };
-    const context = getOAuthCliContext();
-    if (!context) return { success: false, error: 'OpenClaw runtime is not ready.' };
-    try {
-      const byKey = await readMcpOAuthStatuses({ context });
-      // Disabled servers are not loaded by OpenClaw. The store decides, not the CLI:
-      // right after a toggle openclaw.json may not have been rewritten yet.
-      const states = Object.fromEntries(
-        servers.map(server => [
-          server.id,
-          server.enabled ? byKey[safeServerKey(server.name)] ?? McpOAuthState.Unknown : McpOAuthState.Unknown,
-        ]),
-      );
-      return { success: true, states };
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to read MCP OAuth status' };
+    // Disabled servers are not loaded by OpenClaw, so they show no OAuth state.
+    const cliServers = servers
+      .filter(server => server.enabled)
+      .map(toOAuthCliServer)
+      .filter((server): server is McpOAuthCliServer => server !== null);
+    let byKey: Record<string, McpOAuthState> = {};
+    if (cliServers.length > 0) {
+      const context = getOAuthCliContext();
+      if (!context) return { success: false, error: 'OpenClaw runtime is not ready.' };
+      try {
+        byKey = await readMcpOAuthStatuses({ context, servers: cliServers });
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Failed to read MCP OAuth status' };
+      }
     }
+    const states = Object.fromEntries(
+      servers.map(server => [
+        server.id,
+        server.enabled ? byKey[safeServerKey(server.name)] ?? McpOAuthState.Unknown : McpOAuthState.Unknown,
+      ]),
+    );
+    return { success: true, states };
   });
 
   ipcMain.handle(McpIpcChannel.FetchMarketplace, async () => {
