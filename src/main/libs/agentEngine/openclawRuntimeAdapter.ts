@@ -2458,6 +2458,7 @@ const buildMediaReferencePromptSection = (mediaReferences?: CoworkMediaAttachmen
   ];
 
   for (const ref of refs) {
+    if (ref.imageEdit) lines.push('This image has a user-prepared image editing request. Call lobsterai_image_generate once with action=generate. LobsterAI will supply the immutable original, selected regions and any guide/mask, and will save a new version. Do not edit it with scripts or other image tools. Include any additional user instructions in the prompt.');
     const mediaType = ref.mediaType === MediaReferenceTypeLabel.Image
       ? MediaReferenceTypeLabel.Image
       : ref.mediaType === MediaReferenceTypeLabel.Video

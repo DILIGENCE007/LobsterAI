@@ -4,6 +4,7 @@ import { MediaBillingStatus, MediaDeliveryStatus, MediaTaskPhase, MediaTaskStatu
 import { i18nService } from '../../services/i18n';
 
 export const mediaTaskLabelKey = (details: Record<string, unknown>): string => {
+  if (details.deliveryStatus === MediaDeliveryStatus.Failed) return 'imageEditFailed';
   if (details.deliveryStatus === MediaDeliveryStatus.Retrying) return 'mediaTaskDownloadRetry';
   if (details.deliveryStatus === MediaDeliveryStatus.Pending) return 'mediaTaskFetching';
   switch (details.status) {
@@ -27,7 +28,7 @@ const MediaTaskCard: React.FC<{ details: Record<string, unknown>; startedAt?: nu
   const [error, setError] = useState('');
   const fetching = details.deliveryStatus === MediaDeliveryStatus.Pending || details.deliveryStatus === MediaDeliveryStatus.Retrying;
   const terminal = TERMINAL_MEDIA_TASK_STATUSES.has(String(details.status)) && !fetching;
-  const success = details.status === MediaTaskStatus.Succeeded && !fetching;
+  const success = details.status === MediaTaskStatus.Succeeded && !fetching && details.deliveryStatus !== MediaDeliveryStatus.Failed;
   useEffect(() => {
     if (terminal) return undefined;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);

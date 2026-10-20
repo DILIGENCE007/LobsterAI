@@ -87,6 +87,7 @@ export type CoworkForkCompactionSummary = {
 export type CoworkImageAttachment = CoworkImageAttachmentPayload;
 
 export type CoworkMediaAttachmentRef = {
+  imageEdit?: import('../../../shared/imageEditing/types').ImageEditRequest;
   token: string;
   mediaType: 'image' | 'video' | 'audio';
   index: number;
