@@ -1,6 +1,6 @@
 import { XCircleIcon as XCircleIconSolid } from '@heroicons/react/20/solid';
 import { ArrowPathIcon, ArrowRightStartOnRectangleIcon, CheckIcon } from '@heroicons/react/24/outline';
-import React, { useCallback,useEffect, useMemo, useState } from 'react';
+import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { McpAuthMode, McpOAuthErrorCode, McpOAuthState } from '../../../shared/mcp/auth';
@@ -87,7 +87,6 @@ const OAUTH_ERROR_MESSAGE_KEYS: Partial<Record<McpOAuthErrorCode, string>> = {
   [McpOAuthErrorCode.CallbackUnavailable]: 'mcpOAuthCallbackUnavailable',
   [McpOAuthErrorCode.Timeout]: 'mcpOAuthSignInTimeout',
   [McpOAuthErrorCode.RuntimeUnavailable]: 'mcpOAuthRuntimeUnavailable',
-  [McpOAuthErrorCode.ServerNotLoaded]: 'mcpOAuthServerNotLoaded',
 };
 
 type RegistryGroupItem = Extract<McpInstalledItem, { kind: 'registryGroup' }>;
@@ -204,8 +203,13 @@ const McpManager: React.FC = () => {
     [servers],
   );
 
+  // Reads overlap (focus, sign-in, sign-out); a read that started earlier never
+  // overwrites one that started later.
+  const oauthStatusReadRef = useRef(0);
   const refreshOAuthStates = useCallback(async () => {
+    const read = ++oauthStatusReadRef.current;
     const states = await mcpService.oauthStatus();
+    if (read !== oauthStatusReadRef.current) return;
     setOAuthStates(states);
     setOAuthStatusReady(true);
   }, []);
@@ -223,6 +227,21 @@ const McpManager: React.FC = () => {
     });
     return () => { isActive = false; };
   }, [oauthServerSignature]);
+
+  // A token can expire or be revoked while the app is in the background, so read
+  // the state again whenever the window regains focus. No polling: one read per
+  // focus, and focus events during a read are skipped.
+  useEffect(() => {
+    if (!oauthServerSignature) return undefined;
+    let reading = false;
+    const handleFocus = () => {
+      if (reading) return;
+      reading = true;
+      void refreshOAuthStates().finally(() => { reading = false; });
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [oauthServerSignature, refreshOAuthStates]);
 
   const installedRegistryIds = useMemo(() => {
     const ids = new Set<string>();

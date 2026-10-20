@@ -30,7 +30,7 @@ export type McpOAuthState = typeof McpOAuthState[keyof typeof McpOAuthState];
 export const McpOAuthErrorCode = {
   NotOAuthServer: 'not_oauth_server',
   RuntimeUnavailable: 'runtime_unavailable',
-  /** The server is not in openclaw.json yet (e.g. no model is configured, so only a minimal config is written). */
+  /** The server is disabled, so OpenClaw does not load it and the app shows no OAuth state for it. */
   ServerNotLoaded: 'server_not_loaded',
   AlreadyInProgress: 'already_in_progress',
   CallbackUnavailable: 'callback_unavailable',
