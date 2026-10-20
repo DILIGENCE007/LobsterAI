@@ -3455,6 +3455,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     mcpQichachaConnectFailed: '企查查 MCP 授权失败',
     mcpRequiredConfig: '必填配置',
     mcpEnvRequired: '此字段为必填项',
+    mcpEnvNodeOptionsIgnored:
+      'NODE_OPTIONS 会被运行时出于安全原因忽略。LobsterAI 已默认让 Node.js 信任系统证书（NODE_USE_SYSTEM_CA=1，需 Node.js 22.19 及以上）；如需额外的 CA 证书，请改用 NODE_EXTRA_CA_CERTS。',
     mcpOptionalConfig: '可选配置',
     mcpViewOnGithub: '在 GitHub 上查看',
     mcpNoInstalledServers: '尚未安装任何 MCP 服务',
@@ -8283,6 +8285,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     mcpQichachaConnectFailed: 'Failed to authorize Qichacha MCP',
     mcpRequiredConfig: 'Required Configuration',
     mcpEnvRequired: 'This field is required',
+    mcpEnvNodeOptionsIgnored:
+      'NODE_OPTIONS is ignored at runtime for security reasons. LobsterAI already makes Node.js trust system certificates (NODE_USE_SYSTEM_CA=1, Node.js 22.19 or later). To add another CA certificate, use NODE_EXTRA_CA_CERTS instead.',
     mcpOptionalConfig: 'Optional Configuration',
     mcpViewOnGithub: 'View on GitHub',
     mcpNoInstalledServers: 'No MCP servers installed yet',
