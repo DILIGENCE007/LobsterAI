@@ -34,6 +34,7 @@ const RETAINED_PATCHES = [
   'openclaw-lobsterai-provider-cooldown.patch',
   'openclaw-lobsterai-startup-recovery.patch',
   'openclaw-malformed-tool-call-continuation.patch',
+  'openclaw-managed-image-replay.patch',
   'openclaw-managed-npm-junction-cleanup.patch',
   'openclaw-managed-workspace-alias-follow.patch',
   'openclaw-memory-sidecar-archive-generations.patch',
