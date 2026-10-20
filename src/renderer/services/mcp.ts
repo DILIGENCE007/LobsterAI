@@ -4,33 +4,9 @@ import {
   type McpToolDiscoveryRequest,
   type McpToolDiscoveryResult,
 } from '../../shared/mcp/toolDiscovery';
-import { McpCategory, McpMarketplaceCategoryInfo, McpMarketplaceServer,McpRegistryEntry, McpServerConfig, McpServerFormData } from '../types/mcp';
+import { McpMarketplaceCategoryInfo, McpMarketplaceServer,McpRegistryEntry, McpServerConfig, McpServerFormData } from '../types/mcp';
 import { LogReporterAction, reportYdAnalyzer } from './logReporter';
-
-/**
- * Convert remote marketplace server data to McpRegistryEntry format.
- */
-function convertMarketplaceToRegistry(
-  servers: McpMarketplaceServer[],
-): McpRegistryEntry[] {
-  return servers.map((s) => ({
-    id: s.id,
-    name: s.name,
-    name_zh: s.name_zh,
-    icon: s.icon,
-    descriptionKey: '',
-    description_zh: s.description_zh,
-    description_en: s.description_en,
-    category: s.category as McpCategory,
-    categoryKey: '',
-    transportType: s.transportType as McpRegistryEntry['transportType'],
-    command: s.command,
-    defaultArgs: s.defaultArgs,
-    requiredEnvKeys: s.requiredEnvKeys,
-    optionalEnvKeys: s.optionalEnvKeys,
-    kind: s.kind,
-  }));
-}
+import { convertMarketplaceToRegistry } from './mcpMarketplaceInstall';
 
 /**
  * Last successful marketplace payload, kept so the page's first frame renders

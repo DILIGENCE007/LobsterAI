@@ -1,5 +1,6 @@
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { app, BrowserWindow, ipcMain, session, shell } from 'electron';
+import fs from 'fs';
 import https from 'https';
 
 import {
@@ -247,8 +248,11 @@ export function registerMcpHandlers(deps: McpHandlerDeps): void {
         url?: string;
         headers?: Record<string, string>;
         auth?: McpServerFormData['auth'];
+        tokenValues?: Record<string, string>;
         toolFilter?: McpServerFormData['toolFilter'];
         supportsParallelToolCalls?: boolean;
+        requestTimeoutMs?: number;
+        connectionTimeoutMs?: number;
       },
     ) => {
       try {
@@ -285,8 +289,11 @@ export function registerMcpHandlers(deps: McpHandlerDeps): void {
         url?: string;
         headers?: Record<string, string>;
         auth?: McpServerFormData['auth'];
+        tokenValues?: Record<string, string>;
         toolFilter?: McpServerFormData['toolFilter'];
         supportsParallelToolCalls?: boolean;
+        requestTimeoutMs?: number;
+        connectionTimeoutMs?: number;
       },
     ) => {
       try {
@@ -595,6 +602,19 @@ export function registerMcpHandlers(deps: McpHandlerDeps): void {
   });
 
   ipcMain.handle(McpIpcChannel.FetchMarketplace, async () => {
+    // Development only: preview catalog edits (e.g. new connectors) from a local
+    // file shaped like the server's data.value, before ops publishes them.
+    const localCatalogPath = app.isPackaged ? '' : process.env.LOBSTERAI_MCP_MARKETPLACE_FILE?.trim();
+    if (localCatalogPath) {
+      try {
+        const marketplace = JSON.parse(await fs.promises.readFile(localCatalogPath, 'utf8'));
+        console.log(`[MCP] using local marketplace catalog from LOBSTERAI_MCP_MARKETPLACE_FILE`);
+        return { success: true, data: marketplace };
+      } catch (error) {
+        console.error('[MCP] failed to read LOBSTERAI_MCP_MARKETPLACE_FILE:', error);
+        return { success: false, error: error instanceof Error ? error.message : 'Failed to read local marketplace' };
+      }
+    }
     const url = app.isPackaged
       ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/mcp-marketplace'
       : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/mcp-marketplace';

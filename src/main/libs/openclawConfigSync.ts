@@ -90,6 +90,7 @@ import {
   resolveOpenClawOwnedSections,
 } from './openclawConfigTarget';
 import type { OpenClawEngineManager } from './openclawEngineManager';
+import { escapeOpenClawEnvTemplate, escapeOpenClawEnvTemplateRecord } from './openclawEnvTemplate';
 import { repairHeartbeatFile, stripProactiveHeartbeatSection } from './openclawHeartbeatRepair';
 import {
   withManagedOpenClawModelPolicy,
@@ -1809,6 +1810,10 @@ export interface ResolvedMcpServer {
   // Remote servers only -> openclaw mcp.servers.*.auth. With "oauth", OpenClaw
   // runs MCP OAuth itself (tokens live in its state dir, `openclaw mcp login`).
   auth?: 'oauth';
+  // -> openclaw mcp.servers.*.requestTimeoutMs / connectionTimeoutMs. Set by
+  // marketplace entries for slow remote connectors; OpenClaw defaults otherwise.
+  requestTimeoutMs?: number;
+  connectionTimeoutMs?: number;
 }
 
 // Normalize header keys to lowercase before writing to openclaw.json.
@@ -1860,25 +1865,28 @@ export function buildOpenClawMcpServers(
         console.warn(`[OpenClawConfigSync] skipped MCP server "${server.name}" because its URL is invalid`);
         continue;
       }
-      normalizedRemoteUrl = normalizedUrl.url;
+      normalizedRemoteUrl = escapeOpenClawEnvTemplate(normalizedUrl.url);
     }
 
+    // Everything below is user or marketplace data: escape `${VAR}` so OpenClaw
+    // writes it verbatim instead of resolving it from the gateway env.
     switch (server.transportType) {
       case 'stdio':
-        if (server.command) entry.command = server.command;
-        if (server.args?.length) entry.args = server.args;
-        if (server.cwd) entry.cwd = server.cwd;
-        if (server.env && Object.keys(server.env).length > 0) entry.env = server.env;
+        if (server.command) entry.command = escapeOpenClawEnvTemplate(server.command);
+        if (server.args?.length) entry.args = server.args.map(escapeOpenClawEnvTemplate);
+        if (server.cwd) entry.cwd = escapeOpenClawEnvTemplate(server.cwd);
+        if (server.env && Object.keys(server.env).length > 0)
+          entry.env = escapeOpenClawEnvTemplateRecord(server.env);
         break;
       case 'sse':
         entry.url = normalizedRemoteUrl;
         if (server.headers && Object.keys(server.headers).length > 0)
-          entry.headers = lowercaseHeaderKeys(server.headers);
+          entry.headers = escapeOpenClawEnvTemplateRecord(lowercaseHeaderKeys(server.headers));
         break;
       case 'http':
         entry.url = normalizedRemoteUrl;
         if (server.headers && Object.keys(server.headers).length > 0)
-          entry.headers = lowercaseHeaderKeys(server.headers);
+          entry.headers = escapeOpenClawEnvTemplateRecord(lowercaseHeaderKeys(server.headers));
         entry.transport = 'streamable-http';
         break;
     }
@@ -1895,8 +1903,8 @@ export function buildOpenClawMcpServers(
     // Optional passthrough knobs (see ResolvedMcpServer). Omitted when unset so
     // openclaw.json stays unchanged for servers that never configured them.
     // OpenClaw's schema rejects empty include/exclude arrays, so drop them here.
-    const toolFilterInclude = cleanMcpToolNames(server.toolFilter?.include);
-    const toolFilterExclude = cleanMcpToolNames(server.toolFilter?.exclude);
+    const toolFilterInclude = cleanMcpToolNames(server.toolFilter?.include).map(escapeOpenClawEnvTemplate);
+    const toolFilterExclude = cleanMcpToolNames(server.toolFilter?.exclude).map(escapeOpenClawEnvTemplate);
     if (toolFilterInclude.length > 0 || toolFilterExclude.length > 0) {
       entry.toolFilter = {
         ...(toolFilterInclude.length > 0 ? { include: toolFilterInclude } : {}),
@@ -1905,6 +1913,11 @@ export function buildOpenClawMcpServers(
     }
     if (typeof server.supportsParallelToolCalls === 'boolean') {
       entry.supportsParallelToolCalls = server.supportsParallelToolCalls;
+    }
+    // OpenClaw's schema accepts only finite positive timeouts.
+    for (const key of ['requestTimeoutMs', 'connectionTimeoutMs'] as const) {
+      const timeout = server[key];
+      if (typeof timeout === 'number' && Number.isFinite(timeout) && timeout > 0) entry[key] = timeout;
     }
     result[safeServerKey(server.name)] = entry;
   }

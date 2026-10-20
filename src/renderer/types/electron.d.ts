@@ -544,19 +544,6 @@ interface McpServerConfigIPC {
   updatedAt: number;
 }
 
-interface McpMarketplaceServer {
-  id: string;
-  name: string;
-  description_zh: string;
-  description_en: string;
-  category: string;
-  transportType: 'stdio' | 'sse' | 'http';
-  command: string;
-  defaultArgs: string[];
-  requiredEnvKeys?: string[];
-  optionalEnvKeys?: string[];
-}
-
 interface McpMarketplaceCategory {
   id: string;
   name_zh: string;
@@ -572,6 +559,7 @@ import type { AgentLegacyIdentityCleanupResult } from '@shared/agent';
 import type { Platform } from '@shared/platform';
 
 import type { Agent, PresetAgent } from './agent';
+import type { McpMarketplaceServer } from './mcp';
 
 interface CreditItem {
   type: 'subscription' | 'boost' | 'free' | 'bonus' | 'invitation' | 'campaign';
