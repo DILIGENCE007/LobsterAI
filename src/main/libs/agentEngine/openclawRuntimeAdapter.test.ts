@@ -10410,6 +10410,32 @@ test('reconcileWithHistory: preserves tool messages', async () => {
   expect(getReplaceCallCount()).toBe(0);
 });
 
+test('reconcileWithHistory: ignores old image diagnostics without rewriting local messages', async () => {
+  const originalReply = 'Image ready.\n[session:history] omitted image payload: missing data or mimeType';
+  const { session, store, getReplaceCallCount } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: 'Edit this image', timestamp: 1, metadata: {} },
+    { id: 'msg-2', type: 'tool_result', content: 'Image generated', timestamp: 2, metadata: {} },
+    { id: 'msg-3', type: 'assistant', content: originalReply, timestamp: 3, metadata: {} },
+  ]);
+  const originalMessages = structuredClone(session.messages);
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      messages: [
+        { role: 'user', content: 'Edit this image' },
+        { role: 'assistant', content: 'Image ready.' },
+      ],
+    }),
+  };
+
+  await adapter.reconcileWithHistory(session.id, 'managed:session-1');
+
+  expect(getReplaceCallCount()).toBe(0);
+  expect(session.messages).toEqual(originalMessages);
+});
+
 test('reconcileWithHistory: gateway returns tail subset — preserves older local messages', async () => {
   const { session, store, getReplaceCallCount } = createReconcileStore([
     { id: 'msg-1', type: 'user', content: 'Hello', timestamp: 1, metadata: {} },

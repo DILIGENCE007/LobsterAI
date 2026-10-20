@@ -26,7 +26,7 @@ import { imageTextBox } from './imageText';
 import ImageTextBox from './ImageTextBox';
 
 const t = (key: string) => i18nService.t(key);
-const Mode = { View: 'view', Markup: 'markup', Comment: 'comment', Erase: 'erase', Resize: 'resize' } as const;
+const Mode = { View: 'view', Markup: 'markup', Comment: 'comment', RemoveBackground: 'remove-background', Erase: 'erase', Resize: 'resize' } as const;
 type Mode = typeof Mode[keyof typeof Mode];
 const buttonClass = 'inline-flex items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-35';
 const inputClass = 'min-w-0 rounded-lg border border-light-border bg-light-surface px-2 py-1.5 text-xs text-primary focus:border-accent focus:outline-none dark:border-dark-border dark:bg-dark-surface';
@@ -84,6 +84,7 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
   const drawing = useSelector((state: RootState) => state.imageEditor.documents[key] ?? EMPTY_IMAGE_DOCUMENT);
   const focusRequest = useSelector((state: RootState) => state.imageEditor.focus);
   const drawingRef = useRef(drawing); drawingRef.current = drawing;
+  const isPanMode = mode === Mode.View || mode === Mode.Resize || mode === Mode.RemoveBackground;
 
   const loadVersion = useCallback(async (version: ImageVersion) => {
     const generation = ++loadGeneration.current;
@@ -135,7 +136,8 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
   useEffect(() => {
     if (!focusRequest || focusRequest.source.sessionId !== artifact.sessionId || focusRequest.source.rootId !== loaded?.version.rootId) return;
     dispatch(consumeImageEditorFocus(focusRequest.id));
-    setMode(!focusRequest.operation || focusRequest.operation === ImageEditOperation.Comment ? Mode.Comment : Mode.View);
+    setMode(!focusRequest.operation || focusRequest.operation === ImageEditOperation.Comment ? Mode.Comment
+      : focusRequest.operation === ImageEditOperation.RemoveBackground ? Mode.RemoveBackground : Mode.View);
     void loadVersion(focusRequest.source).then(() => {
       const region = store.getState().imageEditor.documents[`${artifact.sessionId}:${focusRequest.source.id}`]?.regions.find(r => r.id === focusRequest.regionId);
       if (region) { setSelection(region); setRegionText(region.text); }
@@ -256,7 +258,7 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
     stage.current.focus(); stage.current.setPointerCapture(event.pointerId);
     const point = imagePoint(event.clientX, event.clientY, stage.current.getBoundingClientRect());
     drag.current = { start: point };
-    if (space || mode === Mode.View || mode === Mode.Resize) {
+    if (space || isPanMode) {
       drag.current.pan = { x: event.clientX, y: event.clientY, left: viewport.current.scrollLeft, top: viewport.current.scrollTop }; return;
     }
     if (mode === Mode.Comment) {
@@ -313,6 +315,7 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
   if (selection && !drawing.regions.some(region => region.id === selection.id)) visibleRegions.push(selection);
   const tools = [
     [Mode.Markup, DrawIcon, 'imageEditMarkup'], [Mode.Comment, RegionEditIcon, 'imageEditComment'],
+    [Mode.RemoveBackground, RemoveBackgroundIcon, 'imageEditRemoveBackground'],
     [Mode.Erase, EraserIcon, 'imageEditErase'], [Mode.Resize, ReframeIcon, 'imageEditReframe'],
   ] as const;
   return <div ref={root} className="flex h-full min-h-0 flex-col text-primary" aria-label={t('imageEditTitle')}>
@@ -332,11 +335,8 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
       }} />
     </div>
     <div className="flex flex-wrap items-center justify-center gap-0.5 border-b border-light-border px-2 py-2 dark:border-dark-border">
-      {tools.slice(0, 2).map(([value, icon, label]) => <ToolButton key={value} label={t(label)} icon={icon} active={mode === value}
-        disabled={busy} onClick={() => { finishText(); setMode(mode === value ? Mode.View : value); setCompare(false); }}>{t(label)}</ToolButton>)}
-      <ToolButton label={t('imageEditRemoveBackground')} icon={RemoveBackgroundIcon} disabled={busy} onClick={() => void generate(ImageEditOperation.RemoveBackground)}>{t('imageEditRemoveBackground')}</ToolButton>
-      {tools.slice(2).map(([value, icon, label]) => <ToolButton key={value} label={t(label)} icon={icon} active={mode === value}
-        disabled={busy} onClick={() => { finishText(); setMode(mode === value ? Mode.View : value); setCompare(false); }}>{t(label)}</ToolButton>)}
+      {tools.map(([value, icon, label]) => <ToolButton key={value} label={t(label)} icon={icon} active={mode === value}
+        disabled={busy} onClick={() => { finishText(); setMode(mode === value ? Mode.View : value); setCompare(false); setNotice(''); }}>{t(label)}</ToolButton>)}
     </div>
     {(mode === Mode.Markup || mode === Mode.Erase) && <div className="flex flex-wrap items-center gap-1 border-b border-light-border px-2 py-2 dark:border-dark-border">
       {mode === Mode.Markup && <div className="flex flex-wrap items-center gap-0.5">
@@ -377,7 +377,7 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
           onPointerUp={pointerUp} onPointerCancel={pointerUp}
           onPointerEnter={previewBrush} onPointerLeave={() => setBrushPoint(undefined)}
           className="relative m-auto shrink-0 touch-none select-none shadow-md outline-none focus-visible:ring-2 focus-visible:ring-accent"
-          style={{ width: displayWidth, height: displayHeight, cursor: space || mode === Mode.View ? 'grab' : eraseCursor ? 'none' : 'crosshair',
+          style={{ width: displayWidth, height: displayHeight, cursor: space || isPanMode ? 'grab' : eraseCursor ? 'none' : 'crosshair',
             backgroundColor: '#fff', backgroundImage: 'conic-gradient(#e5e7eb 25%, transparent 0 50%, #e5e7eb 0 75%, transparent 0)', backgroundSize: '16px 16px' }}>
           <canvas ref={canvas} width={size.width} height={size.height} className="h-full w-full" />
           {mode === Mode.Markup && !compare && textDraft && <ImageTextBox mark={textDraft} width={displayWidth} height={displayHeight}
@@ -399,11 +399,15 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
         </div>
       </div>
     </div>
-    <div className={`flex items-center gap-2 border-t border-light-border px-3 dark:border-dark-border ${mode === Mode.Erase ? 'bg-accent/5 py-3 text-sm font-medium text-secondary' : 'py-2 text-xs text-muted'}`}>
-      <CursorArrowRaysIcon className="h-4 w-4 shrink-0" /><span className="flex-1">{t(mode === Mode.View ? 'imageEditViewHint' : mode === Mode.Comment ? 'imageEditCommentHint' : mode === Mode.Erase ? 'imageEditEraseHint' : mode === Mode.Resize ? 'imageEditResizeHint' : markupHint[tool as keyof typeof markupHint])}</span>
+    <div data-image-edit-hint className="flex items-center gap-2 border-t border-light-border bg-accent/5 px-3 py-3 text-sm font-medium text-secondary dark:border-dark-border">
+      <CursorArrowRaysIcon className="h-4 w-4 shrink-0" /><span className="flex-1">{t(mode === Mode.View ? 'imageEditViewHint' : mode === Mode.Comment ? 'imageEditCommentHint' : mode === Mode.RemoveBackground ? 'imageEditRemoveBackgroundHint' : mode === Mode.Erase ? 'imageEditEraseHint' : mode === Mode.Resize ? 'imageEditResizeHint' : markupHint[tool as keyof typeof markupHint])}</span>
       <button type="button" title={t('imageEditResetZoom')} onClick={() => { setZoom(1); setBrushPoint(undefined); }} className="shrink-0 rounded px-1.5 py-1 text-[11px] font-normal text-muted hover:bg-black/5 dark:hover:bg-white/10">{Math.round(Math.max(0.01, fit) * zoom * 100)}%</button>
     </div>
     <div className="max-h-[45%] shrink-0 overflow-y-auto">
+      {mode === Mode.RemoveBackground && <div className="flex justify-end border-t border-light-border p-3 dark:border-dark-border">
+        <button type="button" className={`${buttonClass} bg-accent text-white`} disabled={busy}
+          onClick={() => void generate(ImageEditOperation.RemoveBackground)}>{t('imageEditAddComment')}</button>
+      </div>}
       {mode === Mode.Comment && <div className="space-y-2 border-t border-light-border p-3 dark:border-dark-border">
         <textarea ref={regionInput} disabled={!selection} value={regionText} maxLength={4000} onChange={event => setRegionText(event.target.value)} placeholder={t('imageEditCommentPlaceholder')}
           className={`${inputClass} min-h-16 w-full resize-y`} />

@@ -802,3 +802,35 @@ Removal: upstream #133198 (v2026.9.4) only improves the error and adds a
 confirmed `openclaw doctor --fix` rebind that moves records. It does not follow
 the new target on its own, so keep an equivalent of this patch after upgrading,
 adapted to the renamed store helpers.
+
+## Managed image attachments during replay
+
+`openclaw-managed-image-replay.patch` excludes managed outgoing image display
+blocks from the assistant's in-memory model replay. These blocks contain an
+`artifact_managed_image_` ID and a local `/api/chat/media/outgoing/` URL, without
+base64 data. Passing them to the image sanitizer creates the misleading
+`[session:history] omitted image payload: missing data or mimeType` text, which
+models can echo in subsequent answers.
+
+The patch retains persisted attachments, user images, tool image results, and
+assistant images that actually contain data. It also removes standalone echoes
+of that exact diagnostic from old assistant replay text while preserving quoted
+and fenced examples. LobsterAI's assistant display and history extraction apply
+the same narrow cleanup to existing local messages; the stored records remain
+available for diagnosis.
+
+This belongs at OpenClaw's replay boundary: LobsterAI's adapter receives output
+after the sanitizer has already supplied the erroneous text to the model, and
+the prompt-building hook does not provide a message replacement result.
+
+Verify in the OpenClaw checkout:
+
+```sh
+node scripts/run-vitest.mjs run --config test/vitest/vitest.unit-fast.config.ts src/agents/embedded-agent-runner/managed-image-replay.test.ts src/agents/embedded-agent-runner/replay-history.test.ts --maxWorkers=2
+```
+
+Then rebuild the runtime and check a conversation containing previously returned
+images. Existing image cards and regular replies must remain visible, without
+the runtime diagnostic appearing as answer text. Remove this patch when
+upstream handles managed display images before sanitizing model replay at all
+relevant boundaries.

@@ -25,6 +25,7 @@ import {
   type BrowserControlGatewayRequest,
   OpenClawBrowserGatewayMethod,
 } from '../../../shared/browserWebAccess/constants';
+import { stripAssistantImageDiagnostic } from '../../../shared/cowork/assistantImageDiagnostic';
 import {
   buildBrowserAnnotationPromptSection,
   type CoworkBrowserAnnotationMessageBatch,
@@ -1507,7 +1508,7 @@ const normalizeEntryText = (
   text: string,
   flags: PlatformFlags,
 ): string => {
-  let result = text.trim();
+  let result = (role === 'assistant' ? stripAssistantImageDiagnostic(text) : text).trim();
   if (!result) return result;
   if (flags.isDiscord) result = stripDiscordMentions(result);
   if (flags.isQQ && role === 'user') result = stripQQBotSystemPrompt(result);

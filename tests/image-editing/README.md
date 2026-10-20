@@ -118,3 +118,21 @@ $env:IMAGE_EDITING_DATABASE_TEST='true'
 人工任务 `368` 的原图和涂画参考图分别与实际提交请求逐字节一致，源图为 v17，修改说明为“在这个地方加一个圣诞树”。证据保存在 `markup-live-verification.json`，本轮没有额外调用模型。
 
 相关 Vitest 共 88 项通过，改动 TypeScript 文件 ESLint 零警告，完整生产构建通过。重启后的实际 Electron 客户端通过调试协议验证历史涂画缩略图、全尺寸涂画图与原图切换、原始说明、键盘焦点与 Escape，以及后续修改画布或说明不改变历史快照；消除蒙版与局部修改编号坐标回归通过，没有渲染异常。原有八份编辑草稿及完整撤销记录保持一致，客户端停留在圣诞树涂画消息处。验收结果与截图保存在 `markup-snapshot-ui-verification.json`、`ui-markup-snapshot-*.png` 和 `manual-markup-snapshot-acceptance.png`。
+
+## 历史图片诊断提示修复（2026 年 10 月 20 日）
+
+验收会话中的 `[session:history] omitted image payload: missing data or mimeType` 来自 OpenClaw 的历史图片校验：已生成图片的展示描述包含 artifact ID 和访问链接，不包含 base64，却被当作模型图片输入处理。诊断文字进入模型上下文后，被后续回答复述。
+
+`openclaw-managed-image-replay.patch` 在模型回放副本中排除可明确识别的展示描述，并清理旧回答中独占一行的这条诊断；保留用户图片、工具返回图片和真实图片数据。客户端同时处理已有回复的展示、流式结果、历史提取与同步比较，不改写原始消息。引用、代码块、其他诊断与正常 SVG 保持原样。
+
+真实会话只读验证覆盖 4 个展示描述、2 处旧诊断及 11 个实际图片输入，确认输入和原始记录未变；证据为 `image-history-replay-verification.json`。客户端相关 Vitest 共 381 项、OpenClaw 回放测试 52 项通过，改动 TypeScript 文件 ESLint 零警告，完整生产构建和主进程编译通过。本轮不额外调用生图模型。
+
+修复已包含在验收专用源码目录重新构建的运行时中，网关启动与配置同步正常。实际 Electron 验收确认旧诊断不再出现在正文，圣诞树回复、图片文件卡片与涂画发送快照保持正常。185 条原始消息的 SHA-256 与修复前一致，八份编辑草稿及撤销记录完整恢复；证据为 `image-history-ui-verification.json`、`image-history-local-records-verification.json` 与 `manual-image-history-fix.png`。
+
+## 操作提示与去背景入口（2026 年 10 月 20 日）
+
+所有图片工具的底部提示统一使用相同字号、字重、留白和浅色背景。“去背景”先切换到独立操作页，展示操作说明和右下角“添加到聊天”按钮；进入该页不会更改聊天草稿，画布支持平移。点击按钮后才建立待发送卡片，用户仍需手动发送。
+
+复用已有草稿合并逻辑：保留文字与普通附件；遇到其他图片编辑任务时，确认后只替换图片编辑卡片，取消保留原草稿。同一源图的去背景任务可更新，打开该草稿也会定位到去背景页。
+
+相关 Vitest 33 项、改动文件 ESLint 和完整生产构建通过。实际 Electron 调试接口验收确认五个工具提示均为 15 px、相同字重、留白和背景，进入去背景页不更改草稿，拖动不会产生笔迹；取消替换、确认仅替换图片编辑、保留文字与普通附件、无冲突直接加入及不自动发送均通过。验收后恢复用户原草稿，没有渲染异常；证据为 `image-editor-tabs-verification.json`、`ui-remove-background-staged.png` 与 `manual-remove-background-page.png`。
