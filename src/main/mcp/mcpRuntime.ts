@@ -376,12 +376,14 @@ export class McpRuntime {
     let builtInCount = 0;
 
     const electronPath = getElectronNodeRuntimePath();
-    // toolFilter / supportsParallelToolCalls ride along to openclaw.json regardless of transport.
+    // toolFilter / supportsParallelToolCalls / timeouts ride along to openclaw.json regardless of transport.
     const passthroughFields = (server: typeof enabledServers[number]) => ({
       ...(server.toolFilter ? { toolFilter: server.toolFilter } : {}),
       ...(typeof server.supportsParallelToolCalls === 'boolean'
         ? { supportsParallelToolCalls: server.supportsParallelToolCalls }
         : {}),
+      ...(server.requestTimeoutMs ? { requestTimeoutMs: server.requestTimeoutMs } : {}),
+      ...(server.connectionTimeoutMs ? { connectionTimeoutMs: server.connectionTimeoutMs } : {}),
     });
     const pushRawStdioServer = async (server: typeof enabledServers[number]): Promise<void> => {
       const r = await resolveStdioCommand(server);

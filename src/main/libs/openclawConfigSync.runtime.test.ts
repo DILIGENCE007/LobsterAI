@@ -4611,6 +4611,72 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(config.mcp.servers['header-remote']).not.toHaveProperty('auth');
     expect(config.mcp.servers['header-remote'].headers).toEqual({ authorization: 'Bearer kept' });
   });
+
+  test('escapes ${VAR} in user MCP values so OpenClaw never fills them from the gateway env', async () => {
+    const sync = await createSync({
+      getResolvedMcpServers: () => [
+        {
+          name: 'remote-literal',
+          transportType: 'http',
+          url: 'https://mcp.example.com/mcp?key=${LOBSTER_APIKEY_SERVER}',
+          headers: { Authorization: 'Bearer ${OPENCLAW_GATEWAY_TOKEN}', 'X-Plain': 'plain ${lower} $5' },
+        },
+        {
+          name: 'stdio-literal',
+          transportType: 'stdio',
+          command: 'node',
+          args: ['server.js', '--token=${LOBSTER_PROXY_TOKEN}'],
+          env: { API_KEY: '${LOBSTER_MCP_BRIDGE_SECRET}', ALREADY: '$${KEEP}' },
+          toolFilter: { exclude: ['${WEIRD_TOOL}'] },
+        },
+      ],
+    });
+
+    expect(sync.sync('mcp-escape').ok).toBe(true);
+    const raw = fs.readFileSync(configPath, 'utf8');
+    const config = JSON.parse(raw);
+    expect(config.mcp.servers['remote-literal']).toMatchObject({
+      url: 'https://mcp.example.com/mcp?key=$${LOBSTER_APIKEY_SERVER}',
+      headers: {
+        authorization: 'Bearer $${OPENCLAW_GATEWAY_TOKEN}',
+        'x-plain': 'plain ${lower} $5',
+      },
+    });
+    expect(config.mcp.servers['stdio-literal']).toMatchObject({
+      args: ['server.js', '--token=$${LOBSTER_PROXY_TOKEN}'],
+      env: { API_KEY: '$${LOBSTER_MCP_BRIDGE_SECRET}', ALREADY: '$$${KEEP}' },
+      toolFilter: { exclude: ['$${WEIRD_TOOL}'] },
+    });
+    // No unescaped placeholder from user data survives in the MCP section.
+    expect(JSON.stringify(config.mcp)).not.toMatch(/(^|[^$])\$\{[A-Z_][A-Z0-9_]*\}/);
+  });
+
+  test('passes positive MCP timeouts through and drops invalid ones', async () => {
+    const sync = await createSync({
+      getResolvedMcpServers: () => [
+        {
+          name: 'slow-remote',
+          transportType: 'http',
+          url: 'https://mcp.example.com/mcp',
+          requestTimeoutMs: 60000,
+          connectionTimeoutMs: 5000,
+        },
+        {
+          name: 'bad-timeouts',
+          transportType: 'http',
+          url: 'https://mcp.example.com/other',
+          requestTimeoutMs: 0,
+          connectionTimeoutMs: Number.NaN,
+        },
+      ],
+    });
+
+    expect(sync.sync('mcp-timeouts').ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.mcp.servers['slow-remote']).toMatchObject({ requestTimeoutMs: 60000, connectionTimeoutMs: 5000 });
+    expect(config.mcp.servers['bad-timeouts']).not.toHaveProperty('requestTimeoutMs');
+    expect(config.mcp.servers['bad-timeouts']).not.toHaveProperty('connectionTimeoutMs');
+  });
 });
 
 describe('resolveModelSourceForOpenClawProvider', () => {

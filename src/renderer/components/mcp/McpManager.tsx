@@ -7,12 +7,17 @@ import { McpAuthMode, McpOAuthErrorCode, McpOAuthState } from '../../../shared/m
 import { mcpCategories,mcpRegistry } from '../../data/mcpRegistry';
 import { i18nService } from '../../services/i18n';
 import { mcpService } from '../../services/mcp';
+import { buildOAuthRegistryInstallData, isOAuthRegistryEntry } from '../../services/mcpMarketplaceInstall';
 import {
   buildInstalledMcpItems,
   getRegistryEntryDisplayName,
+  getRegistryEntryEndpointSummary,
+  getRegistryEntryExamples,
   getRegistryEntryLocalizedDescription,
+  getRegistryEntryRequiredKeyCount,
   McpInstalledItem,
   mergeMarketplaceRegistry,
+  pickMcpConnectorText,
 } from '../../services/mcpRegistryPresentation';
 import { RootState } from '../../store';
 import { setMcpServers } from '../../store/slices/mcpSlice';
@@ -746,9 +751,48 @@ const McpManager: React.FC = () => {
       });
       return;
     }
+    if (isOAuthRegistryEntry(entry)) {
+      void handleInstallOAuthRegistryEntry(entry);
+      return;
+    }
     setEditingServer(null);
     setInstallingRegistry(entry);
     setIsFormOpen(true);
+  };
+
+  /**
+   * An OAuth connector has nothing to fill in, so it installs in one click and
+   * its card then offers Sign in, like a hand-added OAuth server.
+   */
+  const handleInstallOAuthRegistryEntry = async (entry: McpRegistryEntry) => {
+    setActionError('');
+    if (servers.some(server => server.name === entry.name)) {
+      setActionError(i18nService.t('mcpNameExists'));
+      return;
+    }
+    const built = buildOAuthRegistryInstallData(entry, {
+      name: entry.name,
+      description: getRegistryEntryDescription(entry),
+    });
+    if (!built.ok) {
+      setActionError(i18nService.t('mcpTokenTemplateInvalid'));
+      return;
+    }
+    const analyticsParams = { source: 'mcp_manager', activeTab, ...getFormAnalyticsParams(built.data, entry) };
+    reportMcpAction('create_submit', analyticsParams);
+    setConnectingRegistryId(entry.id);
+    try {
+      const result = await mcpService.createServer(built.data);
+      if (!result.success) {
+        setActionError(result.error || i18nService.t('mcpCreateFailed'));
+        reportMcpAction('create_failed', { ...analyticsParams, result: 'failed', errorCode: 'create_failed' });
+        return;
+      }
+      if (result.servers) dispatch(setMcpServers(result.servers));
+      reportMcpAction('create_success', { ...analyticsParams, result: 'success' });
+    } finally {
+      setConnectingRegistryId(null);
+    }
   };
 
   const handleCloseForm = () => {
@@ -968,10 +1012,15 @@ const McpManager: React.FC = () => {
    * puts it in its header action slot. While the browser step is pending it turns
    * into Cancel (the CLI can wait for minutes) without shifting the layout.
    */
-  const renderOAuthAction = (server: McpServerConfig, phase: OAuthPhase | null, size: 'card' | 'detail') => {
+  const renderOAuthAction = (
+    server: McpServerConfig,
+    phase: OAuthPhase | null,
+    size: 'card' | 'cardHeader' | 'detail',
+  ) => {
     // In the facts strip the 26px capsule must not make the card taller than its
     // neighbours (badges are 23px), or the badge rows of a grid row stop lining up.
     const placement = size === 'card' ? 'ml-auto -my-0.5 ' : '';
+    const isCardSize = size !== 'detail';
     // Distinct keys: swapping one element's classes would cross-fade the primary
     // fill into the grey Cancel capsule.
     if (phase === OAuthPhase.SigningIn) {
@@ -980,7 +1029,7 @@ const McpManager: React.FC = () => {
           key="oauth-cancel"
           type="button"
           onClick={(event) => { event.stopPropagation(); handleOAuthCancel(server); }}
-          className={placement + (size === 'card' ? CARD_SECONDARY_PILL_CLASS : DETAIL_SECONDARY_PILL_CLASS)}
+          className={placement + (isCardSize ? CARD_SECONDARY_PILL_CLASS : DETAIL_SECONDARY_PILL_CLASS)}
         >
           {i18nService.t('cancel')}
         </button>
@@ -993,11 +1042,46 @@ const McpManager: React.FC = () => {
         type="button"
         disabled={signingInServerId !== null}
         onClick={(event) => { event.stopPropagation(); void handleOAuthSignIn(server); }}
-        className={placement + (size === 'card' ? CARD_ACTION_PILL_CLASS : DETAIL_ACTION_PILL_CLASS)}
+        className={placement + (isCardSize ? CARD_ACTION_PILL_CLASS : DETAIL_ACTION_PILL_CLASS)}
       >
         {i18nService.t('mcpOAuthSignIn')}
       </button>
     );
+  };
+
+  /**
+   * A marketplace entry once installed: an OAuth connector keeps offering Sign in
+   * until it is authorized, everything else just reads Installed.
+   */
+  const renderMarketplaceInstalledState = (entry: McpRegistryEntry, size: 'cardHeader' | 'detail') => {
+    const oauthServer = isOAuthRegistryEntry(entry)
+      ? servers.find(server => server.registryId === entry.id && isOAuthRemoteServer(server))
+      : undefined;
+    const oauthPhase = oauthServer ? getOAuthPhase(oauthServer) : null;
+    const signInAction = oauthServer ? renderOAuthAction(oauthServer, oauthPhase, size) : null;
+    if (signInAction) return signInAction;
+    const label = i18nService.t(
+      isQichachaRegistryEntry(entry) || oauthPhase === OAuthPhase.SignedIn ? 'mcpAuthorized' : 'mcpInstalled',
+    );
+    return size === 'cardHeader' ? (
+      /* Installed is a fact, not an action — it stays quiet. */
+      <span className={`inline-flex h-[26px] flex-shrink-0 items-center gap-1 px-1 ${MANAGEMENT_META_TEXT} text-muted`}>
+        <CheckIcon className="h-3.5 w-3.5" />
+        {label}
+      </span>
+    ) : (
+      <span className={`inline-flex flex-shrink-0 items-center gap-1 ${MANAGEMENT_BODY_TEXT} text-muted`}>
+        <CheckIcon className="h-4 w-4" />
+        {label}
+      </span>
+    );
+  };
+
+  const getInstallActionLabel = (entry: McpRegistryEntry, isConnecting: boolean): string => {
+    if (isQichachaRegistryEntry(entry)) {
+      return i18nService.t(isConnecting ? 'mcpQichachaConnecting' : 'mcpQichachaConnect');
+    }
+    return i18nService.t(isConnecting ? 'mcpInstalling' : 'mcpInstall');
   };
 
   /**
@@ -1131,7 +1215,13 @@ const McpManager: React.FC = () => {
         mono: true,
       });
     }
-    if (server.url) {
+    // A connector with credentials may carry one in its URL; show the template instead.
+    const connectorUrlTemplate = server.registryId && registryEntry?.connector?.tokenSchema
+      ? registryEntry.connector.url
+      : undefined;
+    if (connectorUrlTemplate) {
+      info.push({ label: i18nService.t('mcpDetailUrl'), value: connectorUrlTemplate, mono: true });
+    } else if (server.url) {
       info.push({
         label: i18nService.t('mcpDetailUrl'),
         value: server.url,
@@ -1165,6 +1255,7 @@ const McpManager: React.FC = () => {
         description={getInstalledDescription(server)}
         stats={stats}
         info={info}
+        examples={registryEntry ? getRegistryEntryExamples(registryEntry, currentLanguage) : undefined}
         onClose={closeDetail}
         action={renderOAuthAction(server, oauthPhase, 'detail')}
         footer={(
@@ -1263,22 +1354,36 @@ const McpManager: React.FC = () => {
 
   const renderMarketplaceDetail = (entry: McpRegistryEntry) => {
     const isInstalled = installedRegistryIds.has(entry.id);
-    const isQichacha = isQichachaRegistryEntry(entry);
     const isConnecting = connectingRegistryId === entry.id;
     const installedServers = servers.filter(server => server.registryId === entry.id);
+    const requiredKeyCount = getRegistryEntryRequiredKeyCount(entry);
+    const tokenFields = entry.connector?.tokenSchema?.fields ?? [];
+    const getTokenFieldLabels = (required: boolean): string => tokenFields
+      .filter(field => field.required === required)
+      .map(field => pickMcpConnectorText(currentLanguage, field.label, field.label_en))
+      .join(', ');
     const stats: McpDetailStat[] = [
       { label: i18nService.t('mcpDetailCategory'), value: getCategoryLabel(entry) },
       { label: i18nService.t('mcpDetailTransport'), value: entry.transportType },
-      ...(entry.requiredEnvKeys && entry.requiredEnvKeys.length > 0
+      ...(requiredKeyCount > 0
         ? [{
           label: i18nService.t('mcpDetailRequiredKeys'),
-          value: String(entry.requiredEnvKeys.length),
+          value: String(requiredKeyCount),
         }]
         : []),
     ];
     const info: McpDetailInfoRow[] = [];
     const command = getStdioCommandSummary(entry.command, entry.defaultArgs);
-    if (command) {
+    if (entry.connector?.url) {
+      info.push({ label: i18nService.t('mcpDetailUrl'), value: entry.connector.url, mono: true });
+      if (isOAuthRegistryEntry(entry)) {
+        info.push({ label: i18nService.t('mcpAuthMode'), value: i18nService.t('mcpAuthOAuth') });
+      }
+      const requiredFieldLabels = getTokenFieldLabels(true);
+      if (requiredFieldLabels) info.push({ label: i18nService.t('mcpDetailRequiredKeys'), value: requiredFieldLabels });
+      const optionalFieldLabels = getTokenFieldLabels(false);
+      if (optionalFieldLabels) info.push({ label: i18nService.t('mcpDetailOptionalKeys'), value: optionalFieldLabels });
+    } else if (command) {
       info.push({
         label: i18nService.t(entry.transportType === 'stdio' ? 'mcpDetailCommand' : 'mcpDetailUrl'),
         value: entry.transportType === 'stdio'
@@ -1310,24 +1415,20 @@ const McpManager: React.FC = () => {
         description={getRegistryEntryDescription(entry)}
         stats={stats}
         info={info}
+        examples={getRegistryEntryExamples(entry, currentLanguage)}
         onClose={closeDetail}
-        action={isInstalled ? (
-          <span className={`inline-flex flex-shrink-0 items-center gap-1 ${MANAGEMENT_BODY_TEXT} text-muted`}>
-            <CheckIcon className="h-4 w-4" />
-            {isQichacha ? i18nService.t('mcpAuthorized') : i18nService.t('mcpInstalled')}
-          </span>
-        ) : (
+        action={isInstalled ? renderMarketplaceInstalledState(entry, 'detail') : (
           <button
             type="button"
-            onClick={() => { closeDetail(); handleInstallFromRegistry(entry); }}
+            onClick={() => {
+              // One-click installs stay in the dialog so its header can offer Sign in next.
+              if (!isOAuthRegistryEntry(entry)) closeDetail();
+              handleInstallFromRegistry(entry);
+            }}
             disabled={isConnecting}
             className={DETAIL_ACTION_PILL_CLASS}
           >
-            {isQichacha
-              ? (isConnecting
-                ? i18nService.t('mcpQichachaConnecting')
-                : i18nService.t('mcpQichachaConnect'))
-              : i18nService.t('mcpInstall')}
+            {getInstallActionLabel(entry, isConnecting)}
           </button>
         )}
         footer={isInstalled && installedServers.length > 0 ? (
@@ -1641,9 +1742,8 @@ const McpManager: React.FC = () => {
             ) : (
               filteredMarketplace.map((entry) => {
                 const isInstalled = installedRegistryIds.has(entry.id);
-                const isQichacha = isQichachaRegistryEntry(entry);
                 const isConnecting = connectingRegistryId === entry.id;
-                const requiredEnvKeyCount = entry.requiredEnvKeys?.length ?? 0;
+                const requiredEnvKeyCount = getRegistryEntryRequiredKeyCount(entry);
                 return (
                   <McpCard
                     key={entry.id}
@@ -1651,24 +1751,14 @@ const McpManager: React.FC = () => {
                     description={getRegistryEntryDescription(entry)}
                     icon={entry.icon}
                     onOpenDetail={() => openMarketplaceDetail(entry)}
-                    actions={isInstalled ? (
-                      /* Installed is a fact, not an action — it stays quiet. */
-                      <span className={`inline-flex h-[26px] flex-shrink-0 items-center gap-1 px-1 ${MANAGEMENT_META_TEXT} text-muted`}>
-                        <CheckIcon className="h-3.5 w-3.5" />
-                        {isQichacha ? i18nService.t('mcpAuthorized') : i18nService.t('mcpInstalled')}
-                      </span>
-                    ) : (
+                    actions={isInstalled ? renderMarketplaceInstalledState(entry, 'cardHeader') : (
                       <button
                         type="button"
                         onClick={(event) => { event.stopPropagation(); handleInstallFromRegistry(entry); }}
                         disabled={isConnecting}
                         className={CARD_ACTION_PILL_CLASS}
                       >
-                        {isQichacha
-                          ? (isConnecting
-                            ? i18nService.t('mcpQichachaConnecting')
-                            : i18nService.t('mcpQichachaConnect'))
-                          : i18nService.t('mcpInstall')}
+                        {getInstallActionLabel(entry, isConnecting)}
                       </button>
                     )}
                     meta={(
@@ -1677,13 +1767,19 @@ const McpManager: React.FC = () => {
                           {entry.transportType}
                         </span>
                         <span className="shrink-0 text-secondary/50">·</span>
-                        <span className="min-w-0 truncate">{getStdioCommandSummary(entry.command, entry.defaultArgs)}</span>
+                        <span className="min-w-0 truncate">{getRegistryEntryEndpointSummary(entry)}</span>
                         {requiredEnvKeyCount > 0 && (
                           <>
                             <span className="shrink-0 text-secondary/50">·</span>
                             <span className="shrink-0 text-amber-500 dark:text-amber-400">
                               {requiredEnvKeyCount} key{requiredEnvKeyCount > 1 ? 's' : ''}
                             </span>
+                          </>
+                        )}
+                        {isOAuthRegistryEntry(entry) && (
+                          <>
+                            <span className="shrink-0 text-secondary/50">·</span>
+                            <span className="shrink-0">{i18nService.t('mcpAuthOAuth')}</span>
                           </>
                         )}
                       </>

@@ -49,6 +49,31 @@ describe('McpStore', () => {
     db = undefined;
   });
 
+  test('keeps connector credentials and timeouts, and drops credentials on a switch to stdio', () => {
+    const server = store.createServer({
+      name: 'baidu-maps',
+      description: '',
+      transportType: 'http',
+      url: 'https://mcp.map.baidu.com/mcp?ak=abc',
+      tokenValues: { BAIDU_MAP_AK: 'abc', IGNORED: 42 as unknown as string },
+      requestTimeoutMs: 60000,
+      connectionTimeoutMs: -1,
+      isBuiltIn: true,
+      registryId: 'baidu-maps',
+    });
+    expect(server.tokenValues).toEqual({ BAIDU_MAP_AK: 'abc' });
+    expect(server.requestTimeoutMs).toBe(60000);
+    expect(server.connectionTimeoutMs).toBeUndefined();
+
+    const updated = store.updateServer(server.id, { tokenValues: { BAIDU_MAP_AK: 'next' } });
+    expect(updated?.tokenValues).toEqual({ BAIDU_MAP_AK: 'next' });
+    expect(updated?.requestTimeoutMs).toBe(60000);
+
+    const stdio = store.updateServer(server.id, { transportType: 'stdio', command: 'node' });
+    expect(stdio?.tokenValues).toBeUndefined();
+    expect(stdio?.url).toBeUndefined();
+  });
+
   test('clears remote headers when update passes an empty headers object', () => {
     const server = store.createServer({
       name: 'remote',
