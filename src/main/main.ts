@@ -160,6 +160,8 @@ import {
   HtmlShareStatus,
   type HtmlShareStatus as HtmlShareStatusValue,
 } from '../shared/htmlShare/constants';
+import { imageEditMessageMetadata } from '../shared/imageEditing/messageSnapshot';
+import { ImageEditingIpc, ImageEditOperation, type ImageEditRequest } from '../shared/imageEditing/types';
 import type {
   InstalledKitRecord,
   KitReference,
@@ -286,6 +288,7 @@ import { registerCoworkSubagentHandlers } from './ipcHandlers/coworkSubagent';
 import { isDecisionModelFeatureActive, registerDecisionModelHandlers } from './ipcHandlers/decisionModel/handlers';
 import { ensureDshEngineReady, registerDshHandlers } from './ipcHandlers/dsh/handlers';
 import { registerEnterpriseAccountHandlers } from './ipcHandlers/enterpriseAccount';
+import { registerImageEditingHandlers } from './ipcHandlers/imageEditing';
 import { registerKitHandlers } from './ipcHandlers/kits';
 import { hasUnsafeMarkdownEdits, registerMarkdownEditingHandlers } from './ipcHandlers/markdownEditing';
 import { cancelAllMcpOAuthLogins, registerMcpHandlers } from './ipcHandlers/mcp';
@@ -443,6 +446,7 @@ import {
   buildArtifactIdentityClientSourceKey,
   buildHtmlShareClientSourceKey,
 } from './libs/htmlShare/htmlShareSourceKey';
+import { ImageEditingService, ImageEditResultError } from './libs/imageEditing';
 import { getKeyfromAttribution, initializeKeyfromAttribution } from './libs/keyfromAttribution';
 import { LibraryThumbnailRenderer } from './libs/libraryThumbnailRenderer';
 import { LibraryThumbnailService } from './libs/libraryThumbnailService';
@@ -6650,6 +6654,7 @@ if (!gotTheLock) {
           task.upstreamTaskId,
         );
         let status = task.status as string;
+        const statusImageEdit = getOwnedDurableMediaTask(taskId)?.imageEdit ?? pendingMediaTasks.get(taskId)?.imageEdit;
         const resultUrls = (task.resultUrls as string[]) || [];
         mediaUsage.observe(taskId, status, resultUrls.length);
         const outputModel = mediaModelIdForOutput(task.model);
@@ -6674,10 +6679,10 @@ if (!gotTheLock) {
         }));
 
         let resultLines: string[];
-        let detailsAssets: unknown[] = assets;
+        let detailsAssets: unknown[] = statusImageEdit?.operation === ImageEditOperation.RemoveBackground ? [] : assets;
         let savedCount = 0;
         if (status === 'succeeded' && statusMediaType === 'image' && sessionId) {
-          const persistResult = await persistGeneratedImages(sessionId, assets);
+          const persistResult = await persistGeneratedImages(sessionId, assets, statusImageEdit, String(task.taskId));
           if (!isRequestAccountCurrent()) return staleAccountResult();
           mediaUsage.save(String(args.taskId), persistResult?.saved.length ?? 0, assets.length);
           if (persistResult && persistResult.saved.length > 0) {
@@ -6687,7 +6692,8 @@ if (!gotTheLock) {
               `  - [${asset.filename}](${pathToFileURL(asset.filePath).toString()})`
             );
           } else {
-            resultLines = resultUrls.map((url, index) => `  - ![Generated image ${index + 1}](${url})`);
+            resultLines = statusImageEdit?.operation === ImageEditOperation.RemoveBackground ? []
+              : resultUrls.map((url, index) => `  - ![Generated image ${index + 1}](${url})`);
           }
         } else if (status === 'succeeded' && statusMediaType === 'video' && sessionId) {
           const persistResult = await persistGeneratedVideos(sessionId, assets);
@@ -6804,7 +6810,7 @@ if (!gotTheLock) {
       // action === 'generate'
       const mediaType = tool === MediaGenerationTool.Image ? 'image' : 'video';
       const modelResponse = await fetchWithAuth(`${serverBaseUrl}/api/media/${mediaType === 'image' ? 'images' : 'videos'}/models`, { signal: AbortSignal.timeout(15_000) });
-      const modelBody = await modelResponse.json() as { code: number; data?: Array<{ modelId: string; protocolVersions?: number[]; pricingDescription?: string }> };
+      const modelBody = await modelResponse.json() as { code: number; data?: Array<{ modelId: string; protocolVersions?: number[]; pricingDescription?: string; capabilities?: string; parameterSpec?: Record<string, unknown>; pricing?: Record<string, unknown> }> };
       if (modelBody.code !== 0 || !isRequestAccountCurrent()) return staleAccountResult();
       const modelCapability = modelBody.data?.find(model => canonicalizeMediaModelId(model.modelId) === canonicalizeMediaModelId(selectedModel));
       if (!modelCapability) {
@@ -6867,6 +6873,9 @@ if (!gotTheLock) {
       const automaticDefault = mediaType === MediaType.Image ? selection?.imageDefault : selection?.videoDefault;
       params = applyMediaDefaultParameters(params, automaticDefault, mediaType);
       const refs = !nativeRun && sessionId ? mediaReferencesBySession.get(sessionId) : undefined;
+      const imageEditId = mediaType === MediaType.Image ? refs?.find(ref => ref.imageEdit)?.imageEdit?.id : undefined;
+      const imageEdit = imageEditId && sessionId ? imageEditing.resolve(sessionId, imageEditId) : undefined;
+      const editGeneration = imageEdit ? imageEditing.generation(imageEdit, modelCapability ?? {}, prompt) : undefined;
       params = applyMediaReferencesToGenerationParams({
         mediaType: mediaType === MediaGenerationRequestType.Video
           ? MediaGenerationRequestType.Video
@@ -6874,6 +6883,7 @@ if (!gotTheLock) {
         params,
         refs,
       });
+      if (editGeneration) params = editGeneration.params;
 
       // Convert local file paths to data URLs
       const MEDIA_MIME: Record<string, string> = {
@@ -6980,7 +6990,7 @@ if (!gotTheLock) {
         type: mediaType === 'video'
           ? (happyHorse11Selection?.type ?? inferVideoGenerationType())
           : mediaType,
-        prompt,
+        prompt: editGeneration?.prompt ?? prompt,
         params,
       };
 
@@ -7062,6 +7072,7 @@ if (!gotTheLock) {
         callKey: `${sessionId}:${request.context.toolCallId}`,
         ownerAccountKey: requestAccountScope.ownerAccountKey,
         serverBaseUrl, sessionId, mediaType, model: selectedModel, toolCallId: request.context.toolCallId,
+        imageEdit,
         requestBody: JSON.stringify({ ...generateReq, mediaType }),
       }) : undefined;
       mediaUsage.submitting(request.context.toolCallId, useDurableTasks ? MediaProtocol.Durable : MediaProtocol.Legacy, selectedModel);
@@ -7181,7 +7192,7 @@ if (!gotTheLock) {
         mimeType: resolveGeneratedMediaAssetMimeType(mediaType, url),
         ...(args.filename ? { filename: args.filename as string } : {}),
       }));
-      let detailsAssets: unknown[] = assets;
+      let detailsAssets: unknown[] = imageEdit?.operation === ImageEditOperation.RemoveBackground ? [] : assets;
 
       const billing: Record<string, unknown> = {};
       if (task.quotaRemaining != null) billing.quotaRemaining = task.quotaRemaining;
@@ -7203,7 +7214,7 @@ if (!gotTheLock) {
       ];
 
       if (status === 'succeeded' && mediaType === 'image' && sessionId) {
-        const persistResult = await persistGeneratedImages(sessionId, assets);
+        const persistResult = await persistGeneratedImages(sessionId, assets, imageEdit, String(task.taskId));
         if (!isRequestAccountCurrent()) return staleAccountResult();
           mediaUsage.save(request.context.toolCallId, persistResult?.saved.length ?? 0, assets.length);
         if (persistResult && persistResult.saved.length > 0) {
@@ -7212,7 +7223,7 @@ if (!gotTheLock) {
             `  - [${asset.filename}](${pathToFileURL(asset.filePath).toString()})`
           );
           lines.push(`Results:\n${fileLines.join('\n')}`);
-        } else if (assets.length > 0) {
+        } else if (assets.length > 0 && imageEdit?.operation !== ImageEditOperation.RemoveBackground) {
           const resultLines = resultUrls.map((url, index) => `  - ![Generated image ${index + 1}](${url})`);
           lines.push(`Results:\n${resultLines.join('\n')}`);
         }
@@ -7245,6 +7256,7 @@ if (!gotTheLock) {
             : MEDIA_TASK_DEFAULT_TIMEOUT_MS;
           registerMediaTaskForPolling({
             taskId: String(task.taskId),
+            imageEdit,
             protocolVersion: useDurableTasks ? MediaProtocol.Durable : MediaProtocol.Legacy,
             serverBaseUrl, toolCallId: request.context.toolCallId,
             sessionId,
@@ -7468,12 +7480,15 @@ if (!gotTheLock) {
           }));
           if (tracker.protocolVersion === MediaProtocol.Durable) {
             const saved = status === MediaTaskStatus.Succeeded
-              ? await (tracker.mediaType === 'image' ? persistGeneratedImages : persistGeneratedVideos)(tracker.sessionId, assets)
+              ? await (tracker.mediaType === 'image'
+                ? persistGeneratedImages(tracker.sessionId, assets, tracker.imageEdit, taskId)
+                : persistGeneratedVideos(tracker.sessionId, assets))
               : null;
             if (!isMediaAccountScopeCurrent(trackerAccountScope, getCurrentMediaAccountScope())) continue;
             tracker.savedAssets = saved?.saved ?? tracker.savedAssets;
             const ready = status !== MediaTaskStatus.Succeeded || (assets.length > 0 && saved?.saved.length === assets.length);
             const details = { ...task, taskId, mediaType: tracker.mediaType,
+              ...(tracker.imageEdit?.operation === ImageEditOperation.RemoveBackground ? { resultUrls: saved?.saved.map(asset => asset.url) ?? [] } : {}),
               ...(status === MediaTaskStatus.Succeeded ? {
                 deliveryStatus: ready ? MediaDeliveryStatus.Saved : MediaDeliveryStatus.Retrying,
                 assets: tracker.savedAssets ?? [],
@@ -7498,7 +7513,7 @@ if (!gotTheLock) {
             continue;
           }
           if (status === 'succeeded' && tracker.mediaType === 'image') {
-            const persistResult = await persistGeneratedImages(tracker.sessionId, assets);
+            const persistResult = await persistGeneratedImages(tracker.sessionId, assets, tracker.imageEdit, taskId);
             if (!isMediaAccountScopeCurrent(trackerAccountScope, getCurrentMediaAccountScope())) {
               continue;
             }
@@ -7607,6 +7622,15 @@ if (!gotTheLock) {
       } catch (error) {
         // Keep retries quiet during transient failures while retaining enough
         // sampled context to diagnose a task that remains stuck for hours.
+        if (error instanceof ImageEditResultError) {
+          const details: Record<string, unknown> = { taskId, mediaType: tracker.mediaType, model: tracker.model,
+            status: MediaTaskStatus.Succeeded, deliveryStatus: MediaDeliveryStatus.Failed, errorMessage: error.message, assets: [] };
+          persistMediaTaskCard(tracker, details);
+          if (tracker.toolCallId) emitMediaStatusPollUpdate({ sessionId: tracker.sessionId, toolCallId: tracker.toolCallId, details });
+          emitMediaTaskMessage(tracker.sessionId, error.message, { toolResultDetails: details }, tracker);
+          tasksToRemove.set(taskId, tracker);
+          continue;
+        }
         if (tracker.pollCount === 1 || tracker.pollCount % 10 === 0) {
           console.warn(
             `[MediaGeneration] pending ${tracker.mediaType} task ${taskId} poll failed; retrying`,
@@ -7667,6 +7691,7 @@ if (!gotTheLock) {
         const exists = getMediaTaskStore().tasks().some(task => task.taskId === intent.taskId && task.serverBaseUrl === serverBaseUrl);
         if (!exists && getCoworkStore().getSession(intent.sessionId)) registerMediaTaskForPolling({
           taskId: intent.taskId, sessionId: intent.sessionId, mediaType: intent.mediaType, model: intent.model,
+          imageEdit: intent.imageEdit,
           ownerAccountKey: intent.ownerAccountKey, accountGeneration: scope.accountGeneration,
           startedAt: intent.createdAt, pollCount: 0, timeoutMs: MEDIA_TASK_DEFAULT_TIMEOUT_MS,
           protocolVersion: MediaProtocol.Durable, serverBaseUrl, toolCallId: intent.toolCallId,
@@ -7730,8 +7755,28 @@ if (!gotTheLock) {
   };
 
   const mediaDownloads = new MediaDownloadCoordinator<PersistGeneratedImageAssetsResult | null>();
-  const persistGeneratedImages = (sessionId: string, assets: RemoteGeneratedMediaAsset[]) => mediaDownloads.run(
-    `${sessionId}:image:${JSON.stringify(assets.map(asset => asset.url))}`, () => persistGeneratedImagesImpl(sessionId, assets),
+  const imageEditing = new ImageEditingService({
+    directory: path.join(app.getPath('userData'), 'image-editing'),
+    getMessage: (sessionId, messageId) => getCoworkStore().getMessage(sessionId, messageId),
+    saveMessageMetadata: (sessionId, messageId, metadata) => {
+      getCoworkStore().updateMessage(sessionId, messageId, { metadata });
+    },
+    getCwd: sessionId => getCoworkStore().getSession(sessionId)?.cwd,
+    get: key => getStore().get(key), set: (key, value) => getStore().set(key, value),
+    changed: version => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ImageEditingIpc.Changed, version);
+    },
+    publish: version => emitMediaTaskMessage(version.sessionId, `[${version.title}](${pathToFileURL(version.filePath)})`, {
+      toolResultDetails: { assets: [{ type: 'image', filePath: version.filePath, localPath: version.filePath, filename: version.title }] },
+    }),
+  });
+  registerImageEditingHandlers(() => mainWindow, imageEditing);
+  const persistGeneratedImages = (sessionId: string, assets: RemoteGeneratedMediaAsset[], edit?: ImageEditRequest, taskId = '') => mediaDownloads.run(
+    `${sessionId}:image:${edit?.id ?? ''}:${taskId}:${JSON.stringify(assets.map(asset => asset.url))}`, async () => {
+      const result = await persistGeneratedImagesImpl(sessionId, assets, edit);
+      if (result && edit) result.saved = await imageEditing.finalize(edit, taskId, result.saved);
+      return result;
+    },
   );
   const persistGeneratedVideos = (sessionId: string, assets: RemoteGeneratedMediaAsset[]) => mediaDownloads.run(
     `${sessionId}:video:${JSON.stringify(assets.map(asset => asset.url))}`, () => persistGeneratedVideosImpl(sessionId, assets),
@@ -7739,6 +7784,7 @@ if (!gotTheLock) {
   const persistGeneratedImagesImpl = async (
     sessionId: string,
     assets: RemoteGeneratedMediaAsset[],
+    edit?: ImageEditRequest,
   ): Promise<PersistGeneratedImageAssetsResult | null> => {
     const imageAssets = assets.filter(asset => asset.type === 'image' && asset.url.trim());
     if (imageAssets.length === 0) return null;
@@ -7766,7 +7812,7 @@ if (!gotTheLock) {
 
     try {
       const result = await persistGeneratedImageAssets({
-        cwd,
+        cwd: edit?.operation === ImageEditOperation.RemoveBackground ? await imageEditing.downloadDirectory(edit) : cwd,
         assets: pendingAssets,
         fetchAsset: url => session.defaultSession.fetch(url, { signal: AbortSignal.timeout(120_000) }),
       });
@@ -10424,7 +10470,7 @@ if (!gotTheLock) {
         coworkStoreInstance.addMessage(session.id, {
           type: 'user',
           content: prompt,
-          metadata: messageMetadata,
+          metadata: { ...messageMetadata, ...imageEditMessageMetadata(options.mediaReferences) },
         }, ipcStartedAtMs);
 
         coworkStoreInstance.updateSession(session.id, { status: 'running' });

@@ -1,4 +1,5 @@
 import { desktopCompanionTranslations } from '../../shared/desktopCompanion/copy';
+import { imageEditingTranslations } from '../../shared/imageEditing/copy';
 import { mediaTranslations } from '../../shared/media/copy';
 import { configService } from './config';
 
@@ -21,6 +22,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     ...desktopCompanionTranslations.zh,
     ...mediaTranslations.zh,
+    ...imageEditingTranslations.zh,
     officeSaved: '已自动保存',
     officePending: '等待保存…',
     officeSaving: '正在保存…',
@@ -1413,6 +1415,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     artifactShareSourceUnavailable: '当前预览没有可分享的文件或内容。',
     artifactShareSvgRejected: 'SVG 包含不安全内容，无法分享。',
     artifactCloseTab: '关闭标签页',
+    artifactTabActions: '标签页操作',
+    artifactCloseOtherTabs: '关闭其他标签页',
+    artifactCloseTabsToRight: '关闭右侧标签页',
     artifactAddTab: '添加标签页',
     artifactOpenFileTab: '打开文件',
     artifactBrowserTab: '浏览器',
@@ -4652,6 +4657,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     ...desktopCompanionTranslations.en,
     ...mediaTranslations.en,
+    ...imageEditingTranslations.en,
     officeSaved: 'All changes saved',
     officePending: 'Waiting to save…',
     officeSaving: 'Saving…',
@@ -6117,6 +6123,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     artifactShareSourceUnavailable: 'The current preview has no shareable file or content.',
     artifactShareSvgRejected: 'The SVG contains unsafe content and cannot be shared.',
     artifactCloseTab: 'Close tab',
+    artifactTabActions: 'Tab actions',
+    artifactCloseOtherTabs: 'Close other tabs',
+    artifactCloseTabsToRight: 'Close tabs to the right',
     artifactAddTab: 'Add tab',
     artifactOpenFileTab: 'Open file',
     artifactBrowserTab: 'Browser',

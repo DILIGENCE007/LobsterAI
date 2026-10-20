@@ -1629,9 +1629,12 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   }, [closeFileListDrawer, selectedArtifact]);
 
   useEffect(() => {
-    closeFileListDrawer();
     setIsArtifactActionsMenuOpen(false);
-  }, [activePreviewTab?.id, closeFileListDrawer]);
+  }, [activePreviewTab?.id]);
+
+  useEffect(() => {
+    closeFileListDrawer();
+  }, [sessionId, closeFileListDrawer]);
 
   useEffect(() => {
     if (!isArtifactActionsMenuOpen) return;
@@ -1778,7 +1781,6 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         return;
       }
       dispatch(openArtifactPreviewTab({ sessionId, artifactId: id }));
-      closeFileListDrawer();
     },
     [
       artifacts,

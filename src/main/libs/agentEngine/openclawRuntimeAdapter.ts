@@ -25,6 +25,7 @@ import {
   type BrowserControlGatewayRequest,
   OpenClawBrowserGatewayMethod,
 } from '../../../shared/browserWebAccess/constants';
+import { stripAssistantImageDiagnostic } from '../../../shared/cowork/assistantImageDiagnostic';
 import {
   buildBrowserAnnotationPromptSection,
   type CoworkBrowserAnnotationMessageBatch,
@@ -83,6 +84,8 @@ import {
 } from '../../../shared/enterpriseAccount/constants';
 import { resolveEnterpriseQuotaError } from '../../../shared/enterpriseAccount/quotaError';
 import type { EnterpriseQuotaErrorDetails } from '../../../shared/enterpriseAccount/types';
+import { imageEditMessageMetadata } from '../../../shared/imageEditing/messageSnapshot';
+import { imageEditMaskContext, imageEditRegionPrompt } from '../../../shared/imageEditing/prompts';
 import type {
   KitReference,
   ResolvedKitCapabilities,
@@ -1505,7 +1508,7 @@ const normalizeEntryText = (
   text: string,
   flags: PlatformFlags,
 ): string => {
-  let result = text.trim();
+  let result = (role === 'assistant' ? stripAssistantImageDiagnostic(text) : text).trim();
   if (!result) return result;
   if (flags.isDiscord) result = stripDiscordMentions(result);
   if (flags.isQQ && role === 'user') result = stripQQBotSystemPrompt(result);
@@ -2442,8 +2445,8 @@ const MediaReferenceTypeLabel = {
   Audio: 'audio',
 } as const;
 
-const sanitizeMediaReferenceText = (value: string): string => (
-  value.replace(/[\r\n]+/g, ' ').trim().slice(0, 200)
+const sanitizeMediaReferenceText = (value: string, maxLength = 200): string => (
+  value.replace(/[\r\n]+/g, ' ').trim().slice(0, maxLength)
 );
 
 const buildMediaReferencePromptSection = (mediaReferences?: CoworkMediaAttachmentRef[]): string => {
@@ -2458,14 +2461,20 @@ const buildMediaReferencePromptSection = (mediaReferences?: CoworkMediaAttachmen
   ];
 
   for (const ref of refs) {
+    if (ref.imageEdit) {
+      lines.push('This image has a user-prepared image editing request. Call lobsterai_image_generate once with action=generate. LobsterAI will supply the immutable original, selected regions and any guide/mask, and will save a new version. Do not edit it with scripts or other image tools. Include any additional user instructions in the prompt.');
+      const maskContext = imageEditMaskContext(ref.imageEdit);
+      if (maskContext) lines.push(maskContext);
+    }
+    if (ref.imageEdit?.regions.length) lines.push(`${ref.token}: ${imageEditRegionPrompt(ref.imageEdit)}`);
     const mediaType = ref.mediaType === MediaReferenceTypeLabel.Image
       ? MediaReferenceTypeLabel.Image
       : ref.mediaType === MediaReferenceTypeLabel.Video
         ? MediaReferenceTypeLabel.Video
         : MediaReferenceTypeLabel.Audio;
     const locations = [
-      ref.localPath ? `localPath "${sanitizeMediaReferenceText(ref.localPath)}"` : '',
-      ref.remoteUrl ? `remoteUrl "${sanitizeMediaReferenceText(ref.remoteUrl)}"` : '',
+      ref.localPath ? `localPath "${sanitizeMediaReferenceText(ref.localPath, 32768)}"` : '',
+      ref.remoteUrl ? `remoteUrl "${sanitizeMediaReferenceText(ref.remoteUrl, 32768)}"` : '',
       !ref.localPath && !ref.remoteUrl && ref.dataUrl ? 'dataUrl fallback available through LobsterAI host' : '',
     ].filter(Boolean);
     const locationText = locations.length > 0 ? `, ${locations.join(', ')}` : '';
@@ -5792,7 +5801,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const userMessage = this.store.addMessage(sessionId, {
         type: 'user',
         content: prompt,
-        metadata: { ...metadata, llmTrace },
+        metadata: { ...metadata, ...imageEditMessageMetadata(options.mediaReferences), llmTrace },
       });
       usageModelSelection = userMessage.metadata;
       this.refreshContinuityCapsule(sessionId, ContinuityCapsuleSource.UserMessage, {
