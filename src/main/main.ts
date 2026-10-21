@@ -2389,6 +2389,7 @@ const getMainLogReporter = (): MainLogReporter => {
 };
 
 const forwardOpenClawStatus = (status: OpenClawEngineStatus): void => {
+  desktopCompanionManager?.setEnginePhase(status.phase);
   const windows = BrowserWindow.getAllWindows();
   windows.forEach(win => {
     if (win.isDestroyed()) return;
@@ -16035,6 +16036,7 @@ if (!gotTheLock) {
     createWindow();
     profiler.measure('createWindow');
     desktopCompanionManager = new DesktopCompanionManager({
+      enginePhase: getOpenClawEngineManager().getStatus().phase,
       reportAnalytics: event => getMainLogReporter().report(event),
       getAnalyticsOwner: () => getStore().get<AppConfigSettings>('app_config')?.usageAnalyticsEnabled === false ? null : getAuthSessionKey() ?? '',
       getTaskInfo: sessionId => {

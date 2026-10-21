@@ -107,18 +107,26 @@ export function readUsageContext(value: unknown): UsageContext | undefined {
 }
 
 /** Classify locally; raw exceptions, responses and URLs must never enter rlog. */
-export function usageFailureCode(error: unknown): string {
+export const UsageFailureCode = {
+  EngineNotReady: 'engine_not_ready', Quota: 'quota', Subscription: 'subscription', Auth: 'auth',
+  RateLimit: 'rate_limit', Timeout: 'timeout', Cancelled: 'cancelled', Permission: 'permission',
+  Network: 'network', Model: 'model', Unknown: 'unknown', ApiUnavailable: 'api_unavailable',
+} as const;
+export type UsageFailureCode = typeof UsageFailureCode[keyof typeof UsageFailureCode];
+
+export function usageFailureCode(error: unknown): UsageFailureCode {
   const text = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  if (text === UsageFailureCode.ApiUnavailable) return UsageFailureCode.ApiUnavailable;
   if (/ENGINE_NOT_READY|gateway.*not.*ready|gateway.*unavailable/i.test(text))
-    return 'engine_not_ready';
-  if (/40204|quota|insufficient.*credit|余额|额度/i.test(text)) return 'quota';
-  if (/40203|subscription|订阅/i.test(text)) return 'subscription';
-  if (/401|unauthorized|not.*logged|登录/i.test(text)) return 'auth';
-  if (/429|rate.?limit/i.test(text)) return 'rate_limit';
-  if (/timeout|timed?\s*out|超时/i.test(text)) return 'timeout';
-  if (/cancel|abort|取消/i.test(text)) return 'cancelled';
-  if (/permission|denied|forbidden|权限/i.test(text)) return 'permission';
-  if (/network|fetch|ECONN|ENOTFOUND|网络/i.test(text)) return 'network';
-  if (/model|provider|模型/i.test(text)) return 'model';
-  return 'unknown';
+    return UsageFailureCode.EngineNotReady;
+  if (/40204|quota|insufficient.*credit|余额|额度/i.test(text)) return UsageFailureCode.Quota;
+  if (/40203|subscription|订阅/i.test(text)) return UsageFailureCode.Subscription;
+  if (/401|unauthorized|not.*logged|登录/i.test(text)) return UsageFailureCode.Auth;
+  if (/429|rate.?limit/i.test(text)) return UsageFailureCode.RateLimit;
+  if (/timeout|timed?\s*out|超时/i.test(text)) return UsageFailureCode.Timeout;
+  if (/cancel|abort|取消/i.test(text)) return UsageFailureCode.Cancelled;
+  if (/permission|denied|forbidden|权限/i.test(text)) return UsageFailureCode.Permission;
+  if (/network|fetch|ECONN|ENOTFOUND|网络/i.test(text)) return UsageFailureCode.Network;
+  if (/model|provider|模型/i.test(text)) return UsageFailureCode.Model;
+  return UsageFailureCode.Unknown;
 }
