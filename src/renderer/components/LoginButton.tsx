@@ -299,7 +299,7 @@ const UserMenu: React.FC<UserMenuProps> = ({
   const refreshProfileSummary = useCallback(async () => {
     setSummaryLoading(true);
     try {
-      await authService.fetchProfileSummary();
+      await authService.recoverAccount();
     } finally {
       setSummaryLoading(false);
     }
