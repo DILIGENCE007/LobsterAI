@@ -10,6 +10,7 @@ import { PublishingRecoveryAnalyticsSurface } from '@shared/analytics/constants'
 import { ArtifactBrowserPartition } from '@shared/artifactPreview/constants';
 import { isWorkspaceDiffArtifact } from '@shared/artifactPreview/workspaceChanges';
 import { AuthSubscriptionStatus } from '@shared/auth/constants';
+import { buildBrowserSearchUrl } from '@shared/browserWebAccess/constants';
 import {
   BrowserAnnotationGuestChannel,
   BrowserAnnotationGuestCommandType,
@@ -6496,7 +6497,7 @@ function normalizeBrowserUrl(value: string): string | null {
   if (/^[\w.-]+\.[a-z]{2,}(:\d+)?(\/.*)?$/i.test(trimmed)) {
     return `https://${trimmed}`;
   }
-  return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
+  return buildBrowserSearchUrl(trimmed, i18nService.getLanguage());
 }
 
 function normalizeBrowserPreviewUrlForMatch(value: string): string {
