@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { CoworkTurnUsageStatus } from '../../shared/cowork/llmTurnUsage';
 import type { CoworkMessage } from '../coworkStore';
 import { type CoworkTurnUsageEvent, CoworkTurnUsageService } from './coworkTurnUsage';
-import type { NativeRunTurnUsage } from './nativeRunTurnUsage';
+import { clearLlmUsageContexts, getLlmUsageHeaders, LlmUsageHeader } from './llmUsageContext';
+import { claimNativeRunTurnUsage, clearNativeRunTurnUsage, type NativeRunTurnUsage, recordNativeRunLlmTrace } from './nativeRunTurnUsage';
 
 const TRACE_ID = '4bf92f3577b34da6a3ce929d0e0e4736';
 const RELATED_TRACE_ID = '11112222333344445555666677778888';
@@ -90,6 +91,8 @@ describe('CoworkTurnUsageService', () => {
   let consoleSpies: Array<ReturnType<typeof vi.spyOn>>;
 
   beforeEach(() => {
+    clearLlmUsageContexts();
+    clearNativeRunTurnUsage();
     consoleSpies = [
       vi.spyOn(console, 'log').mockImplementation(() => {}),
       vi.spyOn(console, 'warn').mockImplementation(() => {}),
@@ -150,6 +153,44 @@ describe('CoworkTurnUsageService', () => {
       resolvedModelId: 'deepseek-flash-YoudaoInner',
       turnUsage: { status: CoworkTurnUsageStatus.Settled, requestCount: 3 },
     });
+  });
+
+  test('settles manual and automatic cron executions independently with their flagship preset', async () => {
+    const harness = createHarness({ metadata: {} });
+    harness.claimNativeRunTurnUsage.mockImplementation(claimNativeRunTurnUsage);
+    harness.stats = { requests: 1, completed: 1 };
+    const messages: CoworkMessage[] = [];
+    for (const [index, traceId] of [TRACE_ID, RELATED_TRACE_ID].entries()) {
+      const runId = `cron-run-${index}`;
+      const startedAt = 1_000 + index * 120_000;
+      harness.message = {
+        id: `cron-user-${index}`, type: 'user', content: '[cron:job-1] decorated runtime prompt',
+        timestamp: startedAt, metadata: {},
+      };
+      expect(recordNativeRunLlmTrace({
+        runId, traceId, sessionKey: `agent:main:cron:job-1:run:${runId}`,
+        trigger: 'cron', jobId: 'job-1', jobTitle: '报数', userMessage: '每1分钟报一下当前时间',
+        virtualModelId: 'yd-ultra', model: 'glm-5.3',
+      }, startedAt)).toBe(true);
+      const headers = getLlmUsageHeaders(`00-${traceId}-1111111111111111-01`, 'glm-5.3');
+      expect(headers).toMatchObject({
+        [LlmUsageHeader.Session]: 'cron:job-1', [LlmUsageHeader.Turn]: traceId,
+        [LlmUsageHeader.ModelPreset]: 'ultimate',
+      });
+      expect(decodeURIComponent(headers[LlmUsageHeader.UserMessage])).toBe('每1分钟报一下当前时间');
+      harness.fetchWithAuth.mockResolvedValueOnce(jsonResponse({
+        code: 0, data: { ...summary(1, 11.8 + index), traceId, models: ['glm-5.3'] },
+      }));
+      await harness.service.settleLatestTurn(SESSION_ID, { runIds: [runId], startedAt });
+      messages.push(harness.message);
+      expect(harness.message.metadata).toMatchObject({
+        modelPresetId: 'ultimate', resolvedModelId: 'glm-5.3', llmTrace: { traceId, startedAt },
+        turnUsage: { status: CoworkTurnUsageStatus.Settled, requestCount: 1, creditsUsed: 11.8 + index },
+      });
+    }
+    expect(harness.fetchWithAuth).toHaveBeenCalledTimes(2);
+    expect(messages[0].metadata?.turnUsage).toMatchObject({ traceId: TRACE_ID, creditsUsed: 11.8 });
+    expect(messages[1].metadata?.turnUsage).toMatchObject({ traceId: RELATED_TRACE_ID, creditsUsed: 12.8 });
   });
 
   test('does not charge an earlier turn when the run message has not synced yet', async () => {
