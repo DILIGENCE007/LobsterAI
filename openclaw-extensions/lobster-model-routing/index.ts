@@ -44,6 +44,39 @@ export default {
       return { providerOverride: SERVER_PROVIDER, modelOverride: body.data.modelId };
     });
 
+    // This hook is awaited before the first model request. model_call_started
+    // is fire-and-forget in OpenClaw and cannot establish usage attribution in time.
+    api.on('before_prompt_build', async (_event, ctx) => {
+      const usage = ctx as typeof ctx & {
+        usageUserMessage?: string; usageJobTitle?: string; jobId?: string;
+      };
+      if (!ctx.runId || !ctx.trace?.traceId || !ctx.sessionKey
+          || (ctx.messageProvider === 'webchat' && ctx.trigger !== 'cron')) return;
+      try {
+        const response = await fetch(`${config.proxyUrl}${NATIVE_RUN_LLM_TRACE_PATH}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${config.token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            runId: ctx.runId,
+            traceId: ctx.trace.traceId,
+            model: ctx.modelId,
+            virtualModelId: virtualModelByRun.get(ctx.runId),
+            sessionKey: ctx.sessionKey,
+            sessionId: ctx.sessionId,
+            messageProvider: ctx.messageProvider,
+            trigger: ctx.trigger,
+            jobId: usage.jobId,
+            jobTitle: usage.usageJobTitle,
+            userMessage: usage.usageUserMessage ?? '',
+          }),
+          signal: AbortSignal.timeout(5_000),
+        });
+        if (!response.ok) throw new Error(`Usage context report returned ${response.status}`);
+      } catch (error) {
+        api.logger.warn(`[lobster-model-routing] usage context report failed: ${String(error)}`);
+      }
+    });
+
     // IM and cron runs are not started by LobsterAI, so it cannot know their
     // trace. Report each run's package-model trace once so LobsterAI can show
     // the credits and model of the turn; desktop turns are ignored there.
