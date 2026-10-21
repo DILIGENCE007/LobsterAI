@@ -471,7 +471,7 @@ import { MediaTaskStore, type MediaTaskTracker as PersistedMediaTaskTracker } fr
 import { MediaUsageAnalytics } from './libs/mediaUsageAnalytics';
 import { MediaUsageStore } from './libs/mediaUsageStore';
 import { createModelPresetClient, registerModelPresetIpc } from './libs/modelPresets';
-import { claimNativeRunTurnUsage, recordNativeRunMediaTask } from './libs/nativeRunTurnUsage';
+import { bindNativeRunUsageOwner, claimNativeRunTurnUsage, configureNativeUsageSessionTitleResolver, getNativeRunMediaUsageContext, recordNativeRunMediaTask } from './libs/nativeRunTurnUsage';
 import {
   migrateAgentModelRefs,
   parsePrimaryModelRef,
@@ -481,7 +481,7 @@ import {
   shouldSyncServerModelConfig,
   syncServerModelConfigIfNeeded,
 } from './libs/openclawAgentModels';
-import { OpenClawChannelSessionSync } from './libs/openclawChannelSessionSync';
+import { DEFAULT_MANAGED_AGENT_ID, extractAgentIdFromKey, OpenClawChannelSessionSync } from './libs/openclawChannelSessionSync';
 import { createOpenClawRepairBackupDirectory, OpenClawRepairFailure, pruneOpenClawRepairBackups, runOpenClawCompatibilityRepair, runOpenClawDoctorRepair } from './libs/openclawCompatibilityRepair';
 import { OpenClawModelRuntimeChange, resolveOpenClawModelRuntimeChange } from './libs/openclawConfigAdmission';
 import { createOpenClawConfigAutoRestoreHandler } from './libs/openclawConfigAutoRestore';
@@ -6476,6 +6476,7 @@ if (!gotTheLock) {
         return { content: [], isError: true };
       }
       mediaRunAccountScopes.begin(request.context, getCurrentMediaAccountScope());
+      bindNativeRunUsageOwner(request.context.runId, getAuthSessionKey());
       const scope = mediaRunAccountScopes.resolve(request.context, getCurrentMediaAccountScope());
       return { content: [], isError: scope === null };
     }
@@ -6491,7 +6492,9 @@ if (!gotTheLock) {
     const turnUserMessage = !nativeRun && sessionId && action === 'generate'
       ? getCoworkStore().getLatestUserMessage(sessionId) : undefined;
     const turnUserMessageId = turnUserMessage?.id;
-    const usageContext = getMediaUsageContext(sessionId, turnUserMessage);
+    const usageContext = nativeRun
+      ? getNativeRunMediaUsageContext(request.context.runId, getAuthSessionKey())
+      : getMediaUsageContext(sessionId, turnUserMessage);
     const requestAccountScope = nativeRun
       ? mediaRunAccountScopes.resolve(request.context, getCurrentMediaAccountScope())
       : resolveMediaTurnAccountScopeForSession(sessionId);
@@ -15673,10 +15676,16 @@ if (!gotTheLock) {
     });
     usageTitleSync.start();
     app.once('before-quit', () => usageTitleSync.stop());
-    configureUsageTitleReporter(sessionId => {
-      const session = getCoworkStore().getSession(sessionId);
-      if (!session) return;
-      try { usageTitleSync.enqueue(sessionId, session.title); }
+    configureNativeUsageSessionTitleResolver((sessionKey, jobId) => {
+      const sessionId = getCoworkStore().getSessionIdByScheduledTaskId(
+        jobId, extractAgentIdFromKey(sessionKey) ?? DEFAULT_MANAGED_AGENT_ID,
+      );
+      return sessionId ? getCoworkStore().getSession(sessionId)?.title : undefined;
+    });
+    configureUsageTitleReporter((sessionId, reportedTitle) => {
+      const title = reportedTitle ?? getCoworkStore().getSession(sessionId)?.title;
+      if (!title) return;
+      try { usageTitleSync.enqueue(sessionId, title); }
       catch { console.warn('[UsageTitle] could not persist pending title.'); }
     });
 

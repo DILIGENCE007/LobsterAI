@@ -313,7 +313,7 @@ async function handleNativeRunLlmTraceReport(req: http.IncomingMessage, res: htt
     res.end(JSON.stringify({ error: 'Invalid native run trace report' }));
     return;
   }
-  if (recordNativeRunLlmTrace(report)) {
+  if (recordNativeRunLlmTrace(report, Date.now(), sessionKeyGetter?.() ?? undefined)) {
     console.debug(
       `[OpenClawTokenProxy] native run ${String(report.runId)} uses trace=${String(report.traceId)}`
       + ` model=${String(report.model ?? 'unknown')} virtualModel=${String(report.virtualModelId ?? 'none')}`,
@@ -1154,7 +1154,7 @@ function buildUpstreamRequestHeaders(
     [LOBSTERAI_CLIENT_CAPABILITIES_HEADER]: LOBSTERAI_CLIENT_CAPABILITIES,
     [LOBSTERAI_CLIENT_VERSION_HEADER]: clientVersion,
     ...(traceparent ? { [LLM_TRACEPARENT_HEADER]: traceparent } : {}),
-    ...getLlmUsageHeaders(traceparent, requestModel),
+    ...getLlmUsageHeaders(traceparent, requestModel, sessionKeyGetter?.()),
   };
 
   // Forward accept header for SSE streaming
