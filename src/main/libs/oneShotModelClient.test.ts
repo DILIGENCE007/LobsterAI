@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { OpenClawApi, ProviderName } from '../../shared/providers';
+import { ModelPresetId, modelPresetModelId } from '../../shared/modelPresets/constants';
+import { ApiFormat, OpenClawApi, ProviderName } from '../../shared/providers';
 
 const mocks = vi.hoisted(() => ({
   resolveRawApiConfig: vi.fn(),
@@ -14,6 +15,7 @@ import {
   type OneShotTarget,
   OneShotTargetError,
   readOneShotStreamEvent,
+  resolveOneShotPreset,
   resolveOneShotTarget,
   toOneShotTarget,
 } from './oneShotModelClient';
@@ -121,6 +123,44 @@ describe('resolveOneShotTarget', () => {
       detail: 'Application config not found.',
     });
     expect(mocks.buildProviderSelection).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveOneShotPreset', () => {
+  test.each([
+    [ModelPresetId.Balanced, ApiFormat.OpenAI, OpenClawApi.OpenAICompletions],
+    [ModelPresetId.Ultimate, ApiFormat.Anthropic, OpenClawApi.AnthropicMessages],
+  ])('resolves %s and uses the returned protocol without changing proxy credentials', async (presetId, apiFormat, api) => {
+    const initial = target(OpenClawApi.OpenAICompletions, {
+      providerName: ProviderName.LobsteraiServer, model: modelPresetModelId(presetId as ModelPresetId),
+    });
+    const resolve = vi.fn().mockResolvedValue({ modelId: 'resolved-model', apiFormat });
+    const signal = new AbortController().signal;
+    const resolved = await resolveOneShotPreset(initial, resolve, signal);
+    expect(resolve).toHaveBeenCalledWith(presetId, signal);
+    expect(resolved).toEqual({ ...initial, model: 'resolved-model', api });
+    const requestBody = bodyOf(buildOneShotHttpRequest(resolved, request).init);
+    expect(requestBody.model).toBe('resolved-model');
+  });
+
+  test('leaves concrete models and similarly named custom models unchanged', async () => {
+    const resolve = vi.fn();
+    for (const initial of [target(OpenClawApi.OpenAICompletions, { providerName: ProviderName.LobsteraiServer }),
+      target(OpenClawApi.OpenAICompletions, { model: modelPresetModelId(ModelPresetId.Balanced) })]) {
+      expect(await resolveOneShotPreset(initial, resolve, new AbortController().signal)).toBe(initial);
+    }
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    { modelId: modelPresetModelId(ModelPresetId.Ultimate), apiFormat: ApiFormat.OpenAI },
+    { modelId: '', apiFormat: ApiFormat.OpenAI },
+    { modelId: 'resolved-model', apiFormat: ApiFormat.Gemini },
+    { modelId: 'resolved-model', apiFormat: ApiFormat.OpenAI, accessible: false },
+  ])('rejects invalid resolutions instead of sending an alias', async model => {
+    await expect(resolveOneShotPreset(target(OpenClawApi.OpenAICompletions, {
+      providerName: ProviderName.LobsteraiServer, model: modelPresetModelId(ModelPresetId.Balanced),
+    }), vi.fn().mockResolvedValue(model), new AbortController().signal)).rejects.toThrow(OneShotTargetError.UnsupportedModel);
   });
 });
 

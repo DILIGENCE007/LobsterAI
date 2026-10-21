@@ -20,10 +20,12 @@ import { getLanguage, t } from '../i18n';
 import { extractApiErrorSnippet } from '../libs/coworkModelApi';
 import {
   buildOneShotHttpRequest,
+  type OneShotPresetResolver,
   type OneShotTarget,
   OneShotTargetError,
   type OneShotTargetResolution,
   readOneShotStreamEvent,
+  resolveOneShotPreset,
   resolveOneShotTarget,
 } from '../libs/oneShotModelClient';
 import { splitSseEvents, type StreamChunk } from '../libs/sse';
@@ -45,6 +47,7 @@ interface QuickAnswerDeps {
   /** Loopback token for providers OpenClaw reaches through a local proxy. */
   getProxyToken?(): string | null;
   resolveModel?(): OneShotTargetResolution;
+  resolvePreset?: OneShotPresetResolver;
   fetch?: typeof fetch;
 }
 
@@ -66,7 +69,8 @@ export class CompanionQuickAnswerService {
       source, tool: request.action, isFollowUp: (typeof request.question === 'string' && !!request.question.trim())
         || (Array.isArray(request.history) && request.history.length > 0),
     }) : undefined;
-    if (!this.deps.getSessionKey()) {
+    const sessionKey = this.deps.getSessionKey();
+    if (!sessionKey) {
       finish?.(Outcome.Blocked, Reason.LoginRequired);
       return { success: false, code: CompanionQuickAnswerErrorCode.LoginRequired, error: t('desktopToolsLoginRequired') };
     }
@@ -101,7 +105,7 @@ export class CompanionQuickAnswerService {
     this.abort(requestId);
     const controller = new AbortController();
     this.running.set(requestId, { controller, ownerId: sender.id, finish: finish! });
-    void this.stream(sender, requestId, resolution.target, prompt, controller);
+    void this.stream(sender, requestId, resolution.target, prompt, controller, sessionKey);
     return { success: true };
   }
 
@@ -127,21 +131,30 @@ export class CompanionQuickAnswerService {
     target: OneShotTarget,
     prompt: CompanionQuickAnswerPrompt,
     controller: AbortController,
+    sessionKey: string,
   ): Promise<void> {
     const finish = this.running.get(requestId)!.finish;
+    const isCurrent = () => this.running.get(requestId)?.controller === controller
+      && this.deps.getSessionKey() === sessionKey && !sender.isDestroyed();
     const send = (event: CompanionQuickAnswerEvent) => {
+      if (!isCurrent()) { finish(Outcome.Cancelled); return; }
       if (event.type === CompanionQuickAnswerEventType.Done) finish(Outcome.Success);
       if (event.type === CompanionQuickAnswerEventType.Error) finish(Outcome.Failed, Reason.Upstream);
       if (!sender.isDestroyed()) sender.send(DesktopCompanionIpc.QuickAnswerEvent, event);
     };
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
+      target = await resolveOneShotPreset(target, this.deps.resolvePreset, controller.signal);
+      if (!isCurrent()) { finish(Outcome.Cancelled); return; }
+      controller.signal.throwIfAborted();
       const { url, init } = buildOneShotHttpRequest(target, {
         system: prompt.system,
         messages: prompt.messages,
         maxTokens: MAX_OUTPUT_TOKENS,
       });
       const response = await (this.deps.fetch ?? fetch)(url, { ...init, signal: controller.signal });
+      if (!isCurrent()) { finish(Outcome.Cancelled); await response.body?.cancel(); return; }
+      controller.signal.throwIfAborted();
       if (!response.ok || !response.body) {
         const detail = extractApiErrorSnippet(await response.text().catch(() => '')) || `HTTP ${response.status}`;
         send({ requestId, type: CompanionQuickAnswerEventType.Error, message: t('desktopCompanionAnswerFailed', { error: detail }) });
@@ -152,6 +165,8 @@ export class CompanionQuickAnswerService {
       let buffer = '';
       for (;;) {
         const { value, done } = await reader.read();
+        if (!isCurrent()) { finish(Outcome.Cancelled); await reader.cancel(); return; }
+        controller.signal.throwIfAborted();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const { events, rest } = splitSseEvents(buffer);
@@ -167,10 +182,11 @@ export class CompanionQuickAnswerService {
       }
       send({ requestId, type: CompanionQuickAnswerEventType.Done });
     } catch (error) {
-      if (controller.signal.aborted && this.running.get(requestId)?.controller !== controller) return;
+      if (!isCurrent()) { finish(Outcome.Cancelled); return; }
       const message = controller.signal.aborted ? 'timeout' : error instanceof Error ? error.message : String(error);
       console.warn('[DesktopCompanion] Quick answer failed:', message);
-      send({ requestId, type: CompanionQuickAnswerEventType.Error, message: t('desktopCompanionAnswerFailed', { error: message }) });
+      send({ requestId, type: CompanionQuickAnswerEventType.Error, message: message === OneShotTargetError.UnsupportedModel
+        ? t('desktopCompanionAnswerUnsupportedModel') : t('desktopCompanionAnswerFailed', { error: message }) });
     } finally {
       clearTimeout(timeout);
       if (this.running.get(requestId)?.controller === controller) this.running.delete(requestId);

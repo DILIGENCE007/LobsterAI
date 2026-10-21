@@ -1,6 +1,8 @@
-import { OpenClawApi, ProviderName } from '../../shared/providers';
+import { type ModelPresetId, parseModelPresetModelId } from '../../shared/modelPresets/constants';
+import { ApiFormat, OpenClawApi, ProviderName } from '../../shared/providers';
 import { resolveRawApiConfig } from './claudeSettings';
 import { buildAnthropicMessagesUrl } from './coworkModelApi';
+import type { ResolvedPresetModel } from './modelPresets';
 import { buildProviderSelection } from './openclawConfigSync';
 import {
   readAnthropicStreamEvent,
@@ -46,6 +48,28 @@ export type OneShotTarget = {
 export type OneShotTargetResolution =
   | { target: OneShotTarget }
   | { error: OneShotTargetError; detail?: string };
+
+export type OneShotPresetResolver = (presetId: ModelPresetId, signal: AbortSignal) => Promise<ResolvedPresetModel>;
+
+/** Presets are virtual catalog entries; resolve before choosing the wire protocol. */
+export async function resolveOneShotPreset(
+  target: OneShotTarget,
+  resolvePreset: OneShotPresetResolver | undefined,
+  signal: AbortSignal,
+): Promise<OneShotTarget> {
+  const presetId = target.providerName === ProviderName.LobsteraiServer ? parseModelPresetModelId(target.model) : null;
+  if (!presetId) return target;
+  signal.throwIfAborted();
+  if (!resolvePreset) throw new Error(OneShotTargetError.UnsupportedModel);
+  const model = await resolvePreset(presetId, signal);
+  signal.throwIfAborted();
+  if (!model.modelId?.trim() || parseModelPresetModelId(model.modelId) || model.accessible === false
+    || (model.apiFormat !== ApiFormat.OpenAI && model.apiFormat !== ApiFormat.Anthropic)) {
+    throw new Error(OneShotTargetError.UnsupportedModel);
+  }
+  return { ...target, model: model.modelId.trim(),
+    api: model.apiFormat === ApiFormat.Anthropic ? OpenClawApi.AnthropicMessages : OpenClawApi.OpenAICompletions };
+}
 
 export type OneShotRequest = {
   system: string;

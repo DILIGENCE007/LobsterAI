@@ -16047,6 +16047,7 @@ if (!gotTheLock) {
         languageClient: desktopLanguageClient,
         quickAnswer: new CompanionQuickAnswerService({ getSessionKey: getAuthSessionKey,
           getProxyToken: () => getOpenClawLoopbackState().proxyToken,
+          resolvePreset: (presetId, signal) => modelPresetClient.resolve(crypto.randomUUID(), presetId, false, signal),
           reportAnalytics: event => getMainLogReporter().report(event) }),
       },
       store: getStore(),
