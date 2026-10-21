@@ -1,5 +1,5 @@
 import { XCircleIcon as XCircleIconSolid } from '@heroicons/react/20/solid';
-import { ArrowPathIcon, ArrowRightStartOnRectangleIcon, CheckIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ArrowRightStartOnRectangleIcon, CheckIcon, PlusIcon } from '@heroicons/react/24/outline';
 import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -23,13 +23,12 @@ import { RootState } from '../../store';
 import { setMcpServers } from '../../store/slices/mcpSlice';
 import { McpMarketplaceCategoryInfo,McpRegistryEntry, McpServerConfig, McpServerFormData } from '../../types/mcp';
 import {
-  CARD_ACTION_PILL_CLASS,
   CARD_SECONDARY_PILL_CLASS,
-  DETAIL_ACTION_PILL_CLASS,
   DETAIL_SECONDARY_PILL_CLASS,
 } from '../common/actionPillStyles';
 import CardOverflowMenu, { type CardOverflowMenuItem } from '../common/CardOverflowMenu';
 import CardToggle from '../common/CardToggle';
+import ManagementSearchHeader from '../common/ManagementSearchHeader';
 import { MANAGEMENT_BODY_TEXT, MANAGEMENT_META_TEXT, MANAGEMENT_TITLE_TEXT } from '../common/managementTypography';
 import Modal from '../common/Modal';
 import ErrorMessage from '../ErrorMessage';
@@ -49,11 +48,7 @@ import McpServerFormModal from './McpServerFormModal';
 import { MCP_TAB_LABEL_KEYS, MCP_TAB_ORDER, McpTab } from './mcpTabs';
 import { describeMcpToolFilter } from './mcpToolFilterLabels';
 
-const TRANSPORT_BADGE_COLORS: Record<string, string> = {
-  stdio: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
-  sse: 'bg-green-500/10 text-green-600 dark:text-green-400',
-  http: 'bg-purple-500/10 text-purple-600 dark:text-purple-400',
-};
+const TRANSPORT_BADGE_CLASS = 'shrink-0 rounded bg-surface-raised px-1.5 py-0.5 font-medium';
 
 const LAUNCH_STATUS_COLORS: Record<string, string> = {
   pending: 'bg-gray-500/10 text-gray-600 dark:text-gray-300',
@@ -128,9 +123,20 @@ const buildCategoryOptions = (
     })),
 ];
 
-/** Management actions stay hidden until the card is hovered or focused. */
-const CARD_MENU_REVEAL_CLASS =
-  'opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100';
+/** Match the skill cards and Expert Plaza's hover/focus actions. */
+const CARD_ACTION_REVEAL_CLASS =
+  'invisible group-hover:visible group-focus-within:visible';
+const MCP_CARD_ACTION_CLASS =
+  'inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-lg bg-neutral-900 px-3 '
+  + `${MANAGEMENT_META_TEXT} font-semibold text-white transition-colors hover:bg-neutral-800 `
+  + 'dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 '
+  + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-500 '
+  + 'focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:opacity-50';
+const MCP_DETAIL_ACTION_CLASS =
+  'inline-flex h-8 flex-shrink-0 items-center gap-1.5 rounded-full bg-neutral-900 px-5 '
+  + `${MANAGEMENT_BODY_TEXT} font-semibold text-white transition-colors hover:bg-neutral-800 `
+  + 'dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 '
+  + 'disabled:cursor-not-allowed disabled:opacity-50';
 
 const McpManager: React.FC = () => {
   const dispatch = useDispatch();
@@ -1036,9 +1042,8 @@ const McpManager: React.FC = () => {
     phase: OAuthPhase | null,
     size: 'card' | 'cardHeader' | 'detail',
   ) => {
-    // In the facts strip the 26px capsule must not make the card taller than its
-    // neighbours (badges are 23px), or the badge rows of a grid row stop lining up.
-    const placement = size === 'card' ? 'ml-auto -my-0.5 ' : '';
+    // Negative margins keep the action from increasing the compact facts row's height.
+    const placement = size === 'card' ? 'ml-auto -my-1 ' : '';
     const isCardSize = size !== 'detail';
     // Distinct keys: swapping one element's classes would cross-fade the primary
     // fill into the grey Cancel capsule.
@@ -1061,7 +1066,7 @@ const McpManager: React.FC = () => {
         type="button"
         disabled={signingInServerId !== null}
         onClick={(event) => { event.stopPropagation(); void handleOAuthSignIn(server); }}
-        className={placement + (isCardSize ? CARD_ACTION_PILL_CLASS : DETAIL_ACTION_PILL_CLASS)}
+        className={placement + (isCardSize ? `${MCP_CARD_ACTION_CLASS} ${CARD_ACTION_REVEAL_CLASS}` : MCP_DETAIL_ACTION_CLASS)}
       >
         {i18nService.t('mcpOAuthSignIn')}
       </button>
@@ -1122,7 +1127,7 @@ const McpManager: React.FC = () => {
         actions={(
           <>
             <CardOverflowMenu
-              className={CARD_MENU_REVEAL_CLASS}
+              className={CARD_ACTION_REVEAL_CLASS}
               items={buildServerMenuItems(server)}
             />
             <CardToggle
@@ -1141,7 +1146,7 @@ const McpManager: React.FC = () => {
                 {i18nService.t('mcpCustom')}
               </span>
             )}
-            <span className={`shrink-0 rounded px-1.5 py-0.5 font-medium ${TRANSPORT_BADGE_COLORS[server.transportType] || ''}`}>
+            <span className={TRANSPORT_BADGE_CLASS}>
               {server.transportType}
             </span>
             {renderOAuthBadge(server, oauthPhase)}
@@ -1445,7 +1450,7 @@ const McpManager: React.FC = () => {
               handleInstallFromRegistry(entry);
             }}
             disabled={isConnecting}
-            className={DETAIL_ACTION_PILL_CLASS}
+            className={MCP_DETAIL_ACTION_CLASS}
           >
             {getInstallActionLabel(entry, isConnecting)}
           </button>
@@ -1499,17 +1504,11 @@ const McpManager: React.FC = () => {
 
   const tabIndicatorClass = (tab: McpTab) =>
     `absolute bottom-[-1px] left-0 right-0 h-0.5 rounded-full transition-colors ${
-      activeTab === tab ? 'bg-primary' : 'bg-transparent'
+      activeTab === tab ? 'bg-foreground' : 'bg-transparent'
     }`;
 
   return (
     <div className="relative space-y-4">
-      <div className="pb-2">
-        <p className={`${MANAGEMENT_BODY_TEXT} text-secondary`}>
-          {i18nService.t('mcpDescription')}
-        </p>
-      </div>
-
       {actionError && (
         <ErrorMessage
           message={actionError}
@@ -1517,25 +1516,27 @@ const McpManager: React.FC = () => {
         />
       )}
 
-      {/* Sticky toolbar: Search + Tabs + Category pills */}
+      {/* Sticky toolbar: Description + Search + Tabs + Category pills */}
       <div
         data-skin-management-toolbar="true"
-        className="sticky top-0 z-10 space-y-4 bg-background pb-2"
+        className="sticky top-0 z-10 space-y-3 bg-background pb-2"
       >
         {/* Search */}
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1">
+        <ManagementSearchHeader description={i18nService.t('mcpDescription')}>
+          <div className="management-search-header__search relative min-w-0">
             <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary" />
             <input
               type="text"
               placeholder={i18nService.t('searchMcpServers')}
+              aria-label={i18nService.t('searchMcpServers')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-8 py-2 text-sm rounded-xl bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary"
+              className="h-9 w-full pl-9 pr-8 text-sm rounded-xl bg-surface text-foreground placeholder-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary"
             />
             {searchQuery && (
               <button
                 type="button"
+                aria-label={i18nService.t('clearSearch')}
                 onClick={() => {
                   reportMcpAction('clear_search', {
                     source: 'mcp_manager',
@@ -1558,12 +1559,12 @@ const McpManager: React.FC = () => {
           <button
             type="button"
             onClick={handleOpenCreateForm}
-            className="px-3 py-2 text-sm rounded-xl border transition-colors bg-surface border-border text-foreground hover:bg-surface-raised flex items-center gap-2"
+            className="h-9 px-3.5 text-sm font-medium whitespace-nowrap rounded-xl transition-colors bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface flex shrink-0 items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <PlusCircleIcon className="h-4 w-4" />
+            <PlusIcon className="h-5 w-5" aria-hidden="true" />
             <span>{i18nService.t('mcpAddServer')}</span>
           </button>
-        </div>
+        </ManagementSearchHeader>
 
         {/* Tabs */}
         <div className="flex items-center border-b border-border">
@@ -1597,13 +1598,14 @@ const McpManager: React.FC = () => {
           })}
         </div>
 
-        {/* Category filter pills (Marketplace only) */}
+        {/* Category filters, matching Expert Plaza (Marketplace only). */}
         {activeTab === McpTab.Marketplace && !isLoadingMarketplace && (
-          <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="flex flex-wrap items-center gap-2 py-1">
             {dynamicCategories.map((cat) => (
               <button
                 key={cat.id}
                 type="button"
+                aria-pressed={activeCategory === cat.id}
                 onClick={() => {
                   reportMcpAction('category_change', {
                     source: 'mcp_manager',
@@ -1614,10 +1616,10 @@ const McpManager: React.FC = () => {
                   });
                   setActiveCategory(cat.id);
                 }}
-                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                className={`h-9 shrink-0 whitespace-nowrap rounded-lg px-3.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50 ${
                   activeCategory === cat.id
-                    ? 'bg-primary text-white'
-                    : 'bg-surface-raised text-secondary hover:text-foreground'
+                    ? 'bg-surface-raised font-semibold text-foreground'
+                    : 'text-secondary hover:bg-surface-raised hover:text-foreground'
                 }`}
               >
                 {(i18nService.getLanguage() === 'zh' ? cat.name_zh : cat.name_en) || i18nService.t(cat.key)}
@@ -1684,7 +1686,7 @@ const McpManager: React.FC = () => {
                     actions={(
                       <>
                         <CardOverflowMenu
-                          className={CARD_MENU_REVEAL_CLASS}
+                          className={CARD_ACTION_REVEAL_CLASS}
                           items={[{
                             key: 'uninstall',
                             label: i18nService.t('mcpUninstall'),
@@ -1712,7 +1714,7 @@ const McpManager: React.FC = () => {
                     meta={(
                       <>
                         {groupTransportType && (
-                          <span className={`shrink-0 rounded px-1.5 py-0.5 font-medium ${TRANSPORT_BADGE_COLORS[groupTransportType] || ''}`}>
+                          <span className={TRANSPORT_BADGE_CLASS}>
                             {groupTransportType}
                           </span>
                         )}
@@ -1775,14 +1777,14 @@ const McpManager: React.FC = () => {
                         type="button"
                         onClick={(event) => { event.stopPropagation(); handleInstallFromRegistry(entry); }}
                         disabled={isConnecting}
-                        className={CARD_ACTION_PILL_CLASS}
+                        className={`${MCP_CARD_ACTION_CLASS} ${isConnecting ? '' : CARD_ACTION_REVEAL_CLASS}`}
                       >
                         {getInstallActionLabel(entry, isConnecting)}
                       </button>
                     )}
                     meta={(
                       <>
-                        <span className={`shrink-0 rounded px-1.5 py-0.5 font-medium ${TRANSPORT_BADGE_COLORS[entry.transportType] || ''}`}>
+                        <span className={TRANSPORT_BADGE_CLASS}>
                           {entry.transportType}
                         </span>
                         <span className="shrink-0 text-secondary/50">·</span>
