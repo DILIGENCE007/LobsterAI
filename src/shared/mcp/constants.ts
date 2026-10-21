@@ -17,3 +17,12 @@ export const McpIpcChannel = {
   Changed: 'mcp:changed',
 } as const;
 export type McpIpcChannel = typeof McpIpcChannel[keyof typeof McpIpcChannel];
+
+/** Node.js env names that matter when launching stdio MCP servers. */
+export const McpNodeEnv = {
+  // Dropped by OpenClaw's stdio env policy; the server form warns about it.
+  Options: 'NODE_OPTIONS',
+  // Same effect as --use-system-ca (Node.js 22.19+), and allowed through.
+  UseSystemCa: 'NODE_USE_SYSTEM_CA',
+} as const;
+export type McpNodeEnv = typeof McpNodeEnv[keyof typeof McpNodeEnv];

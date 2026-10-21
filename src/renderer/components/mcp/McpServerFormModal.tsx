@@ -2,6 +2,7 @@ import { ArrowTopRightOnSquareIcon, ChevronRightIcon, EyeIcon, EyeSlashIcon } fr
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { McpAuthMode } from '../../../shared/mcp/auth';
+import { McpNodeEnv } from '../../../shared/mcp/constants';
 import {
   getInitialMcpTokenValues,
   McpConnectorBuildError,
@@ -845,6 +846,11 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
                     {envErrors[index] && row.required && (
                       <p className="text-xs text-red-500 ml-[calc(50%+8px)]">
                         {i18nService.t('mcpEnvRequired')}
+                      </p>
+                    )}
+                    {row.key.trim().toUpperCase() === McpNodeEnv.Options && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400">
+                        {i18nService.t('mcpEnvNodeOptionsIgnored')}
                       </p>
                     )}
                   </div>

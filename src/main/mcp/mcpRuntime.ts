@@ -21,6 +21,7 @@ import {
   type MediaGenerationRequest,
   type MediaGenerationResponse,
 } from '../libs/mcpBridgeServer';
+import { applyNodeSystemCaDefault } from '../libs/nodeSystemCaEnv';
 import { OpenClawConfigImpact } from '../libs/openclawConfigImpact';
 import type { ResolvedMcpServer } from '../libs/openclawConfigSync';
 import { resolveLocalDesktopCoworkSessionIdByOpenClawSessionKey } from '../libs/openclawLocalSessionResolver';
@@ -52,6 +53,7 @@ function buildMcpShimEnv(...overrides: (Record<string, string> | undefined)[]): 
     shimEnv = { ...shimEnv, ...override };
   }
   applyPythonEncodingDefaults(shimEnv, { sources: [process.env, ...overrides] });
+  applyNodeSystemCaDefault(shimEnv);
   return shimEnv;
 }
 
