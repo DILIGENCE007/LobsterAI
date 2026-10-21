@@ -2007,10 +2007,10 @@ export const getActivityLiveStatusText = (item: ConsolidatedItem): string => {
   const toolName = typeof rawName === 'string' ? rawName : undefined;
   const normalized = toolName ? normalizeToolName(toolName) : '';
   if (normalized === 'lobsteraivideogenerate') {
-    return i18nService.t('mediaGeneratingVideo');
+    return i18nService.t(parseMediaStreamingInfo(item.group).taskId ? 'mediaGeneratingVideo' : 'mediaTaskPreparing');
   }
   if (normalized === 'lobsteraiimagegenerate') {
-    return i18nService.t('mediaGeneratingImage');
+    return i18nService.t(parseMediaStreamingInfo(item.group).taskId ? 'mediaGeneratingImage' : 'mediaTaskPreparing');
   }
   const toolInput = item.group.toolUse.metadata?.toolInput;
   if (item.group.toolUse.metadata?.isGenerating) {

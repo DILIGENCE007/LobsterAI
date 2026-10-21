@@ -186,6 +186,7 @@ import {
 import { LogIpc } from '../shared/logExport/constants';
 import { MEDIA_V2_TASKS_PATH, MediaDeliveryStatus, MediaProtocol, MediaTaskPhase, MediaTaskStatus, TERMINAL_MEDIA_TASK_STATUSES } from '../shared/media/constants';
 import { type MediaPreference, MediaType } from '../shared/media/defaultPolicy';
+import { estimateVideoCredits } from '../shared/media/videoCreditEstimate';
 import { canonicalizeMediaModelId, HAPPYHORSE_1_1_MODEL_ID, mediaModelDisplayName } from '../shared/mediaModelAliases';
 import { type ModelPresetId, parseModelPresetId } from '../shared/modelPresets/constants';
 import {
@@ -6660,7 +6661,8 @@ if (!gotTheLock) {
           task.upstreamTaskId,
         );
         let status = task.status as string;
-        const statusImageEdit = getOwnedDurableMediaTask(taskId)?.imageEdit ?? pendingMediaTasks.get(taskId)?.imageEdit;
+        const statusTracker = getOwnedDurableMediaTask(taskId) ?? pendingMediaTasks.get(taskId);
+        const statusImageEdit = statusTracker?.imageEdit;
         const resultUrls = (task.resultUrls as string[]) || [];
         mediaUsage.observe(taskId, status, resultUrls.length);
         const outputModel = mediaModelIdForOutput(task.model);
@@ -6736,6 +6738,7 @@ if (!gotTheLock) {
         ];
         const details = {
           taskId: String(task.taskId),
+          ...(statusTracker ? { clientStartedAt: statusTracker.startedAt } : {}),
           protocolVersion: task.protocolVersion,
           createdAt: task.createdAt,
           deadlineAt: task.deadlineAt,
@@ -7020,7 +7023,10 @@ if (!gotTheLock) {
 
       // Video generation confirmation: inform user about cost and duration
       if (mediaType === 'video') {
-        const subtitle = modelCapability?.pricingDescription?.trim() || t('mediaVideoConfirmCostUnknown');
+        const estimatedCredits = estimateVideoCredits(modelCapability.pricing, params);
+        const subtitle = estimatedCredits !== undefined
+          ? t('mediaVideoConfirmCostEstimate', { credits: estimatedCredits })
+          : [t('mediaVideoConfirmCostUnknown'), modelCapability.pricingDescription?.trim()].filter(Boolean).join('\n');
         const questionText = t('mediaVideoConfirmDescription').replace('{url}', getPortalTasksUrl())
           + '\n\n' + t('mediaVideoConfirmRequest', {
             model: selectedModel,
@@ -7081,6 +7087,7 @@ if (!gotTheLock) {
         imageEdit,
         requestBody: JSON.stringify({ ...generateReq, mediaType }),
       }) : undefined;
+      const clientStartedAt = intent?.createdAt ?? Date.now();
       mediaUsage.submitting(request.context.toolCallId, useDurableTasks ? MediaProtocol.Durable : MediaProtocol.Legacy, selectedModel);
       const idempotencyKey = intent?.key ?? crypto.randomUUID();
       if (intent) getMediaTaskStore().saveIntent({ ...intent, lastAttemptAt: Date.now() });
@@ -7271,7 +7278,7 @@ if (!gotTheLock) {
             model: upstreamModel || outputModel,
             ownerAccountKey: requestAccountScope.ownerAccountKey,
             accountGeneration: requestAccountScope.accountGeneration,
-            startedAt: Date.now(),
+            startedAt: clientStartedAt,
             pollCount: 0,
             timeoutMs,
           });
@@ -7283,6 +7290,7 @@ if (!gotTheLock) {
         content: [{ type: 'text', text: lines.join('\n') }],
         details: {
           taskId: String(task.taskId),
+          clientStartedAt,
           protocolVersion: task.protocolVersion,
           createdAt: task.createdAt,
           deadlineAt: task.deadlineAt,
@@ -7448,7 +7456,7 @@ if (!gotTheLock) {
         if (body.code !== 0) continue;
         const task = body.data!;
         if (tracker.protocolVersion === MediaProtocol.Durable && tracker.toolCallId) {
-          const details = { ...task, ...(task.status === MediaTaskStatus.Succeeded ? { deliveryStatus: MediaDeliveryStatus.Pending } : {}), isMediaStatusPolling: true, taskId, mediaType: tracker.mediaType, pollCount: tracker.pollCount };
+          const details = { ...task, clientStartedAt: tracker.startedAt, ...(task.status === MediaTaskStatus.Succeeded ? { deliveryStatus: MediaDeliveryStatus.Pending } : {}), isMediaStatusPolling: true, taskId, mediaType: tracker.mediaType, pollCount: tracker.pollCount };
           emitMediaStatusPollUpdate({ sessionId: tracker.sessionId, toolCallId: tracker.toolCallId, details });
           persistMediaTaskCard(tracker, details);
         }
@@ -7493,7 +7501,7 @@ if (!gotTheLock) {
             if (!isMediaAccountScopeCurrent(trackerAccountScope, getCurrentMediaAccountScope())) continue;
             tracker.savedAssets = saved?.saved ?? tracker.savedAssets;
             const ready = status !== MediaTaskStatus.Succeeded || (assets.length > 0 && saved?.saved.length === assets.length);
-            const details = { ...task, taskId, mediaType: tracker.mediaType,
+            const details = { ...task, clientStartedAt: tracker.startedAt, taskId, mediaType: tracker.mediaType,
               ...(tracker.imageEdit?.operation === ImageEditOperation.RemoveBackground ? { resultUrls: saved?.saved.map(asset => asset.url) ?? [] } : {}),
               ...(status === MediaTaskStatus.Succeeded ? {
                 deliveryStatus: ready ? MediaDeliveryStatus.Saved : MediaDeliveryStatus.Retrying,
