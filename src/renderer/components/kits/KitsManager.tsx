@@ -1,7 +1,6 @@
 import { ArrowPathIcon } from '@heroicons/react/20/solid';
 import {
   ArrowLeftIcon,
-  CheckIcon,
   ChevronRightIcon,
   ExclamationTriangleIcon,
   TrashIcon,
@@ -15,7 +14,7 @@ import { kitService } from '../../services/kit';
 import { compareVersions, resolveLocalizedText } from '../../services/skill';
 import { setInstalledKits as setInstalledKitsAction, setMarketplaceKits } from '../../store/slices/kitSlice';
 import type { InstalledKit, KitSkillRef, MarketplaceKit } from '../../types/kit';
-import { CARD_ACTION_PILL_CLASS, DETAIL_ACTION_PILL_CLASS } from '../common/actionPillStyles';
+import ManagementSearchHeader from '../common/ManagementSearchHeader';
 import { MANAGEMENT_BODY_TEXT, MANAGEMENT_META_TEXT, MANAGEMENT_TITLE_TEXT } from '../common/managementTypography';
 import Modal from '../common/Modal';
 import ErrorMessage from '../ErrorMessage';
@@ -57,6 +56,10 @@ const SKILL_TOOLTIP_WIDTH = 288;
 const SKILL_TOOLTIP_MIN_WIDTH = 180;
 const SKILL_TOOLTIP_VIEWPORT_MARGIN = 12;
 const SKILL_TOOLTIP_GAP = 8;
+
+const KIT_ACTION_BUTTON_CLASS = 'inline-flex flex-shrink-0 items-center justify-center gap-1.5 rounded-lg bg-neutral-900 font-semibold text-white transition-colors hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:opacity-50';
+const KIT_CARD_ACTION_CLASS = `${KIT_ACTION_BUTTON_CLASS} h-7 px-3 ${MANAGEMENT_META_TEXT}`;
+const KIT_DETAIL_ACTION_CLASS = `${KIT_ACTION_BUTTON_CLASS} h-8 px-5 ${MANAGEMENT_BODY_TEXT}`;
 
 const clamp = (value: number, min: number, max: number) => (
   Math.min(Math.max(value, min), Math.max(min, max))
@@ -550,18 +553,9 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
                   {resolveLocalizedText(selectedKit.description)}
                 </p>
                 <div className={`mt-3 flex items-center gap-1.5 ${MANAGEMENT_META_TEXT} text-secondary`}>
-                  {installed && (
-                    <>
-                      <span className="inline-flex items-center gap-0.5 rounded-md bg-green-500/10 px-1.5 py-0.5 font-medium text-green-600 dark:text-green-400">
-                        <CheckIcon className="h-2.5 w-2.5" />
-                        {i18nService.t('kitInstalled')}
-                      </span>
-                      <span className="text-secondary/50">·</span>
-                    </>
-                  )}
                   {selectedKit.author && (
                     <>
-                      <span className="rounded-md bg-primary-muted px-1.5 py-0.5 font-medium text-primary">
+                      <span className="rounded-md bg-surface-raised px-1.5 py-0.5 font-medium">
                         {i18nService.t('kitOfficial')}
                       </span>
                       <span className="text-secondary/50">·</span>
@@ -587,15 +581,14 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
                 )}
               </div>
             </div>
-            {/* The detail page is where a single loud action belongs; uninstall
-                is rare and destructive, so it waits at the bottom. */}
+            {/* Keep the primary action visible in the detail header. */}
             {installed ? (
               onUseKit && (
                 <button
                   type="button"
                   disabled={operating}
                   onClick={() => handleUseKit(selectedKit)}
-                  className={DETAIL_ACTION_PILL_CLASS}
+                  className={KIT_DETAIL_ACTION_CLASS}
                 >
                   {i18nService.t('kitUseNow')}
                 </button>
@@ -605,7 +598,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
                 type="button"
                 disabled={operating}
                 onClick={() => handleInstall(selectedKit)}
-                className={DETAIL_ACTION_PILL_CLASS}
+                className={KIT_DETAIL_ACTION_CLASS}
               >
                 {operating && operationType === KitOperationType.Install ? (
                   <>
@@ -712,7 +705,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
               <button
                 type="button"
                 onClick={handleInstallAndTry}
-                className="px-4 py-2 text-sm font-medium rounded-lg bg-primary text-white hover:bg-primary-hover transition-colors"
+                className={KIT_DETAIL_ACTION_CLASS}
               >
                 {i18nService.t('kitInstall')}
               </button>
@@ -728,35 +721,33 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
   // List view
   return (
     <div className="space-y-4">
-      <p className={`${MANAGEMENT_BODY_TEXT} pb-2 text-secondary`}>
-        {i18nService.t('kitDescription')}
-      </p>
-
       {catalogWarning}
 
-      {/* Sticky toolbar: Search + tabs */}
+      {/* Sticky toolbar: Description + Search + tabs */}
       <div
         data-skin-management-toolbar="true"
-        className="sticky top-0 z-10 space-y-4 bg-background pb-2"
+        className="sticky top-0 z-10 space-y-3 bg-background pb-2"
       >
         {actionError && (
           <ErrorMessage message={actionError} onClose={() => setActionError('')} />
         )}
 
         {/* Search */}
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1">
+        <ManagementSearchHeader description={i18nService.t('kitDescription')}>
+          <div className="management-search-header__search relative min-w-0">
             <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={i18nService.t('kitSearchPlaceholder')}
-              className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-8 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary"
+              aria-label={i18nService.t('kitSearchPlaceholder')}
+              className="h-9 w-full rounded-xl border border-border bg-surface pl-9 pr-8 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary"
             />
             {searchQuery && (
               <button
                 type="button"
+                aria-label={i18nService.t('kitClearSearch')}
                 onClick={() => {
                   reportKitAction('clear_search', {
                     source: 'kits_manager',
@@ -771,7 +762,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
               </button>
             )}
           </div>
-        </div>
+        </ManagementSearchHeader>
 
         {/* Marketplace / Installed tabs */}
         <div className="flex items-center border-b border-border">
@@ -870,7 +861,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
                 key={kit.id}
                 role="button"
                 tabIndex={0}
-                className="min-h-[116px] cursor-pointer rounded-xl border border-border bg-surface p-4 shadow-subtle transition-all hover:border-primary/50 hover:shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                className="group min-h-[116px] cursor-pointer rounded-xl border border-border bg-surface p-4 shadow-subtle transition-colors hover:bg-surface-raised/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-500"
                 onClick={() => openKitDetail(kit)}
                 onKeyDown={(e) => {
                   if (e.target !== e.currentTarget) return;
@@ -884,8 +875,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
                   <KitIcon icon={kit.icon} className="h-16 w-16" />
 
                   <div className="min-w-0 flex-1">
-                    {/* One capsule, its label carrying the state. Uninstall is
-                        not a browsing action, so it lives in the detail page. */}
+                    {/* Reveal actions on hover or keyboard focus; keep progress visible. */}
                     <div className="flex items-center gap-2">
                       <h3 className={`min-w-0 flex-1 truncate ${MANAGEMENT_TITLE_TEXT} font-semibold text-foreground`}>
                         {resolveLocalizedText(kit.name)}
@@ -896,7 +886,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
                             type="button"
                             disabled={operating}
                             onClick={(e) => { e.stopPropagation(); handleUseKit(kit); }}
-                            className={CARD_ACTION_PILL_CLASS}
+                            className={`${KIT_CARD_ACTION_CLASS} ${operating ? '' : 'invisible group-hover:visible group-focus-within:visible'}`}
                           >
                             {i18nService.t('kitUse')}
                           </button>
@@ -906,7 +896,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
                           type="button"
                           disabled={operating}
                           onClick={(e) => { e.stopPropagation(); handleInstall(kit); }}
-                          className={CARD_ACTION_PILL_CLASS}
+                          className={`${KIT_CARD_ACTION_CLASS} ${operating ? '' : 'invisible group-hover:visible group-focus-within:visible'}`}
                         >
                           {operating && operationType === KitOperationType.Install ? (
                             <>
@@ -922,18 +912,9 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
                     </p>
 
                     <div className={`mt-3 flex flex-wrap items-center gap-1.5 ${MANAGEMENT_META_TEXT} text-secondary`}>
-                      {installed && activeTab === KitTab.Marketplace && (
-                        <>
-                          <span className="inline-flex items-center gap-0.5 rounded-md bg-green-500/10 px-1.5 py-0.5 font-medium text-green-600 dark:text-green-400">
-                            <CheckIcon className="h-2.5 w-2.5" />
-                            {i18nService.t('kitInstalled')}
-                          </span>
-                          <span className="text-secondary/50">·</span>
-                        </>
-                      )}
                       {kit.author && (
                         <>
-                          <span className="rounded-md bg-primary-muted px-1.5 py-0.5 font-medium text-primary">
+                          <span className="rounded-md bg-surface-raised px-1.5 py-0.5 font-medium">
                             {i18nService.t('kitOfficial')}
                           </span>
                           <span className="text-secondary/50">·</span>
