@@ -260,7 +260,7 @@ import {
   resolveEnterpriseMembershipRevocationSource,
 } from './enterpriseAccount/membershipRevocation';
 import { registerFeedbackIpc } from './feedback/feedbackIpc';
-import { setLanguage, t } from './i18n';
+import { getLanguage, setLanguage, t } from './i18n';
 import { IMGatewayConfig, IMGatewayManager } from './im';
 import {
   approvePairingCode,
@@ -341,6 +341,7 @@ import {
 } from './libs/authSessionManager';
 import type { BrowserAnnotationAssetIdentity, SaveBrowserAnnotationAssetInput } from './libs/browserAnnotationAssetStore';
 import { BrowserAnnotationAssetStore } from './libs/browserAnnotationAssetStore';
+import { migrateBrowserDisplayModeToInApp } from './libs/browserDisplayModeMigration';
 import { getResourceAnalyticsSalt } from './libs/capabilityUsage';
 import {
   clearServerModelMetadata,
@@ -2338,6 +2339,7 @@ const getAgentBrowserHost = (): AgentBrowserHost => {
         if (!normalizedSessionId) return undefined;
         return getCoworkStore().getSession(normalizedSessionId, 0)?.claudeSessionId ?? undefined;
       },
+      getLanguage,
     });
   }
   return agentBrowserHost;
@@ -15952,6 +15954,16 @@ if (!gotTheLock) {
       );
     } catch (err) {
       console.warn('[OpenClaw] main agent workspace migration failed (non-fatal):', err);
+    }
+
+    // One-time migration: existing installs switch to the in-app browser before
+    // the first config sync renders OpenClaw's browser profile.
+    try {
+      if (migrateBrowserDisplayModeToInApp(getStore())) {
+        console.log('[Browser] switched the browser display mode to in-app for an existing install.');
+      }
+    } catch (err) {
+      console.warn('[Browser] browser display mode migration failed (non-fatal):', err);
     }
 
     // An interrupted Windows installer can leave an empty resources/cfmind
