@@ -9,7 +9,10 @@
 import crypto from 'crypto';
 import http from 'http';
 
+import type { MediaConfirmationCommand, MediaConfirmationResponse, MediaConfirmationState } from '../../shared/media/confirmation';
+import { MediaConfirmationReason } from '../../shared/media/confirmation';
 import { listenOnLoopback } from './loopbackListen';
+import { MediaConfirmationRequests, type RecoverableMediaConfirmation } from './mediaConfirmationRequests';
 import { serializeForLog } from './sanitizeForLog';
 
 const log = (level: string, msg: string) => {
@@ -28,6 +31,7 @@ const log = (level: string, msg: string) => {
 export type AskUserRequest = {
   requestId: string;
   sessionKey?: string;
+  mediaConfirmation?: MediaConfirmationState;
   questions: Array<{
     id?: string;
     question: string;
@@ -39,11 +43,12 @@ export type AskUserRequest = {
   }>;
 };
 
-export type AskUserResponse = {
-  behavior: 'allow' | 'deny';
-  answers?: Record<string, string>;
-  skippedQuestionIds?: string[];
-};
+export type AskUserResponse = MediaConfirmationResponse;
+
+export interface AskUserOptions {
+  sessionKey?: string;
+  recoverableMedia?: RecoverableMediaConfirmation;
+}
 
 type PendingAskUser = {
   requestId: string;
@@ -52,6 +57,8 @@ type PendingAskUser = {
 };
 
 export type MediaGenerationRequest = {
+  /** Local HTTP connection lifetime; never taken from the request body. */
+  signal?: AbortSignal;
   tool: string;
   args: Record<string, unknown>;
   context: {
@@ -109,6 +116,17 @@ export class McpBridgeServer {
   private readonly pendingAskUser = new Map<string, PendingAskUser>();
   private onAskUserCallback: ((request: AskUserRequest) => void) | null = null;
   private onAskUserDismissCallback: ((requestId: string) => void) | null = null;
+  private readonly mediaConfirmations = new MediaConfirmationRequests({
+    publish: request => {
+      if (!this.onAskUserCallback) throw new Error('AskUser route unavailable');
+      this.onAskUserCallback(request);
+    },
+    dismiss: requestId => this.onAskUserDismissCallback?.(requestId),
+  });
+
+  getPendingMediaConfirmations(): AskUserRequest[] { return this.mediaConfirmations.list(); }
+  actOnMediaConfirmation(command: MediaConfirmationCommand): Promise<boolean> { return this.mediaConfirmations.act(command); }
+
   private onMediaGenerationCallback: ((request: MediaGenerationRequest) => Promise<MediaGenerationResponse>) | null = null;
   private onBrowserToolCallback: ((request: BrowserToolRequest) => Promise<BrowserToolResponse>) | null = null;
   private onDecisionToolCallback: DecisionToolHandler | null = null;
@@ -190,6 +208,8 @@ export class McpBridgeServer {
    * Resolve a pending AskUserQuestion request (called when user clicks in the modal).
    */
   resolveAskUser(requestId: string, response: AskUserResponse): void {
+    // Recoverable media approves only through its revision-checked command.
+    if (this.mediaConfirmations.deny(requestId, response.reason ?? MediaConfirmationReason.NoRoute)) return;
     const pending = this.pendingAskUser.get(requestId);
     if (!pending) return;
     clearTimeout(pending.timer);
@@ -205,8 +225,9 @@ export class McpBridgeServer {
   async askUserInternal(
     questions: AskUserRequest['questions'],
     timeoutMs = 120_000,
-    options: { sessionKey?: string } = {},
+    options: AskUserOptions = {},
   ): Promise<AskUserResponse> {
+    if (options.recoverableMedia) return this.mediaConfirmations.request(questions, options.sessionKey, options.recoverableMedia);
     const requestId = crypto.randomUUID();
     const sessionKey = options.sessionKey?.trim() || undefined;
     log('INFO', `AskUser (internal) request, requestId=${requestId}`);
@@ -271,6 +292,7 @@ export class McpBridgeServer {
    * Stop the HTTP callback server.
    */
   async stop(): Promise<void> {
+    this.mediaConfirmations.clear();
     if (!this.server) return;
 
     return new Promise((resolve) => {
@@ -429,7 +451,17 @@ export class McpBridgeServer {
         return;
       }
 
-      const result = await this.onMediaGenerationCallback(request);
+      const controller = new AbortController();
+      const onClose = () => controller.abort();
+      res.once('close', onClose);
+      if (res.destroyed) controller.abort();
+      let result: MediaGenerationResponse;
+      try {
+        result = await this.onMediaGenerationCallback({ ...request, signal: controller.signal });
+      } finally {
+        res.off('close', onClose);
+      }
+      if (res.destroyed) return;
       const contentPreview = serializeForLog(result.content);
       log('INFO', `Media generation completed for tool="${request.tool}" in ${Date.now() - t0}ms with isError=${result.isError ?? false}. Details=${serializeForLog(result.details ?? {})} Result=${contentPreview}`);
       res.writeHead(200, { 'Content-Type': 'application/json' });

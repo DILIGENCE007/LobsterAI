@@ -911,6 +911,8 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('cowork:stream:permission', handler);
     },
     getPendingQuestions: () => ipcRenderer.invoke(CoworkIpcChannel.GetPendingQuestions),
+    mediaConfirmation: (command: import('../shared/media/confirmation').MediaConfirmationCommand) =>
+      ipcRenderer.invoke(CoworkIpcChannel.MediaConfirmation, command),
     onStreamPermissionDismiss: (callback: (data: { requestId: string }) => void) => {
       const handler = (_event: any, data: { requestId: string }) => callback(data);
       ipcRenderer.on(CoworkIpcChannel.StreamPermissionDismiss, handler);

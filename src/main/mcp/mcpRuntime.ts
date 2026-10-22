@@ -6,11 +6,13 @@ import { ASK_USER_QUESTION_TOOL_NAME, SESSION_AGNOSTIC_PERMISSION_SESSION_ID } f
 import { McpAuthMode } from '../../shared/mcp/auth';
 import { McpIpcChannel } from '../../shared/mcp/constants';
 import type { McpToolDiscoveryRequest } from '../../shared/mcp/toolDiscovery';
+import { type MediaConfirmationCommand, MediaConfirmationReason } from '../../shared/media/confirmation';
 import { isComputerUseKitInstalled, syncComputerUseSkillFromRuntime } from '../computerUse/computerUseKit';
 import { resolveComputerUseMcpServer } from '../computerUse/computerUseMcpServer';
 import { installComputerUseRuntime } from '../computerUse/computerUseRuntime';
 import { ensureElectronNodeShim, getElectronNodeRuntimePath } from '../libs/coworkUtil';
 import {
+  type AskUserOptions,
   type AskUserRequest,
   type AskUserResponse,
   type BrowserToolRequest,
@@ -221,6 +223,7 @@ export class McpRuntime {
         return;
       }
       const windows = BrowserWindow.getAllWindows();
+      let delivered = false;
       windows.forEach(win => {
         if (win.isDestroyed()) return;
         try {
@@ -231,15 +234,21 @@ export class McpRuntime {
               toolName: ASK_USER_QUESTION_TOOL_NAME,
               toolInput: {
                 questions: request.questions,
+                ...(request.mediaConfirmation ? { mediaConfirmation: request.mediaConfirmation } : {}),
                 ...(request.sessionKey ? { sessionKey: request.sessionKey } : {}),
               },
             },
           });
+          delivered = true;
         } catch (error) {
           console.error('[AskUser] failed to send permission request to window:', error);
         }
       });
-      this.deps.onAskUserRequested?.(sessionId, {
+      if (request.mediaConfirmation && !delivered) {
+        this.resolveAskUser(request.requestId, { behavior: 'deny', reason: MediaConfirmationReason.NoRoute });
+        return;
+      }
+      if (!request.mediaConfirmation || request.mediaConfirmation.sequence === 1) this.deps.onAskUserRequested?.(sessionId, {
         requestId: request.requestId,
         toolName: ASK_USER_QUESTION_TOOL_NAME,
       });
@@ -289,10 +298,25 @@ export class McpRuntime {
   async askUserInternal(
     questions: AskUserRequest['questions'],
     timeoutMs?: number,
-    options?: { sessionKey?: string },
+    options?: AskUserOptions,
   ): Promise<AskUserResponse | null> {
     if (!this.bridgeServer) return null;
     return await this.bridgeServer.askUserInternal(questions, timeoutMs, options);
+  }
+
+  getPendingMediaConfirmations() {
+    return (this.bridgeServer?.getPendingMediaConfirmations() ?? []).flatMap(request => {
+      const sessionId = request.sessionKey ? resolveLocalDesktopCoworkSessionIdByOpenClawSessionKey(
+        this.deps.getStore().getDatabase(), request.sessionKey,
+      ) : null;
+      if (!sessionId) { this.bridgeServer?.resolveAskUser(request.requestId, { behavior: 'deny' }); return []; }
+      return [{ sessionId, requestId: request.requestId, toolName: ASK_USER_QUESTION_TOOL_NAME,
+        toolInput: { questions: request.questions, mediaConfirmation: request.mediaConfirmation } }];
+    });
+  }
+
+  actOnMediaConfirmation(command: MediaConfirmationCommand): Promise<boolean> {
+    return this.bridgeServer?.actOnMediaConfirmation(command) ?? Promise.resolve(false);
   }
 
   resolveAskUser(requestId: string, response: AskUserResponse): void {

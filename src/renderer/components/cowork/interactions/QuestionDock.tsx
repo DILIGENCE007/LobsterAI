@@ -10,11 +10,13 @@ import {
 } from '@heroicons/react/24/outline';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
+import { readMediaConfirmationState } from '../../../../shared/media/confirmation';
 import { coworkService } from '../../../services/cowork';
 import { i18nService } from '../../../services/i18n';
 import type { CoworkPermissionRequest, CoworkPermissionResult } from '../../../types/cowork';
 import { stripQuestionRecommendation } from '../questionOptionLabel';
 import { readInteractionDraft, saveInteractionDraft } from './interactionDraft';
+import MediaConfirmationCard from './MediaConfirmationCard';
 import {
   type DockRequest,
   emptyQuestionDraft,
@@ -76,7 +78,13 @@ interface QuestionDockCardProps {
   hidden?: boolean;
 }
 
-export function QuestionDockCard({ request, queueCount = 1, onRespond, onMinimize, hidden = false }: QuestionDockCardProps) {
+export function QuestionDockCard(props: QuestionDockCardProps) {
+  return readMediaConfirmationState(props.request.permission.toolInput?.mediaConfirmation)
+    ? <MediaConfirmationCard request={props.request} queueCount={props.queueCount} hidden={props.hidden} />
+    : <StandardQuestionDockCard {...props} />;
+}
+
+function StandardQuestionDockCard({ request, queueCount = 1, onRespond, onMinimize, hidden = false }: QuestionDockCardProps) {
   const storageKey = `question-dock:${request.key}`;
   const [draft, setDraft] = useState<QuestionDraft>(() => readInteractionDraft<QuestionDraft>(storageKey) ?? emptyQuestionDraft());
   const [busy, setBusy] = useState(false);
