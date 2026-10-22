@@ -834,3 +834,44 @@ images. Existing image cards and regular replies must remain visible, without
 the runtime diagnostic appearing as answer text. Remove this patch when
 upstream handles managed display images before sanitizing model replay at all
 relevant boundaries.
+
+## Browser process cleanup recovery
+
+`openclaw-chrome-mcp-process-recovery.patch` retains a live Chrome MCP transport
+when OS process enumeration or identity revalidation fails. Closing the SDK
+client at that point discards its PID, leaving cleanup permanently uncertain
+even after Windows process enumeration recovers. A later browser command now
+retries verified cleanup before creating a replacement connection. PID identity,
+unrelated-process protection, and the existing enumeration timeout stay intact.
+First-time identity capture also rejects a snapshot if the transport has closed
+while enumeration was pending, retaining uncertainty instead of adopting a reused PID.
+The diagnostic identifies process inspection instead of recommending unrelated
+Chrome remote-debugging setup.
+
+Verify `extensions/browser/src/browser/chrome-mcp.test.ts`,
+`server-context.tab-ownership.test.ts`, and `server-context.list-profiles.test.ts` in the
+OpenClaw checkout, then rebuild the runtime. Desktop acceptance should inject
+latency into two real process-enumeration commands, restore normal timing, and
+confirm recovery on the next browser command without restarting the gateway.
+Remove when upstream preserves a verifiable cleanup handle across discovery
+failures and provides equivalent recovery coverage.
+
+## Web fetch follows the desktop proxy preference
+
+`openclaw-web-fetch-proxy.patch` lets LobsterAI enable the existing
+`tools.web.fetch.useTrustedEnvProxy` setting while retaining web_fetch's local
+DNS checks and binding proxy CONNECT targets to the validated addresses.
+LobsterAI emits this setting only when both the global proxy switch and the
+web_fetch follow-proxy switch are enabled. Host headers and TLS SNI retain the
+original hostname; NO_PROXY and the SSRF policy are checked on every redirect.
+Global proxy use grants no new access to private addresses. Local DNS must still
+resolve the destination. Provider-specific trusted-proxy behavior is unchanged.
+
+This requires a runtime patch because the original web_fetch option delegates
+DNS resolution to the proxy and bypasses local address validation. The desktop
+configuration boundary alone cannot preserve that validation.
+
+Verify `src/agents/tools/web-fetch.proxy.integration.test.ts`, the neighboring
+web-fetch tests, and `src/infra/net/fetch-guard.test.ts`; then rebuild and test a
+real HTTPS tunnel with the generated desktop config. Remove when upstream
+supports an equivalent proxy transport with validated, pinned destination IPs.

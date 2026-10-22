@@ -909,19 +909,30 @@ export class AgentBrowserHost {
     this.lastError = undefined;
     await this.proxyReady;
     await this.passkeys.ready;
-    const loadPromise = loadOptions
-      ? page.view.webContents.loadURL(url, loadOptions)
-      : page.view.webContents.loadURL(url);
+    const webContents = page.view.webContents;
+    let documentCommitted = false;
+    const onCommit = () => { documentCommitted = true; };
+    let onDocumentReady = () => {};
+    const documentReady = new Promise<void>(resolve => {
+      onDocumentReady = () => { if (documentCommitted) resolve(); };
+    });
+    webContents.on('did-navigate', onCommit);
+    webContents.on('dom-ready', onDocumentReady);
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        loadPromise,
+        loadOptions ? webContents.loadURL(url, loadOptions) : webContents.loadURL(url),
+        // A top-level document can be used while images keep loading. Ignore
+        // readiness from the previous document; loadURL still owns load errors.
+        documentReady,
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => reject(new Error(`Browser navigation timed out after ${timeoutMs}ms.`)), timeoutMs);
         }),
       ]);
     } finally {
       if (timer) clearTimeout(timer);
+      webContents.removeListener('did-navigate', onCommit);
+      webContents.removeListener('dom-ready', onDocumentReady);
     }
   }
 
