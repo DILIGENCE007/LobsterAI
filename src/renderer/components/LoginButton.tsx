@@ -1,4 +1,4 @@
-import { ArrowPathIcon, ChatBubbleLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ChevronRightIcon, QuestionMarkCircleIcon } from '@heroicons/react/24/outline';
 import React, {
   useCallback,
   useEffect,
@@ -163,7 +163,7 @@ const AccountMenuAction: React.FC<AccountMenuActionProps> = ({
     type="button"
     title={title}
     onClick={() => void onClick()}
-    className={`flex w-full cursor-pointer items-center gap-2 px-4 py-2 text-left text-[13px] transition-colors hover:bg-surface-raised ${
+    className={`mx-2 flex w-[calc(100%-1rem)] cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-left text-[13px] transition-colors hover:bg-surface-raised ${
       danger ? 'text-red-500' : 'text-foreground'
     }`}
   >
@@ -171,6 +171,10 @@ const AccountMenuAction: React.FC<AccountMenuActionProps> = ({
     <span className="min-w-0 flex-1 truncate">{label}</span>
     {trailing}
   </button>
+);
+
+const AccountMenuSeparator: React.FC = () => (
+  <div role="separator" className="mx-4 h-px bg-border" />
 );
 
 const DiamondSparkleIcon: React.FC = () => (
@@ -566,7 +570,7 @@ const UserMenu: React.FC<UserMenuProps> = ({
       </div>
 
       {/* Account destinations */}
-      <div className="border-b border-border py-1">
+      <div className="py-1">
         {visibleAccountPlan && (
           <AccountPlanAction
             label={visibleAccountPlan.label}
@@ -614,8 +618,10 @@ const UserMenu: React.FC<UserMenuProps> = ({
         />
       </div>
 
-      {/* Campaigns and invitations */}
-      <div className="border-b border-border py-1">
+      <AccountMenuSeparator />
+
+      {/* Campaigns, invitations and feedback */}
+      <div className="py-1">
         {campaignActionLabel && (
           <AccountMenuAction
             icon={<PortalMenuIcon src={promoSubscriptionIconUrl} darkInvert />}
@@ -639,19 +645,17 @@ const UserMenu: React.FC<UserMenuProps> = ({
           label={i18nService.t('authInviteFriendsForCredits')}
           onClick={handleInvite}
         />
-      </div>
-
-      {/* Feedback */}
-      <div className="border-b border-border py-1">
         <AccountMenuAction
-          icon={<ChatBubbleLeftIcon className="h-5 w-5" />}
+          icon={<QuestionMarkCircleIcon className="h-4 w-4 shrink-0 text-[#111111] dark:text-white" aria-hidden="true" />}
           label={i18nService.t('feedbackTitle')}
           onClick={() => {
             onClose();
-            window.dispatchEvent(new Event(FeedbackUiEvent.OpenSettings));
+            window.dispatchEvent(new Event(FeedbackUiEvent.Open));
           }}
         />
       </div>
+
+      <AccountMenuSeparator />
 
       {/* Session actions */}
       <div className="py-1">
