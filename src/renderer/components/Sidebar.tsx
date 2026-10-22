@@ -16,6 +16,7 @@ import {
 import type { CoworkSessionSummary } from '../types/cowork';
 import { MainView } from '../types/navigation';
 import { getAgentDisplayNameById } from '../utils/agentDisplay';
+import { getAccountConnectionState } from './accountConnectionState';
 import {
   type AgentSidebarBatchItem,
   AgentSidebarBatchItemKind,
@@ -271,6 +272,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const agents = useSelector((state: RootState) => state.agent.agents);
   const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
   const isAuthLoading = useSelector((state: RootState) => state.auth.isLoading);
+  const accountConnectionState = useSelector((state: RootState) => getAccountConnectionState(state.auth));
   const sessions = useSelector(selectCoworkSessions);
   const currentSessionId = useSelector(selectCurrentSessionId);
   // The home page is the "new task" view, so its nav item reads as selected there.
@@ -299,7 +301,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const paymentGuideOwnsSlot = canShowPurchaseGuide && (paymentGuideVisible || purchaseGuide.loading);
   const isWindows = window.electron.platform === 'win32';
   const showHeaderRow = !isWindows;
-  const showLoginPromo = !hideLogin && !isAuthLoading && !isLoggedIn;
+  const showLoginPromo = !hideLogin && !isAuthLoading && !isLoggedIn && !accountConnectionState;
   const shouldShowLoginPromoTip = showLoginPromo && showLoginPromoTip;
   const shouldReserveLoginPromoTipSpace = shouldShowLoginPromoTip;
   const batchSelectableKeySet = useMemo(

@@ -44,7 +44,9 @@ import { clearMediaAccountState } from '../store/slices/coworkSlice';
 import type { Model } from '../store/slices/modelSlice';
 import {
   clearServerModels,
+  ServerModelLoadStatus,
   setSelectedModel,
+  setServerModelLoadStatus,
   setServerModels,
 } from '../store/slices/modelSlice';
 import { AuthRecovery } from './authRecovery';
@@ -1183,9 +1185,22 @@ class AuthService {
     const totalAttempts = SERVER_MODEL_LOAD_RETRY_DELAYS_MS.length + 1;
     const loadName = requestSnapshot.isLoggedIn ? 'server model load' : 'public catalog model load';
     for (let attempt = 1; attempt <= totalAttempts; attempt++) {
+      store.dispatch(setServerModelLoadStatus(ServerModelLoadStatus.Loading));
       const outcome = requestSnapshot.isLoggedIn
         ? await this.requestServerModels(requestSnapshot)
         : await this.requestPublicPricingCatalogModels(requestSnapshot);
+      // A failed request from a previous account must not overwrite the new
+      // account's loading state (including failures thrown before a response).
+      if (
+        this.serverModelLoadSequence !== loadSequence
+        || !isAuthAccountRequestCurrent(requestSnapshot, store.getState().auth)
+      ) {
+        settleFirstAttempt(false);
+        return;
+      }
+      if (outcome === ServerModelLoadOutcome.Retryable) {
+        store.dispatch(setServerModelLoadStatus(ServerModelLoadStatus.Error));
+      }
       if (attempt === 1) {
         settleFirstAttempt(outcome === ServerModelLoadOutcome.Loaded);
       }
