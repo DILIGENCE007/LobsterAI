@@ -42,6 +42,7 @@ import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
 import EngineFailureOverlay from './components/cowork/EngineFailureOverlay';
 import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
 import ExpertPlazaView from './components/experts/ExpertPlazaView';
+import FeedbackDialog from './components/feedback/FeedbackDialog';
 import LibraryView from './components/library/LibraryView';
 import FirstRunLoginIntroduction from './components/login/FirstRunLoginIntroduction';
 import NewUserOnboardingOverlay, {
@@ -232,6 +233,7 @@ const logAppUpdateRendererLifecycle = (
 
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions & { requestId: number }>({ requestId: 0 });
   const [mainView, setMainView] = useState<MainView>(MainView.Cowork);
   const [libraryNavigationRequest, setLibraryNavigationRequest] = useState<{
@@ -715,7 +717,6 @@ const App: React.FC = () => {
 
   const handleShowSettings = useCallback((options?: SettingsOpenOptions) => {
     setSettingsOptions((current) => ({
-      openFeedback: options?.openFeedback,
       initialTab: options?.initialTab,
       notice: options?.notice,
       noticeI18nKey: options?.noticeI18nKey,
@@ -1551,7 +1552,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat || event.defaultPrevented || isShortcutInputActive()) return;
+      if (event.repeat || event.defaultPrevented || showFeedback || isShortcutInputActive()) return;
 
       const { shortcuts } = configService.getConfig();
       const activeShortcuts = {
@@ -1750,6 +1751,7 @@ const App: React.FC = () => {
     isUpdateInteractionBlocked,
     mainView,
     isPermissionModalOpen,
+    showFeedback,
     showSettings,
     showUpdateModal,
   ]);
@@ -1835,10 +1837,10 @@ const App: React.FC = () => {
   }, [handleShowSettings]);
 
   useEffect(() => {
-    const openFeedback = () => handleShowSettings({ openFeedback: true });
-    window.addEventListener(FeedbackUiEvent.OpenSettings, openFeedback);
-    return () => window.removeEventListener(FeedbackUiEvent.OpenSettings, openFeedback);
-  }, [handleShowSettings]);
+    const openFeedback = () => setShowFeedback(true);
+    window.addEventListener(FeedbackUiEvent.Open, openFeedback);
+    return () => window.removeEventListener(FeedbackUiEvent.Open, openFeedback);
+  }, []);
 
   // 监听托盘菜单、桌面悬浮球打开设置的 IPC 事件
   useEffect(() => {
@@ -2040,6 +2042,7 @@ const App: React.FC = () => {
   }, [pendingPermission, handlePermissionResponse, handleMinimizePermission, isPendingPermissionMinimized]);
 
   const isOverlayActive = showSettings
+    || showFeedback
     || showUpdateModal
     || showUpdateInstallConfirm
     || isPermissionModalOpen
@@ -2138,7 +2141,6 @@ const App: React.FC = () => {
             <SkinProvider>
               <Settings
                 onClose={handleCloseSettings}
-                openFeedback={settingsOptions.openFeedback}
                 initialTab={settingsOptions.initialTab}
                 initialTabRequestId={settingsOptions.requestId}
                 notice={settingsOptions.notice}
@@ -2293,7 +2295,7 @@ const App: React.FC = () => {
 
       <EngineFailureOverlay
         onRequestAppSettings={handleShowSettings}
-        suspended={showSettings || showUpdateModal || showUpdateInstallConfirm || isPermissionModalOpen}
+        suspended={showSettings || showFeedback || showUpdateModal || showUpdateInstallConfirm || isPermissionModalOpen}
       />
 
       {/* 设置窗口显示在所有主内容之上，但不影响主界面的交互 */}
@@ -2301,7 +2303,6 @@ const App: React.FC = () => {
         <Settings
           onClose={handleCloseSettings}
           onStartAiSkin={handleStartAiSkinFromSettings}
-          openFeedback={settingsOptions.openFeedback}
           initialTab={settingsOptions.initialTab}
           initialTabRequestId={settingsOptions.requestId}
           notice={settingsOptions.notice}
@@ -2309,6 +2310,7 @@ const App: React.FC = () => {
           enterpriseConfig={enterpriseConfig}
         />
       )}
+      {showFeedback && <FeedbackDialog onClose={() => setShowFeedback(false)} />}
       {showUpdateModal && updateInfo && (
         <AppUpdateModal
           updateState={appUpdateState}

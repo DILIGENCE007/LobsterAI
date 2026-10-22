@@ -1,4 +1,4 @@
-import { ArchiveBoxIcon, ArrowPathIcon, ArrowPathRoundedSquareIcon, ChatBubbleLeftIcon, CheckCircleIcon, CpuChipIcon, CubeIcon, EnvelopeIcon, ExclamationTriangleIcon, GlobeAltIcon, InformationCircleIcon, MagnifyingGlassIcon, SignalIcon, SunIcon, TrashIcon, WrenchScrewdriverIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ArchiveBoxIcon, ArrowPathIcon, ArrowPathRoundedSquareIcon, ChatBubbleLeftIcon, CheckCircleIcon, CpuChipIcon, CubeIcon, EnvelopeIcon, ExclamationTriangleIcon, GlobeAltIcon, InformationCircleIcon, MagnifyingGlassIcon, QuestionMarkCircleIcon, SignalIcon, SunIcon, TrashIcon, WrenchScrewdriverIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -82,6 +82,7 @@ import IMSettings from './im/IMSettings';
 import PluginsSettings, { type PluginPendingChanges, type PluginsSettingsHandle } from './plugins/PluginsSettings';
 import { AboutOpenSourceAction, AboutOpenSourceRows, AboutOpenSourceStarPrompt } from './settings/AboutOpenSource';
 import BrowserWebAccessSettings from './settings/BrowserWebAccessSettings';
+import HelpFeedbackSettings from './settings/HelpFeedbackSettings';
 import {
   buildGeminiConnectionTestRequest,
   buildOpenAICompatibleChatCompletionsUrl,
@@ -119,7 +120,7 @@ import SkinPresentationScope from './skin/SkinPresentationScope';
 import SkinSettingsSection from './skin/SkinSettingsSection';
 import ThemedSelect from './ui/ThemedSelect';
 
-type TabType = 'general' | 'appearance' | 'desktopCompanion' | 'coworkAgentEngine' | 'model' | 'browserWebAccess' | 'coworkMemory' | 'coworkDreaming' | 'shortcuts' | 'im' | 'email' | 'plugins' | 'experimental' | 'about';
+type TabType = 'general' | 'appearance' | 'desktopCompanion' | 'coworkAgentEngine' | 'model' | 'browserWebAccess' | 'coworkMemory' | 'coworkDreaming' | 'shortcuts' | 'im' | 'email' | 'plugins' | 'experimental' | 'help' | 'about';
 
 const waitForNextPaint = (): Promise<void> => new Promise(resolve => {
   window.requestAnimationFrame(() => {
@@ -945,7 +946,6 @@ const FloatingOrbTabIcon: React.FC<{ className?: string }> = ({ className }) => 
 );
 
 export type SettingsOpenOptions = {
-  openFeedback?: boolean;
   initialTab?: TabType;
   notice?: string;
   noticeI18nKey?: string;
@@ -1392,7 +1392,6 @@ const Settings: React.FC<SettingsProps> = ({
   onStartAiSkin,
   initialTab,
   initialTabRequestId,
-  openFeedback,
   notice,
   noticeI18nKey,
   noticeExtra,
@@ -1408,7 +1407,7 @@ const Settings: React.FC<SettingsProps> = ({
   } = useSkin();
   // 状态
   const [activeTab, setActiveTab] = useState<TabType>(initialTab ?? 'general');
-  const [feedbackOpen, setFeedbackOpen] = useState(Boolean(openFeedback));
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
   const [themeId, setThemeId] = useState<string>(themeService.getDefaultThemeId());
   const [uiFontSize, setUiFontSize] = useState<number>(FontPreferences.UiFontSizeDefault);
@@ -2329,10 +2328,6 @@ const Settings: React.FC<SettingsProps> = ({
       setActiveTab(initialTab);
     }
   }, [initialTab, initialTabRequestId]);
-
-  useEffect(() => {
-    if (openFeedback) setFeedbackOpen(true);
-  }, [openFeedback, initialTabRequestId]);
 
   // Subscribe to language changes
   useEffect(() => {
@@ -4384,6 +4379,7 @@ const Settings: React.FC<SettingsProps> = ({
       { key: 'plugins' as TabType,        label: i18nService.t('pluginsTab'),     icon: <PlugIcon className="h-5 w-5" /> },
       { key: 'experimental' as TabType,   label: i18nService.t('experimentalTab'), icon: <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3v6.4c0 .35-.09.68-.27.98l-4.4 7.34A2 2 0 0 0 6.8 20.75h10.4a2 2 0 0 0 1.72-3.03l-4.4-7.34a1.9 1.9 0 0 1-.27-.98V3M8.25 3h7.5M7.5 14.25h9" /></svg> },
       { key: 'shortcuts' as TabType,      label: i18nService.t('shortcuts'),      icon: <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5"><rect x="2" y="4" width="20" height="14" rx="2" /><line x1="6" y1="8" x2="8" y2="8" /><line x1="10" y1="8" x2="12" y2="8" /><line x1="14" y1="8" x2="16" y2="8" /><line x1="6" y1="12" x2="8" y2="12" /><line x1="10" y1="12" x2="14" y2="12" /><line x1="16" y1="12" x2="18" y2="12" /><line x1="8" y1="15.5" x2="16" y2="15.5" /></svg> },
+      { key: 'help' as TabType,           label: i18nService.t('helpAndFeedback'), icon: <QuestionMarkCircleIcon className="h-5 w-5" /> },
       { key: 'about' as TabType,          label: i18nService.t('about'),          icon: <InformationCircleIcon className="h-5 w-5" /> },
     ];
     // Filter out tabs hidden by enterprise config
@@ -5702,6 +5698,20 @@ const Settings: React.FC<SettingsProps> = ({
           />
         );
 
+      case 'help':
+        return (
+          <HelpFeedbackSettings
+            contactEmail={ABOUT_CONTACT_EMAIL}
+            userManualUrl={ABOUT_USER_MANUAL_URL}
+            userCommunityUrl={ABOUT_USER_COMMUNITY_URL}
+            emailCopied={emailCopied}
+            onOpenFeedback={() => setFeedbackOpen(true)}
+            onCopyContactEmail={handleCopyContactEmail}
+            onOpenUserManual={handleOpenUserManual}
+            onOpenUserCommunity={handleOpenUserCommunity}
+          />
+        );
+
       case 'about':
         return (
           <div className="flex min-h-full flex-col items-center pt-6 pb-3">
@@ -5724,8 +5734,8 @@ const Settings: React.FC<SettingsProps> = ({
             <span className="text-xs text-secondary mt-1">v{appVersion}</span>
 
             {/* Info Card */}
-            <div className="w-full mt-8 rounded-xl border border-border overflow-hidden">
-              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-border">
+            <div className="w-full mt-8 divide-y divide-border rounded-xl border border-border overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
                 <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutVersion')}</span>
                 <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
                   <span className="text-sm text-secondary">{appVersion}</span>
@@ -5750,53 +5760,6 @@ const Settings: React.FC<SettingsProps> = ({
                 </div>
               </div>
               {showOpenSourceEntries && <AboutOpenSourceRows onAction={reportAboutOpenSourceAction} />}
-              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-border">
-                <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutContactEmail')}</span>
-                <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void handleCopyContactEmail();
-                    }}
-                    title={i18nService.t('copyToClipboard')}
-                    className="min-w-0 break-all text-right text-sm text-secondary bg-transparent border-none appearance-none p-0 m-0 cursor-pointer focus:outline-none"
-                  >
-                    {ABOUT_CONTACT_EMAIL}
-                  </button>
-                  {emailCopied && (
-                    <span className="text-[11px] leading-4 text-emerald-600 dark:text-emerald-400">
-                      {i18nService.t('copied')}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-border">
-                <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutUserCommunity')}</span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleOpenUserCommunity();
-                  }}
-                  className="min-w-0 break-all text-right text-sm text-secondary hover:text-primary dark:hover:text-primary bg-transparent border-none appearance-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded-md cursor-pointer focus:outline-none hover:bg-surface-raised transition-colors"
-                >
-                  {ABOUT_USER_COMMUNITY_URL}
-                </button>
-              </div>
-              <div className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3${testModeUnlocked ? ' border-b border-border' : ''}`}>
-                <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutUserManual')}</span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleOpenUserManual();
-                  }}
-                  className="min-w-0 break-all text-right text-sm text-secondary hover:text-primary dark:hover:text-primary bg-transparent border-none appearance-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded-md cursor-pointer focus:outline-none hover:bg-surface-raised transition-colors"
-                >
-                  {ABOUT_USER_MANUAL_URL}
-                </button>
-              </div>
               {testModeUnlocked && (
                 <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
                   <span className="shrink-0 text-sm text-foreground">{i18nService.t('testMode')}</span>
@@ -5882,27 +5845,19 @@ const Settings: React.FC<SettingsProps> = ({
             <h2 className="text-lg font-semibold text-foreground">{i18nService.t('settings')}</h2>
           </div>
           <nav className="flex flex-col gap-0.5 px-3 pb-4">
-            {sidebarTabs.map((tab, index) => (
-              <React.Fragment key={tab.key}>
-                {(tab.key === 'about' || (index === sidebarTabs.length - 1 && !sidebarTabs.some(item => item.key === 'about'))) && (
-                  <button type="button" onClick={() => setFeedbackOpen(true)} className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground">
-                    <ChatBubbleLeftIcon className="h-5 w-5 shrink-0" />
-                    {i18nService.t('feedbackTitle')}
-                  </button>
-                )}
-                <button
-                  key={tab.key}
-                  onClick={() => handleTabChange(tab.key)}
-                  className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left ${
-                    activeTab === tab.key
-                      ? 'bg-primary-muted text-primary'
-                      : 'text-secondary hover:text-foreground hover:bg-surface-raised'
-                  }`}
-                >
-                  <span className="shrink-0">{tab.icon}</span>
-                  <span className="min-w-0 truncate">{tab.label}</span>
-                </button>
-              </React.Fragment>
+            {sidebarTabs.map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => handleTabChange(tab.key)}
+                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left ${
+                  activeTab === tab.key
+                    ? 'bg-primary-muted text-primary'
+                    : 'text-secondary hover:text-foreground hover:bg-surface-raised'
+                }`}
+              >
+                <span className="shrink-0">{tab.icon}</span>
+                <span className="min-w-0 truncate">{tab.label}</span>
+              </button>
             ))}
           </nav>
         </div>

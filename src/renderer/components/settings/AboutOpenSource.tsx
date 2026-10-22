@@ -22,7 +22,7 @@ interface AboutOpenSourceProps {
   onAction: (action: AboutOpenSourceAction) => void;
 }
 
-const infoRowClassName = 'flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-border';
+const infoRowClassName = 'flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3';
 const infoRowLinkClassName = 'min-w-0 break-all text-right text-sm text-secondary hover:text-primary dark:hover:text-primary bg-transparent border-none appearance-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded-md cursor-pointer focus:outline-none hover:bg-surface-raised transition-colors';
 const promptButtonClassName = 'inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 text-xs font-medium text-foreground transition-colors hover:border-primary hover:text-primary dark:hover:border-primary dark:hover:text-primary';
 

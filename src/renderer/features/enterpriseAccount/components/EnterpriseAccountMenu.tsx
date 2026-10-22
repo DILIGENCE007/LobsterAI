@@ -2,8 +2,8 @@ import {
   ArrowRightStartOnRectangleIcon,
   BuildingOffice2Icon,
   ChartBarIcon,
-  ChatBubbleLeftIcon,
   ChevronRightIcon,
+  QuestionMarkCircleIcon,
 } from '@heroicons/react/24/outline';
 import {
   type FocusEvent,
@@ -435,11 +435,11 @@ export const EnterpriseAccountMenu = ({
 
         <div className="border-b border-border py-1">
           <MenuAction
-            icon={<ChatBubbleLeftIcon className={actionIconClassName} />}
+            icon={<QuestionMarkCircleIcon className={actionIconClassName} />}
             label={i18nService.t('feedbackTitle')}
             onClick={() => {
               onClose();
-              window.dispatchEvent(new Event(FeedbackUiEvent.OpenSettings));
+              window.dispatchEvent(new Event(FeedbackUiEvent.Open));
             }}
           />
         </div>

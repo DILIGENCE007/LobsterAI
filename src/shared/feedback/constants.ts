@@ -1,4 +1,4 @@
-export const FeedbackUiEvent = { OpenSettings: 'feedback:open-settings' } as const;
+export const FeedbackUiEvent = { Open: 'feedback:open' } as const;
 export const FeedbackIpc = { Submit: 'feedback:submit' } as const;
 export const FeedbackCategory = {
   Issue: 'issue',
