@@ -24,6 +24,8 @@ import type {
   EnterpriseAccountIdentity,
 } from '../../../../shared/enterpriseAccount/types';
 import { FeedbackUiEvent } from '../../../../shared/feedback/constants';
+import { AccountConnectionNotice } from '../../../components/AccountConnectionNotice';
+import { getAccountConnectionState } from '../../../components/accountConnectionState';
 import { getAccountMenuDisplayName } from '../../../components/accountMenuState';
 import { authService } from '../../../services/auth';
 import {
@@ -70,6 +72,7 @@ export const EnterpriseAccountMenu = ({
   onClose,
 }: EnterpriseAccountMenuProps) => {
   const user = useSelector((state: RootState) => state.auth.user);
+  const connectionState = useSelector((state: RootState) => getAccountConnectionState(state.auth));
   const isSuperAdmin = context.role === EnterpriseMemberRole.SuperAdmin;
   const accountName = getAccountMenuDisplayName({
     fallback: context.enterpriseName,
@@ -352,6 +355,9 @@ export const EnterpriseAccountMenu = ({
           <div className="truncate text-sm font-medium text-foreground">
             {accountName}
           </div>
+          {connectionState && (
+            <AccountConnectionNotice state={connectionState} className="mt-2 w-full text-xs" />
+          )}
           <div className="mt-1 break-words text-xs text-secondary">
             {i18nService.t('enterpriseAccountBelongsTo').replace('{name}', context.enterpriseName)}
           </div>
