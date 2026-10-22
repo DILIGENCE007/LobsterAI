@@ -3,6 +3,7 @@ import type { ExpertScenario, PresetAgent } from '@shared/agent/presets';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
+import AgentAvatarIcon from '../agent/AgentAvatarIcon';
 import { MANAGEMENT_PAGE_TITLE_TEXT, MANAGEMENT_TITLE_TEXT } from '../common/managementTypography';
 import { EXPERT_SCENARIO_STYLES, expertText } from './catalog';
 import { SCENARIO_PRESENTATION } from './scenarioPresentation';
@@ -48,6 +49,7 @@ const ExpertFeaturedScenarios: React.FC<{ presets: PresetAgent[]; scenarios: Exp
             return <button data-expert-id={preset.id} data-expert-scenario={scenario.id} key={preset.id} type="button" onClick={() => onSelect(preset, scenario.id)}
               onFocus={event => event.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })}
               className="group -mx-2 flex min-h-11 w-[calc(100%+1rem)] items-center gap-2 rounded-xl px-2 py-2 text-left text-foreground transition-colors hover:bg-surface/70 focus-visible:bg-surface/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50">
+              <AgentAvatarIcon value={preset.icon} expertFallback className="h-6 w-6" />
               <span title={name} className={`min-w-0 flex-1 truncate ${MANAGEMENT_TITLE_TEXT} leading-6`}>{name}</span>
               <ChevronRightIcon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted opacity-50 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
             </button>;
