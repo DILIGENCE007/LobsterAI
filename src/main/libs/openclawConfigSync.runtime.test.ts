@@ -4279,6 +4279,26 @@ describe('OpenClawConfigSync runtime config output', () => {
     for (const server of available) expect(withoutBridge.mcp.servers[server]).toEqual(launch(server));
   });
 
+  test.each([
+    { globalProxyEnabled: true, followGlobalProxy: true, expected: true },
+    { globalProxyEnabled: true, followGlobalProxy: false, expected: false },
+    { globalProxyEnabled: false, followGlobalProxy: true, expected: false },
+    { globalProxyEnabled: false, followGlobalProxy: false, expected: false },
+  ])('maps web fetch proxy preference with global=$globalProxyEnabled and follow=$followGlobalProxy', async ({ globalProxyEnabled, followGlobalProxy, expected }) => {
+    const { setSystemProxyEnabled } = await import('./systemProxy');
+    const { defaultBrowserWebAccessConfig } = await import('../../shared/browserWebAccess/constants');
+    setSystemProxyEnabled(globalProxyEnabled);
+    const sync = await createSync({
+      getBrowserWebAccessConfig: () => ({
+        webFetch: { ...defaultBrowserWebAccessConfig.webFetch, followGlobalProxy },
+      }),
+    });
+
+    expect(sync.sync('web-fetch-proxy').ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.tools.web.fetch.useTrustedEnvProxy).toBe(expected);
+  });
+
   test('writes browser and web fetch access settings', async () => {
     const { setSystemProxyEnabled } = await import('./systemProxy');
     const {
@@ -4394,7 +4414,7 @@ describe('OpenClawConfigSync runtime config output', () => {
       ssrfPolicy: { allowRfc2544BenchmarkRange: true },
     });
     expect(config.tools.web.fetch.useEnvProxy).toBeUndefined();
-    expect(config.tools.web.fetch.useTrustedEnvProxy).toBeUndefined();
+    expect(config.tools.web.fetch.useTrustedEnvProxy).toBe(true);
 
     browserDisplayMode = BrowserDisplayMode.InApp;
     let browserCallbackUrl: string | null = 'http://127.0.0.1:3210/browser/tool';

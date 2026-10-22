@@ -35,6 +35,10 @@ const electronMocks = vi.hoisted(() => {
         listeners.set(event, [...(listeners.get(event) ?? []), listener]);
         return webContents;
       }),
+      removeListener: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+        listeners.set(event, (listeners.get(event) ?? []).filter(value => value !== listener));
+        return webContents;
+      }),
       reload: vi.fn(),
       sendInputEvent: vi.fn(),
       setWindowOpenHandler: vi.fn<(handler: (details: Electron.HandlerDetails) => Electron.WindowOpenHandlerResponse) => void>(),
@@ -480,6 +484,68 @@ describe('AgentBrowserHost popup navigation', () => {
 });
 
 describe('AgentBrowserHost OpenClaw browser baseline', () => {
+  test('finishes navigation when the new top-level document is ready despite a hanging resource', async () => {
+    vi.useFakeTimers();
+    try {
+      const host = createHost();
+      await host.newPage();
+      const contents = electronMocks.webContentsInstances[0];
+      let started!: () => void;
+      const loading = new Promise<void>(resolve => { started = resolve; });
+      contents.loadURL.mockImplementationOnce(() => { started(); return new Promise(() => {}); });
+      let settled = false;
+      const navigation = host.handleToolRequest({
+        tool: BrowserMcpTool.NavigatePage,
+        args: { pageId: 1, url: 'https://example.com/slow-image', timeout: 100 },
+      }).then(result => { settled = true; return result; });
+      await loading;
+      contents.emit('dom-ready'); // A previous document must not finish this navigation.
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      contents.emit('did-navigate', {}, 'https://example.com/slow-image', 200, 'OK');
+      contents.emit('dom-ready');
+      await vi.advanceTimersByTimeAsync(101);
+      expect((await navigation).isError).not.toBe(true);
+      expect(contents.removeListener).toHaveBeenCalledWith('dom-ready', expect.any(Function));
+      expect(contents.removeListener).toHaveBeenCalledWith('did-navigate', expect.any(Function));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('keeps a failed main-document navigation failed even if an error page becomes ready', async () => {
+    const host = createHost();
+    await host.newPage();
+    const contents = electronMocks.webContentsInstances[0];
+    contents.loadURL.mockRejectedValueOnce(new Error('ERR_NAME_NOT_RESOLVED'));
+    const result = await host.handleToolRequest({
+      tool: BrowserMcpTool.NavigatePage, args: { pageId: 1, url: 'https://missing.invalid' },
+    });
+    contents.emit('dom-ready');
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain('ERR_NAME_NOT_RESOLVED');
+  });
+
+  test('times out an uncommitted document and removes its navigation listeners', async () => {
+    vi.useFakeTimers();
+    try {
+      const host = createHost();
+      await host.newPage();
+      const contents = electronMocks.webContentsInstances[0];
+      contents.removeListener.mockClear();
+      contents.loadURL.mockImplementationOnce(() => new Promise(() => {}));
+      const navigation = host.handleToolRequest({
+        tool: BrowserMcpTool.NavigatePage,
+        args: { pageId: 1, url: 'https://example.com/hang-document', timeout: 100 },
+      });
+      await vi.advanceTimersByTimeAsync(101);
+      expect((await navigation).isError).toBe(true);
+      expect(contents.removeListener).toHaveBeenCalledWith('dom-ready', expect.any(Function));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('serializes concurrent cold list requests into one blank page', async () => {
     const host = createHost();
 
