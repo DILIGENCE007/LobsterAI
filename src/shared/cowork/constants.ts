@@ -71,6 +71,7 @@ export const CoworkIpcChannel = {
   RenameSession: 'cowork:session:rename',
   ConfigSet: 'cowork:config:set',
   PermissionRespond: 'cowork:permission:respond',
+  MediaConfirmation: 'cowork:media:confirmation',
   GetPendingQuestions: 'cowork:question:pending',
   StreamPermissionDismiss: 'cowork:stream:permissionDismiss',
   CancelMediaTask: 'cowork:media:cancel',

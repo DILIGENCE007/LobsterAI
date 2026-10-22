@@ -1,7 +1,7 @@
 /** Versioned additions to rlog. Existing action names retain their original meaning. */
 export const UsageAnalytics = {
   SchemaVersion: 1,
-  MediaSchemaVersion: 2,
+  MediaSchemaVersion: 3,
   ResourceSaltStoreKey: 'usage_analytics_resource_salt',
   MaxTrackedItems: 500,
 } as const;

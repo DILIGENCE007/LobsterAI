@@ -23,6 +23,7 @@ import { CoworkErrorModelSource } from '../../shared/cowork/errorDetail';
 import { DECISION_MODEL_PLUGIN_ID } from '../../shared/decisionModel/constants';
 import { WeixinPlugin } from '../../shared/im/weixin';
 import { normalizeMcpServerUrlInput } from '../../shared/mcp/url';
+import { MediaConfirmationPolicy } from '../../shared/media/confirmation';
 import { OFFICE_EDITORS } from '../../shared/office/editors';
 import {
   OPENCLAW_MODEL_COMPAT_PLUGIN_ID,
@@ -2923,6 +2924,7 @@ export class OpenClawConfigSync {
           callbackUrl: mediaCallbackUrl,
           secret: '${LOBSTER_MCP_BRIDGE_SECRET}',
           requestTimeoutMs: 150000,
+          confirmationTimeoutMs: MediaConfirmationPolicy.RetentionMs,
         },
       };
     }

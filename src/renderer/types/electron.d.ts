@@ -1339,6 +1339,7 @@ interface IElectronAPI {
     ) => () => void;
     onStreamPermissionDismiss: (callback: (data: { requestId: string }) => void) => () => void;
     getPendingQuestions?: () => Promise<CoworkPermissionRequest[]>;
+    mediaConfirmation?: (command: import('../../shared/media/confirmation').MediaConfirmationCommand) => Promise<{ success: boolean }>;
     onStreamComplete: (
       callback: (data: { sessionId: string; claudeSessionId: string | null }) => void,
     ) => () => void;

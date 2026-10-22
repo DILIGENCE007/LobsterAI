@@ -43,7 +43,7 @@ import {
   LogReporterStoreKey,
   PromptAnalyticsConversationState,
 } from '../shared/analytics/constants';
-import { UsageAnalytics, type UsageContext, UsageOrigin, UsageOutcome, UsageStage } from '../shared/analytics/usage';
+import { UsageAnalytics, type UsageContext, UsageOrigin, UsageStage } from '../shared/analytics/usage';
 import { AppIpcChannel, type OpenSettingsRequest, OpenSettingsTab } from '../shared/app/constants';
 import { AppSettingsAutoLaunchErrorCode, AppSettingsIpc } from '../shared/appSettings/constants';
 import { type AppUpdateActiveWorkloads, AppUpdateIpc } from '../shared/appUpdate/constants';
@@ -184,9 +184,10 @@ import {
   LocalWebServicesIpc,
 } from '../shared/localWebServices/constants';
 import { LogIpc } from '../shared/logExport/constants';
+import { ConfirmationBehavior, type MediaConfirmationCommand, MediaConfirmationReason } from '../shared/media/confirmation';
 import { MEDIA_V2_TASKS_PATH, MediaDeliveryStatus, MediaProtocol, MediaTaskPhase, MediaTaskStatus, TERMINAL_MEDIA_TASK_STATUSES } from '../shared/media/constants';
 import { type MediaPreference, MediaType } from '../shared/media/defaultPolicy';
-import { estimateVideoCredits } from '../shared/media/videoCreditEstimate';
+import { mediaServerFailureFields } from '../shared/media/usage';
 import { canonicalizeMediaModelId, HAPPYHORSE_1_1_MODEL_ID, mediaModelDisplayName } from '../shared/mediaModelAliases';
 import { type ModelPresetId, parseModelPresetId } from '../shared/modelPresets/constants';
 import {
@@ -672,6 +673,7 @@ import { StartupProfiler } from './startupProfiler';
 import { SubagentMessageStore } from './subagentMessageStore';
 import { SubagentRunStore } from './subagentRunStore';
 import { createTray, destroyTray, updateTrayMenu, updateTrayReminder } from './trayManager';
+import { videoConfirmationFailure, videoConfirmationQuestions } from './videoGenerationConfirmation';
 import {
   AppWindowStoreKey,
   MIN_APP_WINDOW_HEIGHT,
@@ -6464,6 +6466,7 @@ if (!gotTheLock) {
   });
 
   const handleMediaGenerationCallback = async (request: {
+    signal?: AbortSignal;
     tool: string;
     args: Record<string, unknown>;
     context: { sessionKey: string; toolCallId: string; runId?: string };
@@ -6824,7 +6827,7 @@ if (!gotTheLock) {
       const modelCapability = modelBody.data?.find(model => canonicalizeMediaModelId(model.modelId) === canonicalizeMediaModelId(selectedModel));
       if (!modelCapability) {
         return { content: [{ type: 'text', text: t('mediaSelectedModelUnavailable') }], isError: true,
-          details: { status: 'failed', warnings: ['MEDIA_MODEL_UNAVAILABLE'] } };
+          details: { status: 'failed', warnings: [MediaGenerationGateReason.ModelUnavailable] } };
       }
       const useDurableTasks = modelCapability.protocolVersions?.includes(MediaProtocol.Durable) === true;
       const endpoint = useDurableTasks ? MEDIA_V2_TASKS_PATH
@@ -7021,48 +7024,27 @@ if (!gotTheLock) {
         }
       }
 
-      // Video generation confirmation: inform user about cost and duration
       if (mediaType === 'video') {
-        const estimatedCredits = estimateVideoCredits(modelCapability.pricing, params);
-        const subtitle = estimatedCredits !== undefined
-          ? t('mediaVideoConfirmCostEstimate', { credits: estimatedCredits })
-          : [t('mediaVideoConfirmCostUnknown'), modelCapability.pricingDescription?.trim()].filter(Boolean).join('\n');
-        const questionText = t('mediaVideoConfirmDescription').replace('{url}', getPortalTasksUrl())
-          + '\n\n' + t('mediaVideoConfirmRequest', {
-            model: selectedModel,
-            resolution: String(params.resolution ?? '-'),
-            duration: String(params.durationSeconds ?? '-'),
-            prompt: prompt.slice(0, 500),
-          });
-        mediaUsage.confirmation(request.context.toolCallId, UsageOutcome.Requested, selectedModel);
+        const confirmationInput = { model: selectedModel, params, prompt, portalUrl: getPortalTasksUrl() };
         const confirmResponse = await getMcpRuntime().askUserInternal(
-          [{
-            question: questionText,
-            title: t('mediaVideoConfirmTitle'),
-            subtitle,
-            options: [
-              { label: t('mediaVideoConfirmAccept'), description: t('mediaVideoConfirmStart') },
-              { label: t('mediaVideoConfirmCancel'), description: t('mediaVideoConfirmLater') },
-            ],
-          }],
-          undefined,
-          { sessionKey: request.context.sessionKey },
+          videoConfirmationQuestions(confirmationInput, modelCapability, t), undefined, {
+            sessionKey: request.context.sessionKey,
+            recoverableMedia: {
+              isCurrent: () => isRequestAccountCurrent() && serverBaseUrl === getServerApiBaseUrl(),
+              signal: request.signal,
+              onEvent: event => mediaUsage.confirmationEvent(request.context.toolCallId, event, selectedModel),
+              refresh: async () => {
+                const response = await fetchWithAuth(serverBaseUrl + '/api/media/videos/models', { signal: AbortSignal.timeout(15_000) });
+                const body = await response.json() as typeof modelBody;
+                const model = body.code === 0 && body.data?.find(item => canonicalizeMediaModelId(item.modelId) === selectedModel);
+                if (!response.ok || !model || !isRequestAccountCurrent()) throw new Error('Video confirmation refresh failed');
+                return videoConfirmationQuestions(confirmationInput, model, t);
+              },
+            },
+          },
         );
-
-        const userCancelled = !isMediaGenerationConfirmed(
-          confirmResponse, questionText, t('mediaVideoConfirmAccept'),
-        );
-
         if (!isRequestAccountCurrent()) return staleAccountResult();
-        mediaUsage.confirmation(request.context.toolCallId, userCancelled ? UsageOutcome.Denied : UsageOutcome.Allowed);
-        if (userCancelled) {
-          console.log('[MediaGeneration] user cancelled video generation confirmation.');
-          return {
-            content: [{ type: 'text', text: 'Video generation cancelled by user.' }],
-            isError: true,
-            details: { status: 'cancelled', reason: 'USER_CANCELLED' },
-          };
-        }
+        if (confirmResponse?.behavior !== ConfirmationBehavior.Allow) return videoConfirmationFailure(confirmResponse, t);
       }
 
       console.log('[MediaGeneration] sending generate request to server:', serializeForLog({
@@ -7080,6 +7062,9 @@ if (!gotTheLock) {
         params: summarizeMediaGenerationParamsForLog(params),
       }));
       if (!isRequestAccountCurrent()) return staleAccountResult();
+      if (mediaType === 'video' && request.signal?.aborted) {
+        return videoConfirmationFailure({ behavior: ConfirmationBehavior.Deny, reason: MediaConfirmationReason.Interrupted }, t);
+      }
       const intent = useDurableTasks && sessionId ? getMediaTaskStore().beginIntent({
         callKey: `${sessionId}:${request.context.toolCallId}`,
         ownerAccountKey: requestAccountScope.ownerAccountKey,
@@ -7117,6 +7102,10 @@ if (!gotTheLock) {
       }
 
       const enterpriseQuotaError = resolveEnterpriseQuotaError(body.code, body.message);
+      if (body.code !== 0 && !(intent && resp.status >= 500)) {
+        mediaUsage.reject(request.context.toolCallId, body.code,
+          mediaServerFailureFields(body.code, Boolean(enterpriseQuotaError)));
+      }
       if (enterpriseQuotaError) {
         console.warn('[MediaGeneration] server rejected generate request because enterprise quota is unavailable:', serializeForLog({
           mediaType,
@@ -7727,7 +7716,8 @@ if (!gotTheLock) {
         }
         else if (response.status < 500) {
           getMediaTaskStore().saveIntent({ ...intent, rejected: true });
-          mediaUsage.reject(intent.toolCallId, String(body.code) + ' ' + (body.message ?? ''));
+          mediaUsage.reject(intent.toolCallId, body.code,
+            mediaServerFailureFields(body.code, Boolean(resolveEnterpriseQuotaError(body.code, body.message))));
           emitMediaTaskMessage(intent.sessionId, body.message || t('mediaGenerationRecoveryFailed'));
         }
       } catch (error) { console.debug('[MediaGeneration] Intent recovery deferred:', error); }
@@ -11778,7 +11768,13 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle(CoworkIpcChannel.GetPendingQuestions, () => getCoworkEngineRouter().getPendingQuestions());
+  ipcMain.handle(CoworkIpcChannel.GetPendingQuestions, async () => [
+    ...await getCoworkEngineRouter().getPendingQuestions(),
+    ...getMcpRuntime().getPendingMediaConfirmations(),
+  ]);
+  ipcMain.handle(CoworkIpcChannel.MediaConfirmation, async (_event, command: MediaConfirmationCommand) => ({
+    success: await getMcpRuntime().actOnMediaConfirmation(command),
+  }));
 
   ipcMain.handle(CoworkIpcChannel.PermissionRespond, async (_event, options: {
     requestId: string;

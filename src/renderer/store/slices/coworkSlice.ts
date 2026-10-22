@@ -27,6 +27,7 @@ import {
   type CoworkSteerStatus as CoworkSteerStatusType,
 } from '../../../shared/cowork/steer';
 import { stripNullChars } from '../../../shared/cowork/text';
+import { readMediaConfirmationState } from '../../../shared/media/confirmation';
 import {
   CoworkCollaborationMode,
   type CoworkCollaborationMode as CoworkCollaborationModeType,
@@ -1324,10 +1325,16 @@ const coworkSlice = createSlice({
     },
 
     enqueuePendingPermission(state, action: PayloadAction<CoworkPermissionRequest>) {
-      const alreadyQueued = state.pendingPermissions.some(
-        (permission) => permission.requestId === action.payload.requestId
+      const index = state.pendingPermissions.findIndex(
+        permission => permission.requestId === action.payload.requestId
       );
-      if (alreadyQueued) return;
+      if (index >= 0) {
+        const incoming = readMediaConfirmationState(action.payload.toolInput?.mediaConfirmation);
+        const existing = readMediaConfirmationState(state.pendingPermissions[index].toolInput?.mediaConfirmation);
+        // A reload snapshot must not replace a newer confirmation state.
+        if (incoming && (!existing || incoming.sequence > existing.sequence)) state.pendingPermissions[index] = action.payload;
+        return;
+      }
       state.pendingPermissions.push(action.payload);
     },
 

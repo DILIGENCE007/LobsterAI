@@ -11,6 +11,7 @@ import {
   BrowserCredentialMcpServer,
 } from '../../shared/browserCredentials/constants';
 import { WeixinPlugin } from '../../shared/im/weixin';
+import { MediaConfirmationPolicy } from '../../shared/media/confirmation';
 import { OpenClawSkillReviewMode } from '../../shared/openclawEngine/constants';
 import { OpenClawProviderId, ProviderName } from '../../shared/providers';
 import { DEFAULT_DISCORD_OPENCLAW_CONFIG, DEFAULT_QQ_CONFIG, DiscordDmPolicy } from '../im/types';
@@ -2840,6 +2841,7 @@ describe('OpenClawConfigSync runtime config output', () => {
         callbackUrl: 'http://127.0.0.1:5175/media-callback',
         secret: '${LOBSTER_MCP_BRIDGE_SECRET}',
         requestTimeoutMs: 150000,
+        confirmationTimeoutMs: MediaConfirmationPolicy.RetentionMs,
       },
     });
     expect(config.tools.deny).not.toContain('image_generate');
@@ -2873,6 +2875,7 @@ describe('OpenClawConfigSync runtime config output', () => {
         callbackUrl: 'http://127.0.0.1:5175/media-callback',
         secret: '${LOBSTER_MCP_BRIDGE_SECRET}',
         requestTimeoutMs: 150000,
+        confirmationTimeoutMs: MediaConfirmationPolicy.RetentionMs,
       },
     });
     expect(config.tools.deny).not.toContain('image_generate');
