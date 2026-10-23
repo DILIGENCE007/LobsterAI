@@ -146,7 +146,11 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
 
   useEffect(() => {
     const element = viewport.current; if (!element) return;
-    const observer = new ResizeObserver(() => setViewportSize({ width: element.clientWidth, height: element.clientHeight }));
+    const observer = new ResizeObserver(([entry]) => {
+      // Preserve fractional pixels so zoom rounding cannot toggle the scrollbars on every resize.
+      const { width, height } = entry.contentRect;
+      setViewportSize(current => current.width === width && current.height === height ? current : { width, height });
+    });
     const wheel = (event: WheelEvent) => {
       if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
@@ -277,7 +281,10 @@ export default function ImageEditor({ artifact }: { artifact: Artifact }) {
       viewport.current.scrollTop = drag.current.pan.top - event.clientY + drag.current.pan.y; return;
     }
     const point = imagePoint(event.clientX, event.clientY, stage.current.getBoundingClientRect());
-    if (mode === Mode.Comment) { setSelection(current => current && ({ ...current, ...imageRectangle(drag.current!.start, point) })); return; }
+    if (mode === Mode.Comment) {
+      const start = drag.current.start;
+      setSelection(current => current && ({ ...current, ...imageRectangle(start, point) })); return;
+    }
     if (activeMarkRef.current) {
       const current = activeMarkRef.current;
       const points = current.tool === ImageEditorTool.Pen || current.tool === ImageEditorTool.Eraser ? [...current.points, point].slice(-10000) : [current.points[0], point];
