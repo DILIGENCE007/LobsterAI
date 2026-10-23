@@ -157,7 +157,7 @@ npm run electron:dev
 
 Join the WeChat group for help, feedback, and release news. You can also follow [@LobsterAIYoudao](https://x.com/LobsterAIYoudao) on X.
 
-<img src="https://lobsterai.youdao.com/assets/wechat_group-C529RDAy.png" alt="WeChat community QR code" width="180" />
+<img src="docs/res/wechat-group.png" alt="WeChat community QR code" width="180" />
 
 Report bugs and request features through [GitHub Issues](https://github.com/netease-youdao/LobsterAI/issues/new/choose).
 

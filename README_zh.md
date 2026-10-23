@@ -157,7 +157,7 @@ npm run electron:dev
 
 扫码加入微信交流群，获取帮助、反馈问题、了解最新版本动态。也欢迎在 X 上关注 [@LobsterAIYoudao](https://x.com/LobsterAIYoudao)。
 
-<img src="https://shared.ydstatic.com/market/souti/fihserChatWeb/online/2.1.5/dist/assets/wechat_group-C529RDAy.png" alt="微信交流群二维码" width="180" />
+<img src="docs/res/wechat-group.png" alt="微信交流群二维码" width="180" />
 
 Bug 反馈和功能建议请通过 [GitHub Issues](https://github.com/netease-youdao/LobsterAI/issues/new/choose) 提交。
 
