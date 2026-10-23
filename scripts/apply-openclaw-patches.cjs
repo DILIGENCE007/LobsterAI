@@ -1014,6 +1014,34 @@ const v20260801StrongPatchValidators = {
       snippets: ['does not reject cleanup after bookkeeping when the ended hook throws'],
     },
   ],
+  'openclaw-tool-payload-transcript-fidelity.patch': [
+    {
+      file: 'src/agents/transcript-redact.ts',
+      snippets: [
+        'redactTranscriptText: (value: string) => value,',
+        'byte-identical for provider prefix caches',
+      ],
+      forbiddenSnippets: ['function resolveTranscriptLoggingConfig('],
+    },
+    {
+      file: 'src/agents/session-tool-result-guard.ts',
+      snippets: ['persisted tool details keep their text'],
+      forbiddenSnippets: ['PERSISTED_DETAIL_REDACTION_BOUNDARY'],
+    },
+    {
+      file: 'src/agents/embedded-agent-tool-results.ts',
+      snippets: ['tool arguments and results keep their text in live events'],
+      forbiddenSnippets: ['function redactStringsDeep('],
+    },
+    {
+      file: 'src/agents/transcript-redact.test.ts',
+      snippets: ['keeps 40-character relative paths in tool results unchanged'],
+    },
+    {
+      file: 'src/agents/sessions/agent-session-code-mode-source.test.ts',
+      snippets: ['the next provider context replays exactly what the model saw'],
+    },
+  ],
   'openclaw-view-image-task-cwd.patch': [
     {
       file: 'src/agents/openclaw-tools.ts',

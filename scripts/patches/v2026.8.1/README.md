@@ -875,3 +875,50 @@ Verify `src/agents/tools/web-fetch.proxy.integration.test.ts`, the neighboring
 web-fetch tests, and `src/infra/net/fetch-guard.test.ts`; then rebuild and test a
 real HTTPS tunnel with the generated desktop config. Remove when upstream
 supports an equivalent proxy transport with validated, pinned destination IPs.
+
+## Tool payloads keep their text in transcripts (upstream backport)
+
+`openclaw-tool-payload-transcript-fidelity.patch` backports the agents half of
+[OpenClaw #169063](https://github.com/openclaw/openclaw/pull/169063), merged as
+`f956a1874137ca41764d32930aedafc0a8b9272e` on 2026-10-12. Tool arguments, tool
+results and conversation text are persisted to transcripts, and emitted as live
+tool events, exactly as the model saw them. Masking stays at the logging,
+diagnostic, telemetry and config boundaries. Image payload stripping, replay
+state sanitizing and the persisted detail size caps are unchanged.
+
+Why: v2026.8.1 masks secret-shaped text only in the persisted copy
+(`redactTranscriptMessage`, the tool-result guard's detail capping). The live
+run keeps the original text, so the next run replays different bytes than the
+previous provider request. Provider prefix caches stop at the first masked
+string. The bare AWS secret value pattern also matches ordinary 40-character
+relative paths (`[A-Za-z0-9/+=]{40}` containing upper case, lower case and a
+digit or `/`), so heavy code-reading turns were masked many times. On
+2026-10-22 an external user's follow-ups on a large audit session cost several
+times more credits after the upgrade. A local reproduction with the TokenProxy
+prompt-prefix diagnostics showed a follow-up reading only about 15% of its
+prompt from cache. The prefix broke at the first masked tool payload, not at the
+system prompt or tools.
+
+The upstream preparation, source-exception and history-worker removals are not
+backported because v2026.8.1 does not have the live tool-result preparer. The
+code-mode source append path stays in place; it now copies text that is already
+identical. Tests that asserted persisted masking are flipped to assert that the
+next provider context, the transcript and the live events match the original
+text. `keeps 40-character relative paths in tool results unchanged` and the
+code-mode replay cases fail without the source change.
+
+Verify in the OpenClaw checkout:
+
+```sh
+node scripts/run-vitest.mjs run src/agents/transcript-redact.test.ts src/agents/session-tool-result-guard.test.ts src/agents/session-tool-result-guard.tool-result-persist-hook.test.ts src/agents/embedded-agent-subscribe.tools.test.ts src/agents/embedded-agent-subscribe.handlers.tools.test.ts src/agents/embedded-agent-runner.guard.test.ts src/agents/sessions/agent-session-code-mode-source.test.ts src/agents/sessions/agent-session-runtime-projection.test.ts src/config/sessions/transcript-append-redact.test.ts src/config/sessions/session-accessor.test.ts src/config/sessions/transcript.test.ts src/gateway/cli-session-history.test.ts src/gateway/server-methods/chat.inject.parentid.test.ts src/gateway/worker-environments/transcript-commit.test.ts
+```
+
+Then rebuild the runtime and run a heavy code-reading task with follow-ups.
+The `[OpenClawTokenProxy] prompt prefix` log should report `change=append`
+for follow-ups, and their cached tokens should cover the previous turn's
+prompt. Transcripts written before this patch keep their masked text; that
+history stays a cache miss once and later turns append to it normally.
+
+Removal: v2026.10.10-beta.3 and later main contain #169063; stable v2026.10.6
+does not. Remove this patch when the pinned upstream contains it, and rerun the
+follow-up cache check above.
