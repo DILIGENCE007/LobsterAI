@@ -2,6 +2,7 @@ import { ArrowUpRightIcon, CheckIcon, ChevronRightIcon } from '@heroicons/react/
 import React from 'react';
 
 import { i18nService } from '../../services/i18n';
+import { SETTINGS_DESCRIPTION_TEXT, SETTINGS_ITEM_TITLE_TEXT } from './settingsTypography';
 
 interface HelpFeedbackSettingsProps {
   contactEmail: string;
@@ -20,8 +21,8 @@ const trailingIconClassName = 'h-4 w-4 shrink-0 text-muted transition-colors gro
 
 const RowText: React.FC<{ title: string; description: string }> = ({ title, description }) => (
   <div className="min-w-0 flex-1">
-    <div className="text-sm font-medium text-foreground">{title}</div>
-    <div className="mt-0.5 truncate text-xs text-secondary">{description}</div>
+    <div className={`${SETTINGS_ITEM_TITLE_TEXT} font-medium text-foreground`}>{title}</div>
+    <div className={`mt-0.5 truncate ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>{description}</div>
   </div>
 );
 
@@ -80,7 +81,7 @@ const HelpFeedbackSettings: React.FC<HelpFeedbackSettingsProps> = ({
       />
       <div className={rowClassName}>
         <RowText title={i18nService.t('aboutContactEmail')} description={i18nService.t('helpContactEmailDescription')} />
-        <span className="min-w-0 shrink truncate select-text text-[13px] text-secondary">{contactEmail}</span>
+        <span className={`min-w-0 shrink truncate select-text ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>{contactEmail}</span>
         <button
           type="button"
           onClick={() => void onCopyContactEmail()}

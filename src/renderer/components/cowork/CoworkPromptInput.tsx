@@ -3019,6 +3019,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         alignDropdownToTriggerEnd={useHomeContextLayout}
         portal={showReadOnlyContext}
         triggerMaxWidthClassName={largeModelTriggerMaxWidthClassName}
+        hideCustomProviderName={useLargeToolbarCompactLayout}
         disabled={isPatchingModel || isPersistingAgentModel || modelSelectionRefreshPending}
         thinkingLevel={effectiveThinkingLevel ?? null}
         value={selectedModelUnavailable && unavailableModelRef

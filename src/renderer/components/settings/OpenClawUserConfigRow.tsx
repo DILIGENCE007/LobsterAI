@@ -10,6 +10,7 @@ import {
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import CardToggle from '../common/CardToggle';
+import { SETTINGS_DESCRIPTION_TEXT, SETTINGS_ITEM_TITLE_TEXT } from './settingsTypography';
 
 const BUTTON_CLASS =
   'inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-60 active:scale-[0.98]';
@@ -119,10 +120,10 @@ const OpenClawUserConfigRow: React.FC = () => {
             <DocumentTextIcon className="h-[18px] w-[18px]" />
           </span>
           <div className="min-w-0">
-            <div className="text-sm font-medium text-foreground">
+            <div className={`${SETTINGS_ITEM_TITLE_TEXT} font-medium text-foreground`}>
               {i18nService.t('openClawUserConfigTitle')}
             </div>
-            <div className="mt-0.5 text-[13px] leading-5 text-secondary">
+            <div className={`mt-0.5 ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
               {i18nService.t('openClawUserConfigDesc')}
             </div>
           </div>

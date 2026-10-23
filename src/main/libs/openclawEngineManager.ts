@@ -1418,7 +1418,7 @@ export class OpenClawEngineManager extends EventEmitter {
     });
     // Deferred so reclaiming old caches and backups never slows gateway startup.
     scheduleOpenClawStartupDiskCleanup(
-      { baseDir: this.baseDir, stateDir: this.stateDir, compileCacheDir },
+      { baseDir: this.baseDir, stateDir: this.stateDir, configPath: this.configPath, compileCacheDir },
       { isOnBatteryPower: () => powerMonitor.isOnBatteryPower() },
     );
 

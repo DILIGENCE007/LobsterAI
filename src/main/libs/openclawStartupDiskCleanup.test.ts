@@ -7,12 +7,16 @@ const mocks = vi.hoisted(() => ({
   compile: vi.fn(async (..._args: unknown[]) => [] as string[]),
   backups: vi.fn(async (..._args: unknown[]) => ({ removedRuns: [] as string[], strippedPaths: [] as string[] })),
   temps: vi.fn(async (..._args: unknown[]) => [] as string[]),
+  snapshots: vi.fn(async (..._args: unknown[]) => [] as string[]),
+  legacy: vi.fn(async (..._args: unknown[]) => [] as string[]),
   archives: vi.fn(async (..._args: unknown[]) => [] as string[]),
   browser: vi.fn(async (..._args: unknown[]) => [] as string[]),
 }));
 vi.mock('./openclawCompileCache', () => ({ pruneStaleOpenClawCompileCaches: mocks.compile }));
 vi.mock('./openclawCompatibilityRepair', () => ({ pruneOpenClawRepairBackups: mocks.backups }));
 vi.mock('./openclawSessionStoreTempCleanup', () => ({ pruneOrphanOpenClawSessionStoreTemps: mocks.temps }));
+vi.mock('./openclawConfigSnapshotCleanup', () => ({ pruneOpenClawConfigSnapshots: mocks.snapshots }));
+vi.mock('./openclawLegacyConfigBackupCleanup', () => ({ pruneLegacyOpenClawConfigBackups: mocks.legacy }));
 vi.mock('./openclawSessionImportArchiveCleanup', () => ({ pruneExpiredOpenClawSessionImportArchives: mocks.archives }));
 vi.mock('./openclawBrowserCachePrune', () => ({
   OPENCLAW_BROWSER_CACHE_PRUNE_INTERVAL_MS: 1000, pruneOpenClawBrowserCaches: mocks.browser,
@@ -23,7 +27,9 @@ const {
   runOpenClawStartupDiskCleanup, scheduleOpenClawStartupDiskCleanup,
 } = await import('./openclawStartupDiskCleanup');
 
-const params = { baseDir: '/base', stateDir: '/base/state', compileCacheDir: '/base/state/.compile-cache' };
+const params = {
+  baseDir: '/base', stateDir: '/base/state', configPath: '/base/state/openclaw.json', compileCacheDir: '/base/state/.compile-cache',
+};
 const throttle = UNTHROTTLED_DISK_CLEANUP;
 const stopped = () => new DiskCleanupStoppedError(DiskCleanupStopReason.Budget);
 
@@ -34,7 +40,10 @@ afterEach(() => {
 });
 
 test('a pass runs each step once, in order, sharing one throttle', async () => {
-  for (const [name, mock] of Object.entries({ temps: mocks.temps, archives: mocks.archives, browser: mocks.browser, compile: mocks.compile })) {
+  for (const [name, mock] of Object.entries({
+    temps: mocks.temps, snapshots: mocks.snapshots, legacy: mocks.legacy,
+    archives: mocks.archives, browser: mocks.browser, compile: mocks.compile,
+  })) {
     mock.mockImplementationOnce(async () => {
       mocks.order.push(name);
       return [];
@@ -47,8 +56,10 @@ test('a pass runs each step once, in order, sharing one throttle', async () => {
 
   expect(await runOpenClawStartupDiskCleanup({ ...params, stateDir: '/order/state' }, { now: 10_000, throttle })).toBe(true);
 
-  expect(mocks.order).toEqual(['temps', 'archives', 'browser', 'backups', 'compile']);
+  expect(mocks.order).toEqual(['temps', 'snapshots', 'legacy', 'archives', 'browser', 'backups', 'compile']);
   expect(mocks.temps).toHaveBeenCalledWith('/order/state', { now: 10_000, throttle });
+  expect(mocks.snapshots).toHaveBeenCalledWith(params.configPath, { now: 10_000, throttle });
+  expect(mocks.legacy).toHaveBeenCalledWith(params.configPath, { now: 10_000, throttle });
   expect(mocks.archives).toHaveBeenCalledWith('/order/state', { now: 10_000, throttle });
   expect(mocks.browser).toHaveBeenCalledWith('/order/state', { throttle });
   expect(mocks.backups).toHaveBeenCalledWith('/base', { now: 10_000, throttle });
@@ -88,7 +99,9 @@ test('a stopped step ends the pass; an ordinary failure does not', async () => {
 test('on battery power the pass is skipped and nothing is touched', async () => {
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   expect(await runOpenClawStartupDiskCleanup(params, { isOnBatteryPower: () => true, throttle })).toBe(false);
-  for (const mock of [mocks.temps, mocks.archives, mocks.browser, mocks.backups, mocks.compile]) expect(mock).not.toHaveBeenCalled();
+  for (const mock of [mocks.temps, mocks.snapshots, mocks.legacy, mocks.archives, mocks.browser, mocks.backups, mocks.compile]) {
+    expect(mock).not.toHaveBeenCalled();
+  }
   // A power source that cannot be read counts as AC power.
   expect(await runOpenClawStartupDiskCleanup({ ...params, stateDir: '/unknown/state' }, {
     isOnBatteryPower: () => { throw new Error('unsupported'); }, throttle,

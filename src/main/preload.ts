@@ -1218,6 +1218,10 @@ contextBridge.exposeInMainWorld('electron', {
     get: () => ipcRenderer.invoke(AppSettingsIpc.GetPreventSleep),
     set: (enabled: boolean) => ipcRenderer.invoke(AppSettingsIpc.SetPreventSleep, enabled),
   },
+  quitConfirmation: {
+    get: () => ipcRenderer.invoke(AppSettingsIpc.GetQuitConfirmation),
+    set: (enabled: boolean) => ipcRenderer.invoke(AppSettingsIpc.SetQuitConfirmation, enabled),
+  },
   appInfo: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     getSystemLocale: () => ipcRenderer.invoke('app:getSystemLocale'),

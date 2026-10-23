@@ -114,6 +114,14 @@ import ModelSettingsSection, { DeleteProviderConfirmDialog, ModelEditorDialog } 
 import OpenClawUserConfigRow from './settings/OpenClawUserConfigRow';
 import ProviderTransferDialog from './settings/ProviderTransferDialog';
 import { resolveSettingsEscapeAction, SettingsEscapeAction } from './settings/settingsEscape';
+import {
+  SETTINGS_DESCRIPTION_TEXT,
+  SETTINGS_ITEM_TITLE_TEXT,
+  SETTINGS_META_TEXT,
+  SETTINGS_NAV_TEXT,
+  SETTINGS_PAGE_TITLE_TEXT,
+  SETTINGS_SECTION_TITLE_TEXT,
+} from './settings/settingsTypography';
 import { useProviderTransfer } from './settings/useProviderTransfer';
 import EmailSkillConfig from './skills/EmailSkillConfig';
 import SkinPresentationScope from './skin/SkinPresentationScope';
@@ -1309,7 +1317,7 @@ const SettingsToggleRow: React.FC<{
 }> = ({ title, description, checked, disabled, onToggle }) => (
   <div>
     <div className="flex items-center justify-between gap-4">
-      <h4 className="min-w-0 flex-1 text-sm font-medium text-foreground">
+      <h4 className={`min-w-0 flex-1 ${SETTINGS_ITEM_TITLE_TEXT} font-medium text-foreground`}>
         {title}
       </h4>
       <SettingsSwitch
@@ -1319,7 +1327,7 @@ const SettingsToggleRow: React.FC<{
         onClick={onToggle}
       />
     </div>
-    <p className="mt-1 text-sm text-secondary">
+    <p className={`mt-1 ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
       {description}
     </p>
   </div>
@@ -1359,10 +1367,10 @@ const SettingsNumberInputRow: React.FC<{
 }> = ({ id, title, description, value, min, max, onChange }) => (
   <div className="flex items-center justify-between gap-4">
     <div className="min-w-0 flex-1">
-      <label htmlFor={id} className="block text-sm font-medium text-foreground">
+      <label htmlFor={id} className={`block ${SETTINGS_ITEM_TITLE_TEXT} font-medium text-foreground`}>
         {title}
       </label>
-      <p className="mt-1 text-sm text-secondary">
+      <p className={`mt-1 ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
         {description}
       </p>
     </div>
@@ -1382,7 +1390,7 @@ const SettingsNumberInputRow: React.FC<{
         }}
         className="h-8 w-16 rounded-lg border border-border bg-surface px-2 text-center text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20"
       />
-      <span className="text-sm text-secondary">px</span>
+      <span className={`${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>px</span>
     </div>
   </div>
 );
@@ -1429,6 +1437,8 @@ const Settings: React.FC<SettingsProps> = ({
   const [isUpdatingAutoLaunch, setIsUpdatingAutoLaunch] = useState(false);
   const [preventSleep, setPreventSleepState] = useState(false);
   const [isUpdatingPreventSleep, setIsUpdatingPreventSleep] = useState(false);
+  const [quitConfirmation, setQuitConfirmationState] = useState(true);
+  const [isUpdatingQuitConfirmation, setIsUpdatingQuitConfirmation] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const buildNoticeMessage = useCallback((): string | null => {
@@ -2053,6 +2063,13 @@ const Settings: React.FC<SettingsProps> = ({
         setPreventSleepState(enabled);
       }).catch(err => {
         console.error('Failed to load prevent-sleep setting:', err);
+      });
+
+      // Load quit-confirmation setting
+      window.electron.quitConfirmation.get().then(({ enabled }) => {
+        setQuitConfirmationState(enabled);
+      }).catch(err => {
+        console.error('Failed to load quit-confirmation setting:', err);
       });
 
       // Set up providers based on saved config
@@ -4600,7 +4617,7 @@ const Settings: React.FC<SettingsProps> = ({
                   <circle cx="52" cy="24" r="8" fill={c3} opacity="0.8" />
                   <rect x="32" y="34" width="40" height="4" rx="2" fill={c1} opacity="0.6" />
                 </svg>
-                <span className="text-[10px] font-medium truncate w-full text-center" style={{ color: isSelected ? 'var(--lobster-primary)' : 'var(--lobster-text-primary)' }}>
+                <span className={`${SETTINGS_META_TEXT} font-medium truncate w-full text-center`} style={{ color: isSelected ? 'var(--lobster-primary)' : 'var(--lobster-text-primary)' }}>
                   {i18nService.t('theme-name-' + t.meta.id) || t.meta.name}
                 </span>
               </button>
@@ -4659,7 +4676,7 @@ const Settings: React.FC<SettingsProps> = ({
             <SettingsGroup title={i18nService.t('settingsGroupBasics')}>
               <SettingsRow>
                 <div className="flex items-center justify-between gap-4">
-                  <h4 className="text-sm font-medium text-foreground">
+                  <h4 className={`${SETTINGS_ITEM_TITLE_TEXT} font-medium text-foreground`}>
                     {i18nService.t('language')}
                   </h4>
                   <div className="w-[140px] shrink-0">
@@ -4759,6 +4776,35 @@ const Settings: React.FC<SettingsProps> = ({
 
               <SettingsRow>
                 <SettingsToggleRow
+                  title={i18nService.t('quitConfirmation')}
+                  description={i18nService.t('quitConfirmationDescription')}
+                  checked={quitConfirmation}
+                  disabled={isUpdatingQuitConfirmation}
+                  onToggle={async () => {
+                    if (isUpdatingQuitConfirmation) return;
+                    const next = !quitConfirmation;
+                    setIsUpdatingQuitConfirmation(true);
+                    try {
+                      const result = await window.electron.quitConfirmation.set(next);
+                      if (result.success) {
+                        const previous = quitConfirmation;
+                        setQuitConfirmationState(next);
+                        reportGeneralSettingChanged('quitConfirmation', next, previous);
+                      } else {
+                        setError(i18nService.t('quitConfirmationUpdateFailed'));
+                      }
+                    } catch (err) {
+                      console.error('Failed to set quit-confirmation:', err);
+                      setError(i18nService.t('quitConfirmationUpdateFailed'));
+                    } finally {
+                      setIsUpdatingQuitConfirmation(false);
+                    }
+                  }}
+                />
+              </SettingsRow>
+
+              <SettingsRow>
+                <SettingsToggleRow
                   title={i18nService.t('useSystemProxy')}
                   description={i18nService.t('useSystemProxyDescription')}
                   checked={useSystemProxy}
@@ -4793,7 +4839,7 @@ const Settings: React.FC<SettingsProps> = ({
               <SettingsRow>
                 <div>
                   <div className="flex items-center justify-between gap-4">
-                    <h4 className="min-w-0 flex-1 text-sm font-medium text-foreground">
+                    <h4 className={`min-w-0 flex-1 ${SETTINGS_ITEM_TITLE_TEXT} font-medium text-foreground`}>
                       {i18nService.t('taskCompletionNotificationMode')}
                     </h4>
                     <div className="w-[180px] shrink-0">
@@ -4820,7 +4866,7 @@ const Settings: React.FC<SettingsProps> = ({
                       />
                     </div>
                   </div>
-                  <p className="mt-1 text-sm text-secondary">
+                  <p className={`mt-1 ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
                     {i18nService.t('taskCompletionNotificationModeDescription')}
                   </p>
                 </div>
@@ -4859,10 +4905,10 @@ const Settings: React.FC<SettingsProps> = ({
               <SettingsRow>
                 <div className="flex items-center justify-between gap-4">
                   <div className="min-w-0 flex-1">
-                    <h4 className="text-sm font-medium text-foreground">
+                    <h4 className={`${SETTINGS_ITEM_TITLE_TEXT} font-medium text-foreground`}>
                       {i18nService.t('coworkTempUsageTitle')}
                     </h4>
-                    <p className="mt-1 text-sm text-secondary">
+                    <p className={`mt-1 ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
                       {tempStorageUsageBytes === null
                         ? i18nService.t('coworkTempUsageLoading')
                         : i18nService.t('coworkTempUsageLabel')
@@ -4872,7 +4918,7 @@ const Settings: React.FC<SettingsProps> = ({
                               formatBackupSize(tempStorageCleanableBytes ?? 0) || '0 B',
                             )}
                     </p>
-                    <p className="mt-1 text-sm text-secondary">
+                    <p className={`mt-1 ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
                       {i18nService.t('coworkTempUsageManualNote')}
                     </p>
                   </div>
@@ -4882,7 +4928,7 @@ const Settings: React.FC<SettingsProps> = ({
                       void handleOpenTempCleanConfirm();
                     }}
                     disabled={isLoadingTempCleanPreview || isCleaningTempStorage || tempStorageCleanableBytes === 0}
-                    className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-60"
+                    className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isLoadingTempCleanPreview
                       ? i18nService.t('coworkTempPreviewLoading')
@@ -4890,7 +4936,7 @@ const Settings: React.FC<SettingsProps> = ({
                   </button>
                 </div>
                 {tempStorageCleanResult && (
-                  <p className="mt-2 text-sm text-secondary">{tempStorageCleanResult}</p>
+                  <p className={`mt-2 ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>{tempStorageCleanResult}</p>
                 )}
               </SettingsRow>
 
@@ -4934,7 +4980,7 @@ const Settings: React.FC<SettingsProps> = ({
             {isOpenClawAgentEngine && (
               <>
                 <section className="space-y-3">
-                  <h4 className="text-sm font-medium text-foreground">
+                  <h4 className={`${SETTINGS_SECTION_TITLE_TEXT} font-semibold text-foreground`}>
                     {i18nService.t('openClawRuntimeStatusTitle')}
                   </h4>
 
@@ -4945,7 +4991,7 @@ const Settings: React.FC<SettingsProps> = ({
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0 text-sm font-medium leading-5 text-foreground">
+                          <div className={`min-w-0 ${SETTINGS_ITEM_TITLE_TEXT} font-medium text-foreground`}>
                             {resolveOpenClawStatusText(openClawEngineStatus)}
                           </div>
                           <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${openClawStatusTone.badgeClassName}`}>
@@ -4956,7 +5002,7 @@ const Settings: React.FC<SettingsProps> = ({
 
                         {openClawGatewayHttpUrl ? (
                           <div className="mt-3 flex max-w-full items-center gap-2 rounded-lg border border-border-subtle bg-surface-raised/60 p-1.5">
-                            <span className="shrink-0 rounded-md bg-background px-2 py-1 text-[11px] font-medium text-secondary">
+                            <span className={`shrink-0 rounded-md bg-background px-2 py-1 ${SETTINGS_META_TEXT} font-medium text-secondary`}>
                               {i18nService.t('openClawGatewayAddress')}
                             </span>
                             <code
@@ -4978,7 +5024,7 @@ const Settings: React.FC<SettingsProps> = ({
                             </button>
                           </div>
                         ) : (
-                          <p className="mt-2 text-sm text-secondary">
+                          <p className={`mt-2 ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
                             {resolveOpenClawStatusDescription(openClawEngineStatus)}
                           </p>
                         )}
@@ -5003,7 +5049,7 @@ const Settings: React.FC<SettingsProps> = ({
                 </section>
 
                 <section className="space-y-3">
-                  <h4 className="text-sm font-medium text-foreground">
+                  <h4 className={`${SETTINGS_SECTION_TITLE_TEXT} font-semibold text-foreground`}>
                     {i18nService.t('openClawBackgroundRuntimeTitle')}
                   </h4>
 
@@ -5020,7 +5066,7 @@ const Settings: React.FC<SettingsProps> = ({
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-3">
-                          <h4 className="min-w-0 text-sm font-medium leading-5 text-foreground">
+                          <h4 className={`min-w-0 ${SETTINGS_ITEM_TITLE_TEXT} font-medium text-foreground`}>
                             {i18nService.t('openClawHeartbeatEnabled')}
                           </h4>
                           <SettingsSwitch
@@ -5031,7 +5077,7 @@ const Settings: React.FC<SettingsProps> = ({
                             }}
                           />
                         </div>
-                        <p className="mt-1.5 text-[13px] leading-5 text-secondary">
+                        <p className={`mt-1.5 ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
                           {i18nService.t('openClawHeartbeatEnabledDescription')}
                         </p>
                       </div>
@@ -5051,7 +5097,7 @@ const Settings: React.FC<SettingsProps> = ({
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-3">
-                          <h4 className="min-w-0 text-sm font-medium leading-5 text-foreground">
+                          <h4 className={`min-w-0 ${SETTINGS_ITEM_TITLE_TEXT} font-medium text-foreground`}>
                             {i18nService.t('openClawSkillReviewEnabled')}
                           </h4>
                           <SettingsSwitch
@@ -5062,7 +5108,7 @@ const Settings: React.FC<SettingsProps> = ({
                             }}
                           />
                         </div>
-                        <p className="mt-1.5 text-[13px] leading-5 text-secondary">
+                        <p className={`mt-1.5 ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
                           {i18nService.t('openClawSkillReviewEnabledDescription')}
                         </p>
                       </div>
@@ -5082,7 +5128,7 @@ const Settings: React.FC<SettingsProps> = ({
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-3">
-                          <h4 className="min-w-0 text-sm font-medium leading-5 text-foreground">
+                          <h4 className={`min-w-0 ${SETTINGS_ITEM_TITLE_TEXT} font-medium text-foreground`}>
                             {i18nService.t('openClawMemoryFlushEnabled')}
                           </h4>
                           <SettingsSwitch
@@ -5093,7 +5139,7 @@ const Settings: React.FC<SettingsProps> = ({
                             }}
                           />
                         </div>
-                        <p className="mt-1.5 text-[13px] leading-5 text-secondary">
+                        <p className={`mt-1.5 ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
                           {i18nService.t('openClawMemoryFlushEnabledDescription')}
                         </p>
                       </div>
@@ -5102,7 +5148,7 @@ const Settings: React.FC<SettingsProps> = ({
                 </section>
 
                 <section className="space-y-3">
-                  <h4 className="text-sm font-medium text-foreground">
+                  <h4 className={`${SETTINGS_SECTION_TITLE_TEXT} font-semibold text-foreground`}>
                     {i18nService.t('openClawMaintenanceTitle')}
                   </h4>
 
@@ -5113,10 +5159,10 @@ const Settings: React.FC<SettingsProps> = ({
                           <WrenchScrewdriverIcon className="h-[18px] w-[18px]" />
                         </span>
                         <div className="min-w-0">
-                          <div className="text-sm font-medium text-foreground">
+                          <div className={`${SETTINGS_ITEM_TITLE_TEXT} font-medium text-foreground`}>
                             {i18nService.t('openClawRepairGatewayStateTitle')}
                           </div>
-                          <div className="mt-0.5 text-[13px] leading-5 text-secondary">
+                          <div className={`mt-0.5 ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
                             {i18nService.t('openClawRepairGatewayStateDesc')}
                           </div>
                         </div>
@@ -5139,7 +5185,7 @@ const Settings: React.FC<SettingsProps> = ({
                     <OpenClawUserConfigRow />
 
                     {openClawDataBackupResult && (
-                      <div className="flex flex-col gap-3 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+                      <div className={`flex flex-col gap-3 p-4 ${SETTINGS_ITEM_TITLE_TEXT} sm:flex-row sm:items-center sm:justify-between`}>
                         <div className="min-w-0 space-y-1">
                           <div className="font-medium text-foreground">
                             {i18nService.t('openClawDataBackupSavedTitle')}
@@ -5169,10 +5215,10 @@ const Settings: React.FC<SettingsProps> = ({
                           <ArchiveBoxIcon className="h-[18px] w-[18px]" />
                         </span>
                         <div className="min-w-0">
-                          <div className="text-sm font-medium text-foreground">
+                          <div className={`${SETTINGS_ITEM_TITLE_TEXT} font-medium text-foreground`}>
                             {i18nService.t('openClawDataBackupTitle')}
                           </div>
-                          <div className="mt-0.5 text-[13px] leading-5 text-secondary">
+                          <div className={`mt-0.5 ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
                             {i18nService.t('openClawDataBackupDesc')}
                           </div>
                         </div>
@@ -5198,10 +5244,10 @@ const Settings: React.FC<SettingsProps> = ({
                           <ArrowPathRoundedSquareIcon className="h-[18px] w-[18px]" />
                         </span>
                         <div className="min-w-0">
-                          <div className="text-sm font-medium text-foreground">
+                          <div className={`${SETTINGS_ITEM_TITLE_TEXT} font-medium text-foreground`}>
                             {i18nService.t('openClawDataMigrationTitle')}
                           </div>
-                          <div className="mt-0.5 text-[13px] leading-5 text-secondary">
+                          <div className={`mt-0.5 ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
                             {i18nService.t('openClawDataMigrationDesc')}
                           </div>
                         </div>
@@ -5311,10 +5357,10 @@ const Settings: React.FC<SettingsProps> = ({
                 <div className="space-y-4 rounded-xl border px-4 py-4 border-border">
                   <div className="flex items-center justify-between gap-3">
                     <div className="space-y-1">
-                      <div className="text-sm font-medium text-foreground">
+                      <div className={`${SETTINGS_ITEM_TITLE_TEXT} font-medium text-foreground`}>
                         {i18nService.t('coworkMemoryCrudTitle')}
                       </div>
-                      <div className="text-xs text-secondary">
+                      <div className={`${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
                         {i18nService.t('coworkMemoryManageHint')}
                       </div>
                     </div>
@@ -5323,14 +5369,14 @@ const Settings: React.FC<SettingsProps> = ({
                           type="button"
                           onClick={() => { void handleEnterCoworkMemoryRawMode(); }}
                           disabled={coworkMemoryListLoading}
-                          className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg border border-border text-sm text-foreground hover:bg-surface-raised disabled:opacity-60 transition-colors"
+                          className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg border border-border text-xs font-medium text-foreground hover:bg-surface-raised disabled:opacity-60 transition-colors"
                         >
                           {i18nService.t('coworkMemoryRawButton')}
                         </button>
                         <button
                           type="button"
                           onClick={handleOpenCoworkMemoryModal}
-                          className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm transition-colors active:scale-[0.98]"
+                          className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-xs font-medium transition-colors active:scale-[0.98]"
                         >
                           <PlusCircleIcon className="h-4 w-4 mr-1.5" />
                           {i18nService.t('coworkMemoryCrudCreate')}
@@ -5367,7 +5413,7 @@ const Settings: React.FC<SettingsProps> = ({
                             {coworkMemoryGroups.map((group, groupIndex) => (
                               <React.Fragment key={group.section ?? `ungrouped-${groupIndex}`}>
                                 {group.section && (
-                                  <div className="flex items-baseline gap-1.5 px-3 pb-1.5 pt-3 text-[11px] font-medium text-secondary">
+                                  <div className={`flex items-baseline gap-1.5 px-3 pb-1.5 pt-3 ${SETTINGS_META_TEXT} font-medium text-secondary`}>
                                     <span className="truncate">{group.section}</span>
                                     <span className="font-normal opacity-70">{group.entries.length}</span>
                                   </div>
@@ -5391,7 +5437,7 @@ const Settings: React.FC<SettingsProps> = ({
                                             <button
                                               type="button"
                                               onClick={() => toggleCoworkMemoryExpandedId(entry.id)}
-                                              className="mt-1.5 text-[11px] text-primary hover:underline"
+                                              className={`mt-1.5 ${SETTINGS_META_TEXT} text-primary hover:underline`}
                                             >
                                               {i18nService.t(isMemoryTextExpanded ? 'coworkMemoryCollapse' : 'coworkMemoryExpand')}
                                             </button>
@@ -5624,10 +5670,10 @@ const Settings: React.FC<SettingsProps> = ({
                         }`}
                       >
                         <div className="min-w-0">
-                          <div className="truncate text-xs font-medium text-foreground">
+                          <div className={`truncate ${SETTINGS_ITEM_TITLE_TEXT} font-medium text-foreground`}>
                             {commandLabel}
                           </div>
-                          <div className="mt-0.5 line-clamp-2 text-xs text-secondary">
+                          <div className={`mt-0.5 line-clamp-2 ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
                             {getShortcutCommandText(command, 'descriptionKey')}
                           </div>
                           {isQuickPanel && (companionLoadError || companionState?.shortcutUnavailable) && (
@@ -5671,7 +5717,7 @@ const Settings: React.FC<SettingsProps> = ({
                   })}
                 </div>
               )) : (
-                <div className="px-4 py-8 text-center text-sm text-secondary">
+                <div className={`px-4 py-8 text-center ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
                   {i18nService.t('shortcutNoResults')}
                 </div>
               )}
@@ -5736,9 +5782,9 @@ const Settings: React.FC<SettingsProps> = ({
             {/* Info Card */}
             <div className="w-full mt-8 divide-y divide-border rounded-xl border border-border overflow-hidden">
               <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
-                <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutVersion')}</span>
+                <span className={`shrink-0 ${SETTINGS_ITEM_TITLE_TEXT} text-foreground`}>{i18nService.t('aboutVersion')}</span>
                 <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-                  <span className="text-sm text-secondary">{appVersion}</span>
+                  <span className={`${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>{appVersion}</span>
                   {!enterpriseConfig?.disableUpdate && (
                   <button
                     type="button"
@@ -5762,7 +5808,7 @@ const Settings: React.FC<SettingsProps> = ({
               {showOpenSourceEntries && <AboutOpenSourceRows onAction={reportAboutOpenSourceAction} />}
               {testModeUnlocked && (
                 <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
-                  <span className="shrink-0 text-sm text-foreground">{i18nService.t('testMode')}</span>
+                  <span className={`shrink-0 ${SETTINGS_ITEM_TITLE_TEXT} text-foreground`}>{i18nService.t('testMode')}</span>
                   <button
                     type="button"
                     role="switch"
@@ -5786,7 +5832,7 @@ const Settings: React.FC<SettingsProps> = ({
 
             {/* Footer */}
             <div className="mt-auto w-full pt-14 pb-2 flex flex-col items-center">
-              <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-sm text-secondary">
+              <div className={`flex flex-wrap items-center justify-center gap-x-3 gap-y-2 ${SETTINGS_DESCRIPTION_TEXT} text-secondary`}>
                 <button
                   type="button"
                   onClick={(e) => {
@@ -5842,14 +5888,14 @@ const Settings: React.FC<SettingsProps> = ({
         {/* Left sidebar */}
         <div className="w-[220px] shrink-0 flex flex-col bg-surface-raised border-r border-border rounded-l-2xl overflow-y-auto">
           <div className="px-5 pt-5 pb-3">
-            <h2 className="text-lg font-semibold text-foreground">{i18nService.t('settings')}</h2>
+            <h2 className={`${SETTINGS_PAGE_TITLE_TEXT} font-semibold text-foreground`}>{i18nService.t('settings')}</h2>
           </div>
           <nav className="flex flex-col gap-0.5 px-3 pb-4">
             {sidebarTabs.map((tab) => (
               <button
                 key={tab.key}
                 onClick={() => handleTabChange(tab.key)}
-                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left ${
+                className={`flex items-center gap-3 px-3 py-2 rounded-lg ${SETTINGS_NAV_TEXT} font-medium transition-colors text-left ${
                   activeTab === tab.key
                     ? 'bg-primary-muted text-primary'
                     : 'text-secondary hover:text-foreground hover:bg-surface-raised'
@@ -5866,7 +5912,7 @@ const Settings: React.FC<SettingsProps> = ({
         <div className="relative flex-1 flex flex-col min-w-0 overflow-hidden bg-background rounded-r-2xl">
           {/* Content header */}
           <div className="flex justify-between items-center gap-3 px-6 pt-5 pb-3 shrink-0">
-            <h3 className="min-w-0 truncate text-lg font-semibold text-foreground">{activeTabLabel}</h3>
+            <h3 className={`min-w-0 truncate ${SETTINGS_PAGE_TITLE_TEXT} font-semibold text-foreground`}>{activeTabLabel}</h3>
             <button
               onClick={guardedClose}
               className="text-secondary hover:text-foreground p-1.5 hover:bg-surface-raised rounded-lg transition-colors"
@@ -5915,14 +5961,14 @@ const Settings: React.FC<SettingsProps> = ({
                 <button
                   type="button"
                   onClick={guardedClose}
-                  className="px-4 py-2 rounded-xl transition-colors text-sm font-medium border border-border text-foreground hover:bg-surface-raised active:scale-[0.98]"
+                  className={`px-4 py-2 rounded-xl transition-colors ${SETTINGS_ITEM_TITLE_TEXT} font-medium border border-border text-foreground hover:bg-surface-raised active:scale-[0.98]`}
                 >
                   {i18nService.t('cancel')}
                 </button>
                 <button
                   type="submit"
                   disabled={isSaving || isAppearanceChanging}
-                  className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
+                  className={`px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-xl transition-colors ${SETTINGS_ITEM_TITLE_TEXT} font-medium disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]`}
                 >
                   {isSaving ? i18nService.t('saving') : i18nService.t('save')}
                 </button>

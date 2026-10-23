@@ -77,6 +77,8 @@ interface ModelSelectorProps {
   alignDropdownToTriggerEnd?: boolean;
   /** Override the trigger's max width while keeping the default selector behavior. */
   triggerMaxWidthClassName?: string;
+  /** Keep the custom-model badge to its short label when the trigger is tightly capped. */
+  hideCustomProviderName?: boolean;
   /** Persisted thinking level for the selected model. Omit to hide the thinking control. */
   thinkingLevel?: ModelThinkingLevelType | null;
 }
@@ -474,6 +476,17 @@ export function hasModelHoverDetails(
     || isModelAgenticBlocked(model);
 }
 
+/**
+ * Channel name for the custom-model badge. The live model list wins over the
+ * persisted selection so a renamed provider shows its current name.
+ */
+export function resolveCustomModelProviderName(
+  selectedModel: Pick<Model, 'provider'> | null | undefined,
+  currentModelMetadata: Pick<Model, 'provider'> | undefined,
+): string {
+  return (currentModelMetadata?.provider ?? selectedModel?.provider ?? '').trim();
+}
+
 const MODEL_ICON_PROVIDER_HINTS: Array<{ pattern: RegExp; providerName: ProviderName | ProviderIconId }> = [
   { pattern: /doubao|豆包/i, providerName: ProviderIconId.Doubao },
   { pattern: /deepseek/i, providerName: ProviderName.DeepSeek },
@@ -500,6 +513,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   portal = false,
   alignDropdownToTriggerEnd = false,
   triggerMaxWidthClassName,
+  hideCustomProviderName = false,
   thinkingLevel,
   allowPresets = true,
 }) => {
@@ -555,6 +569,10 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const isCustomModelSelected = Boolean(selectedModel?.providerKey
     && !selectedModel.isServerModel
     && selectedModel.providerKey !== ProviderName.LobsteraiServer);
+  const customProviderName = isCustomModelSelected
+    ? resolveCustomModelProviderName(selectedModel, currentModelMetadata)
+    : '';
+  const showCustomProviderName = Boolean(customProviderName) && !hideCustomProviderName;
   const selectedModelKey = selectedModel ? getModelIdentityKey(selectedModel) : '';
   const serverModels = availableModels.filter(m => m.isServerModel && (allowPresets || !m.presetId))
     .map(model => model.presetId && model.presetId === selectedModel?.presetId
@@ -607,7 +625,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
     : '';
   const selectedModelUnavailableFallbackLogKeyRef = React.useRef('');
   const triggerMaxWidthClass = triggerMaxWidthClassName
-    ?? (compact ? (isCustomModelSelected ? 'max-w-[260px]' : 'max-w-[220px]') : 'max-w-[280px]');
+    ?? (compact
+      ? (showCustomProviderName ? 'max-w-[320px]' : isCustomModelSelected ? 'max-w-[260px]' : 'max-w-[220px]')
+      : (showCustomProviderName ? 'max-w-[340px]' : 'max-w-[280px]'));
   const triggerClassName = iconOnly
     ? 'relative h-8 w-8 shrink-0 justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30'
     : compact
@@ -1563,12 +1583,20 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
           {!iconOnly && isCustomModelSelected && (
             <span
               className="inline-flex h-5 shrink-0 items-center gap-1 rounded-md bg-emerald-600/[0.07] px-1.5 text-[11px] font-medium leading-none text-emerald-800 ring-1 ring-inset ring-emerald-700/[0.08] dark:bg-emerald-400/[0.08] dark:text-emerald-200 dark:ring-emerald-300/[0.12]"
-              title={i18nService.t('modelGroupUser')}
+              title={customProviderName
+                ? `${i18nService.t('modelGroupUser')} · ${customProviderName}`
+                : i18nService.t('modelGroupUser')}
             >
               <span className="flex shrink-0 items-center" aria-hidden="true">
                 <CustomProviderIcon className="h-3 w-3" />
               </span>
-              <span>{i18nService.t('modelSourceCustom')}</span>
+              <span className="shrink-0">{i18nService.t('modelSourceCustom')}</span>
+              {showCustomProviderName && (
+                <>
+                  <span className="shrink-0 opacity-50" aria-hidden="true">·</span>
+                  <span className="min-w-0 max-w-[80px] truncate">{customProviderName}</span>
+                </>
+              )}
             </span>
           )}
           <span className={iconOnly ? 'sr-only' : `${triggerTextClassName} min-w-0 truncate`}>{selectedModel?.name ?? defaultLabel ?? ''}</span>
