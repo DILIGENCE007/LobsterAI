@@ -16281,7 +16281,10 @@ if (!gotTheLock) {
         return;
       }
       if (mainWindow && !mainWindow.isDestroyed()) {
-        if (!mainWindow.isVisible()) mainWindow.show();
+        // show() on a minimized window draws it at full size for a frame before
+        // the Dock animation; restore() animates it straight out of the Dock.
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        else if (!mainWindow.isVisible()) mainWindow.show();
         if (!mainWindow.isFocused()) mainWindow.focus();
         return;
       }
