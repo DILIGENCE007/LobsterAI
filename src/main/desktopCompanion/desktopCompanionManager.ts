@@ -587,7 +587,13 @@ export class DesktopCompanionManager {
   private showOrb(): void {
     if (!this.orb || this.orb.isDestroyed()) {
       const bounds = this.defaultOrbBounds();
-      const win = this.createWindow(DesktopCompanionSurface.Mascot, false, bounds);
+      // Electron's macOS panel only emulates a nonactivating panel: clicking a window
+      // that cannot become key half-activates LobsterAI, so the quick panel loses key
+      // focus at once and the main window can come forward. A key-capable orb takes
+      // the click without activating the app, like the composer panel does.
+      const win = this.createWindow(DesktopCompanionSurface.Mascot, process.platform === 'darwin', bounds);
+      // A key orb receives the app menu's Close (Cmd+W); only dispose removes it.
+      win.on('close', event => { if (!this.disposing) event.preventDefault(); });
       win.on('closed', () => { if (this.orb === win) this.orb = null; });
       win.once('ready-to-show', () => {
         if (this.disposing || win.isDestroyed() || !this.isPresent()) return;
