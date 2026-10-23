@@ -663,7 +663,7 @@ export class OpenClawEngineManager extends EventEmitter {
     }
     const check = !config
       ? { valid: false, reason: 'config-unreadable' }
-      : configRequiresStartupCompatibility(config)
+      : configRequiresStartupCompatibility(config, this.stateDir)
         ? { valid: false, reason: 'config-needs-compatibility' }
         : this.startupPrepMarker.check(identity);
     if (check.valid) {

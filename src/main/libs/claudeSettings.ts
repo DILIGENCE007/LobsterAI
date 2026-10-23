@@ -306,6 +306,22 @@ export function updateServerModelMetadata(models: ServerModelMetadataInput[]): b
   return previous !== next;
 }
 
+/** One `/api/models/available` row; a preset row carries the context window of that preset. */
+export type ServerModelResponseEntry = ServerModelMetadataInput & { presetId?: ModelPresetId | null };
+
+/**
+ * Cache a `/api/models/available` response. Every reader of that endpoint must
+ * come through here: a cache built without the derived preset windows renders a
+ * different OpenClaw config, so the next identical response looks changed and
+ * restages the gateway config during startup.
+ */
+export function updateServerModelMetadataFromResponse(models: ServerModelResponseEntry[]): boolean {
+  const presetContextWindows = Object.fromEntries(models
+    .filter(model => model.presetId)
+    .map(model => [model.presetId!, model.contextWindow]));
+  return updateServerModelMetadata(models.map(model => ({ ...model, presetContextWindows })));
+}
+
 export function clearServerModelMetadata(): void {
   serverModelMetadataCache.clear();
 }

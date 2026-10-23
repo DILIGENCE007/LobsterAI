@@ -360,6 +360,7 @@ import {
   setServerBaseUrlGetter,
   setStoreGetter,
   updateServerModelMetadata,
+  updateServerModelMetadataFromResponse,
 } from './libs/claudeSettings';
 import { appendClientBannerVersion } from './libs/clientBannerRequest';
 import {
@@ -2900,6 +2901,8 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
 let deferredRestartTimer: ReturnType<typeof setInterval> | null = null;
 let deferredRestartTimeout: ReturnType<typeof setTimeout> | null = null;
 let deferredRestartOverdue = false;
+// Whether a queued request needs a respawn; otherwise it only reapplies the staged target.
+let deferredRestartRespawnRequested = false;
 const DEFERRED_RESTART_POLL_MS = 3_000;
 const DEFERRED_RESTART_OVERDUE_MS = 5 * 60_000;
 
@@ -2954,6 +2957,7 @@ const clearDeferredRestart = () => {
     deferredRestartTimeout = null;
   }
   deferredRestartOverdue = false;
+  deferredRestartRespawnRequested = false;
 };
 
 type SyncOpenClawConfigOptions = {
@@ -3147,6 +3151,7 @@ const waitForOpenClawConfigApply = async (
 
 const executeDeferredGatewayRestart = async (reason: string) => {
   const restartRequestedAt = deferredRestartRequestedAt ?? undefined;
+  const respawnRequested = deferredRestartRespawnRequested;
   clearDeferredRestart();
   deferredRestartReason = null;
   deferredRestartRequestedAt = null;
@@ -3160,16 +3165,24 @@ const executeDeferredGatewayRestart = async (reason: string) => {
   const syncReason = reason.startsWith(DEFERRED_SYNC_REASON_PREFIX)
     ? reason
     : `${DEFERRED_SYNC_REASON_PREFIX}${reason}`;
+  // Forcing a restart for a reapply-only request would turn a hot-applicable
+  // change (e.g. a model list refresh during startup) into a respawn demand on
+  // the gateway that is still booting, which then restarts right after ready.
   await syncOpenClawConfig({
     reason: syncReason,
-    restartGatewayIfRunning: true,
-    expectedImpact: OpenClawConfigImpact.Restart,
+    restartGatewayIfRunning: respawnRequested,
+    expectedImpact: respawnRequested ? OpenClawConfigImpact.Restart : OpenClawConfigImpact.None,
     restartRequestedAt,
   });
 };
 
-const scheduleDeferredGatewayRestart = (reason: string, requestedAt = Date.now()) => {
+const scheduleDeferredGatewayRestart = (
+  reason: string,
+  requestedAt = Date.now(),
+  respawnRequested = true,
+) => {
   deferredRestartReason = mergeDeferredGatewayRestartReason(deferredRestartReason, reason);
+  deferredRestartRespawnRequested ||= respawnRequested;
   // The latest demand decides which gateway spawn can satisfy the merged request.
   deferredRestartRequestedAt = Math.max(deferredRestartRequestedAt ?? 0, requestedAt);
   // Recovery retains the latest target even when it has not been persisted.
@@ -3185,6 +3198,9 @@ const scheduleDeferredGatewayRestart = (reason: string, requestedAt = Date.now()
   );
   deferredRestartOverdue = false;
   deferredRestartTimer = setInterval(() => {
+    // A booting gateway can apply nothing yet; re-running the sync on every poll
+    // only competes with its startup. The first poll after it is up resumes here.
+    if (getOpenClawEngineManager().getStatus().phase === OpenClawEnginePhase.Starting) return;
     const fallbackRecovery = isConfigDeliveryFallbackReason(deferredRestartReason ?? reason);
     if (fallbackRecovery && openClawConfigRecovery.stalled) {
       clearDeferredRestart();
@@ -3497,9 +3513,14 @@ const _syncOpenClawConfigImpl = async (
 
   const status = manager.getStatus();
   if (status.phase !== OpenClawEnginePhase.Running) {
-    scheduleDeferredGatewayRestart(options.reason, options.restartRequestedAt);
+    // The respawn demand may predate the spawn now in progress, which meets it.
+    // A change that asks for no respawn of its own is only reapplied once ready.
+    const respawnRequested = requestedRespawn
+      || options.restartGatewayIfRunning === true
+      || options.expectedImpact === OpenClawConfigImpact.Restart;
+    scheduleDeferredGatewayRestart(options.reason, options.restartRequestedAt, respawnRequested);
     console.log(
-      `${D()} ──── RESTART NEEDED but gateway not running (phase=${status.phase}), skipping. reason=${options.reason}`,
+      `${D()} ──── RESTART NEEDED but gateway not running (phase=${status.phase}), skipping. reason=${options.reason} respawnRequested=${respawnRequested}`,
     );
     return {
       success: true,
@@ -6136,12 +6157,7 @@ if (!gotTheLock) {
       throw new Error(data.message || 'Server model response is invalid.');
     }
 
-    const presetContextWindows = Object.fromEntries(data.data
-      .filter(model => model.presetId)
-      .map(model => [model.presetId!, model.contextWindow]));
-    const serverModelsChanged = updateServerModelMetadata(data.data.map(model => ({
-      ...model, presetContextWindows,
-    })));
+    const serverModelsChanged = updateServerModelMetadataFromResponse(data.data);
     const serverModelIds = data.data.map(model => model.modelId);
     const serverModelsMissingFromConfig = !openClawConfigHasServerModels(serverModelIds);
     const configSyncOptions = {
