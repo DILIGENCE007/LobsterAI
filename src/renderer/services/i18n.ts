@@ -4163,6 +4163,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
     openSystemNotificationSettings: '打开系统设置',
     preventSleep: '防止休眠',
     preventSleepDescription: '防止系统在应用运行时进入睡眠模式',
+    quitConfirmation: '退出前确认',
+    quitConfirmationDescription: '退出应用前弹窗确认。关闭后，若有文档修改可能丢失，仍会提示',
+    quitConfirmationUpdateFailed: '更新退出前确认设置失败',
     skipMissedJobs: '跳过未执行任务',
     skipMissedJobsDescription: '启动时跳过离线期间未触发的定时任务，不补充执行（保存后生效）',
     usageAnalyticsEnabled: '帮助改进 LobsterAI',
@@ -9068,6 +9071,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     openSystemNotificationSettings: 'Open System Settings',
     preventSleep: 'Prevent Sleep',
     preventSleepDescription: 'Prevent the system from sleeping while the app is running',
+    quitConfirmation: 'Confirm Before Quitting',
+    quitConfirmationDescription:
+      'Ask before quitting the app. When off, you are still asked if document changes would be lost',
+    quitConfirmationUpdateFailed: 'Failed to update quit confirmation setting',
     skipMissedJobs: 'Skip Missed Scheduled Jobs',
     skipMissedJobsDescription:
       'Skip jobs that were missed while the app was offline (applies after Save)',

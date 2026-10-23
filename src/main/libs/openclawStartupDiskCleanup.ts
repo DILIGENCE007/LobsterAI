@@ -1,9 +1,11 @@
 import { OPENCLAW_BROWSER_CACHE_PRUNE_INTERVAL_MS, pruneOpenClawBrowserCaches } from './openclawBrowserCachePrune';
 import { pruneOpenClawRepairBackups } from './openclawCompatibilityRepair';
 import { pruneStaleOpenClawCompileCaches } from './openclawCompileCache';
+import { pruneOpenClawConfigSnapshots } from './openclawConfigSnapshotCleanup';
 import {
   createDiskCleanupThrottle, type DiskCleanupThrottle, isDiskCleanupStopped,
 } from './openclawDiskCleanupThrottle';
+import { pruneLegacyOpenClawConfigBackups } from './openclawLegacyConfigBackupCleanup';
 import { pruneExpiredOpenClawSessionImportArchives } from './openclawSessionImportArchiveCleanup';
 import { pruneOrphanOpenClawSessionStoreTemps } from './openclawSessionStoreTempCleanup';
 
@@ -18,6 +20,7 @@ export const OPENCLAW_STARTUP_DISK_CLEANUP_RETRY_MS = 30 * 60 * 1000;
 export interface OpenClawStartupDiskCleanupParams {
   baseDir: string;
   stateDir: string;
+  configPath: string;
   compileCacheDir: string;
 }
 
@@ -63,6 +66,22 @@ export async function runOpenClawStartupDiskCleanup(
       run: async () => {
         const removed = await pruneOrphanOpenClawSessionStoreTemps(params.stateDir, { now, throttle });
         return removed.length ? `[OpenClaw] removed ${removed.length} orphan session store temp file(s).` : null;
+      },
+    },
+    {
+      // OpenClaw caps its clobbered config copies at 32 and never bounds rejected ones.
+      label: 'config snapshots',
+      run: async () => {
+        const removed = await pruneOpenClawConfigSnapshots(params.configPath, { now, throttle });
+        return removed.length ? `[OpenClaw] removed ${removed.length} old clobbered/rejected config snapshot(s).` : null;
+      },
+    },
+    {
+      // Repairs before 2026.9.15 left unbounded `openclaw-bak*.json` beside the config.
+      label: 'legacy config backups',
+      run: async () => {
+        const removed = await pruneLegacyOpenClawConfigBackups(params.configPath, { now, throttle });
+        return removed.length ? `[OpenClawRepair] removed ${removed.length} legacy openclaw-bak config backup(s).` : null;
       },
     },
     {

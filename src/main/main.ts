@@ -322,6 +322,7 @@ import {
   type PermissionResult,
 } from './libs/agentEngine';
 import {
+  APP_QUIT_CONFIRMATION_STORE_KEY,
   appQuitConfirmationGate,
   AppQuitRequestVerdict,
   quitAppWithoutConfirmation,
@@ -2261,6 +2262,17 @@ const getStore = (): SqliteStore => {
     throw new Error('Store not initialized. Call initStore() first.');
   }
   return store;
+};
+
+// Defaults to enabled, including when the store is not ready yet (a quit
+// during startup), so the safer behavior wins whenever the setting is unknown.
+const isAppQuitConfirmationEnabled = (): boolean => {
+  try {
+    return getStore().get<boolean>(APP_QUIT_CONFIRMATION_STORE_KEY) !== false;
+  } catch (error) {
+    console.warn('[AppQuit] failed to read quit confirmation setting, keeping it enabled:', error);
+    return true;
+  }
 };
 
 // Resolved once initApp has written the first complete OpenClaw config. A
@@ -5589,6 +5601,26 @@ if (!gotTheLock) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to set prevent-sleep',
+      };
+    }
+  });
+
+  ipcMain.handle(AppSettingsIpc.GetQuitConfirmation, () => {
+    return { enabled: isAppQuitConfirmationEnabled() };
+  });
+
+  ipcMain.handle(AppSettingsIpc.SetQuitConfirmation, (_event, enabled: unknown) => {
+    if (typeof enabled !== 'boolean') {
+      return { success: false, error: 'Invalid parameter: enabled must be boolean' };
+    }
+    try {
+      getStore().set(APP_QUIT_CONFIRMATION_STORE_KEY, enabled);
+      console.log(`[AppQuit] quit confirmation setting changed: enabled=${enabled}`);
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to set quit confirmation',
       };
     }
   });
@@ -15541,6 +15573,8 @@ if (!gotTheLock) {
       });
   };
 
+  const hasUnsafeDocumentEdits = () => hasUnsafeMarkdownEdits() || officeEditing.hasUnsafeEdits();
+
   app.on('before-quit', e => {
     if (isCleanupFinished) return;
 
@@ -15549,7 +15583,11 @@ if (!gotTheLock) {
       return;
     }
 
-    const verdict = appQuitConfirmationGate.resolveQuitRequest();
+    // With the prompt turned off in Settings, still ask while document edits
+    // would be lost: the prompt is the only warning the user gets.
+    const verdict = appQuitConfirmationGate.resolveQuitRequest(
+      isAppQuitConfirmationEnabled() || hasUnsafeDocumentEdits(),
+    );
     if (verdict === AppQuitRequestVerdict.Ignore) {
       return;
     }
@@ -15560,11 +15598,11 @@ if (!gotTheLock) {
 
     // User-initiated quit (Cmd+Q, app menu, Dock, tray): scheduled tasks and
     // IM replies stop with the app, so ask first.
-    void showAppQuitConfirmation(() => hasUnsafeMarkdownEdits() || officeEditing.hasUnsafeEdits())
+    void showAppQuitConfirmation(hasUnsafeDocumentEdits)
       .then(
         confirmed => confirmed,
         error => {
-          if (hasUnsafeMarkdownEdits() || officeEditing.hasUnsafeEdits()) {
+          if (hasUnsafeDocumentEdits()) {
             console.error('[Main] quit confirmation prompt failed, retaining unsaved document edits:', error);
             return false;
           }
