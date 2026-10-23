@@ -1548,7 +1548,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         return;
       }
 
-      const clientSteerId = `steer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const clientSteerId = `steer-${crypto.randomUUID()}`;
       console.debug(
         `[CoworkSteer] submitting steer from prompt input for session ${sessionId}; `
         + `id=${clientSteerId}; chars=${steerText.length}; `
@@ -1657,7 +1657,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         buildSelectedSkillRoutingPrompt(queuedSkills),
       ].filter(Boolean).join('\n\n') || undefined;
 
-      const queuedSteerId = `steer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const queuedSteerId = `steer-${crypto.randomUUID()}`;
       const now = Date.now();
       logCoworkSteer(
         'debug',

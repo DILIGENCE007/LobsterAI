@@ -229,6 +229,7 @@ import {
 } from '../shared/shareDeployment/constants';
 import type { ShellOpenFailureReason as ShellOpenFailureReasonType } from '../shared/shell/constants';
 import { type ShellGetBrowserAppsInput, ShellIpc, ShellOpenFailureReason } from '../shared/shell/constants';
+import { isUrlOnDomain } from '../shared/url/hostname';
 import { AgentManager } from './agentManager';
 import { APP_NAME, APP_USER_MODEL_ID, DB_FILENAME } from './appConstants';
 import { createLocalFileProtocolResponse } from './artifactLocalFileProtocol';
@@ -1578,12 +1579,13 @@ const extractHtmlTitle = (html: string): string => {
   const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   if (!match) return '';
   return cleanHtmlTitle(
+    // Decode &amp; last so "&amp;lt;" becomes "&lt;" rather than "<".
     match[1]
-      .replace(/&amp;/g, '&')
       .replace(/&lt;/g, '<')
       .replace(/&gt;/g, '>')
       .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'"),
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, '&'),
   );
 };
 
@@ -14540,7 +14542,7 @@ if (!gotTheLock) {
   });
 
   // Helper: detect if a URL belongs to GitHub Copilot and apply token refresh on 401.
-  const isCopilotUrl = (url: string) => url.includes('githubcopilot.com');
+  const isCopilotUrl = (url: string) => isUrlOnDomain(url, 'githubcopilot.com');
   const retryCopilotWithRefreshedToken = async (opts: {
     url: string;
     method: string;
@@ -14989,8 +14991,8 @@ if (!gotTheLock) {
       params.partition = ArtifactBrowserPartition.Default;
       params.allowpopups = 'false';
 
-      const src = params.src ?? '';
-      if (src.startsWith('javascript:')) {
+      const src = (params.src ?? '').trim().toLowerCase();
+      if (src.startsWith('javascript:') || src.startsWith('data:') || src.startsWith('vbscript:')) {
         event.preventDefault();
       }
     });

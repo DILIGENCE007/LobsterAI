@@ -12,6 +12,7 @@ import { useDispatch, useSelector } from 'react-redux';
 
 import type { SkillSecurityReport as SkillSecurityReportData } from '../../../main/libs/skillSecurity/skillSecurityTypes';
 import { ENABLE_OPENCLAW_SKILL_SYNC } from '../../../shared/featureFlags';
+import { isHostnameOnDomain } from '../../../shared/url/hostname';
 import { i18nService } from '../../services/i18n';
 import { compareVersions,resolveLocalizedText, skillService } from '../../services/skill';
 import { RootState } from '../../store';
@@ -605,7 +606,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat,
         setSkillActionError(i18nService.t('importSourceMismatchClawhub'));
         return;
       }
-      if (importTab === 'github' && !host.includes('github.com') && !host.includes('github.io')) {
+      if (importTab === 'github' && !isHostnameOnDomain(host, 'github.com') && !isHostnameOnDomain(host, 'github.io')) {
         setSkillActionError(i18nService.t('importSourceMismatchGithub'));
         return;
       }

@@ -30,6 +30,7 @@ import {
   resolveModelRuntimeProfile,
   supportsGeminiApiFormatSelection,
 } from '../../shared/providers';
+import { isUrlOnDomain } from '../../shared/url/hostname';
 import { type AppConfig, defaultConfig, FontPreferences, getProviderDisplayName, getVisibleProviders, isCustomProvider, normalizeFontPreference, resolveArtifactAutoPreviewEnabled, ShortcutAction, type ShortcutConfig } from '../config';
 import { OPEN_SOURCE_ENTERPRISE_UI_KEY } from '../constants/openSource';
 import { useSkin } from '../providers/SkinProvider';
@@ -2132,7 +2133,7 @@ const Settings: React.FC<SettingsProps> = ({
               baseUrl: config.api.baseUrl
             }
           }));
-        } else if (normalizedApiBaseUrl.includes('openapi.youdao.com')) {
+        } else if (isUrlOnDomain(normalizedApiBaseUrl, 'openapi.youdao.com')) {
           setActiveProvider('youdaozhiyun');
           setProviders(prev => ({
             ...prev,
